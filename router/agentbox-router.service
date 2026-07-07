@@ -1,0 +1,16 @@
+[Unit]
+Description=Agentbox role router for local model workers
+After=network-online.target fastcontext-worker.service vibethinker-worker.service
+Wants=network-online.target fastcontext-worker.service vibethinker-worker.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/agentbox/router
+Environment=AGENTBOX_ROUTER_HOST=127.0.0.1
+Environment=AGENTBOX_ROUTER_PORT=8765
+ExecStart=/usr/bin/python3 %h/agentbox/router/agentbox_router.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

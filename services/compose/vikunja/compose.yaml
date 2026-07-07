@@ -1,0 +1,25 @@
+services:
+  vikunja:
+    image: vikunja/vikunja
+    environment:
+      VIKUNJA_SERVICE_PUBLICURL: "${VIKUNJA_SERVICE_PUBLICURL:-http://127.0.0.1:3456/}"
+      VIKUNJA_SERVICE_SECRET: "${VIKUNJA_SERVICE_SECRET:?set VIKUNJA_SERVICE_SECRET in ~/.config/agent-control-plane/vikunja.env}"
+      VIKUNJA_SERVICE_ENABLEREGISTRATION: "${VIKUNJA_SERVICE_ENABLEREGISTRATION:-true}"
+      VIKUNJA_DATABASE_TYPE: sqlite
+      VIKUNJA_DATABASE_PATH: /db/vikunja.db
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:3456:3456"
+    volumes:
+      - "${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/files:/app/vikunja/files"
+      - "${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/db:/db"
+    cpus: "1.50"
+    mem_limit: 1024m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    labels:
+      agent-control-plane.service: vikunja
+      agent-control-plane.exposure: private

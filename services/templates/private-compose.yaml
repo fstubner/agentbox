@@ -1,0 +1,40 @@
+# Private service template.
+# Copy to services/compose/<service-name>/compose.yaml and edit.
+
+services:
+  app:
+    image: docker.io/library/nginx:alpine
+    restart: unless-stopped
+
+    # Explicit host binding is mandatory.
+    # Keep 127.0.0.1 unless LAN/Tailnet exposure has been approved.
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:8080:80"
+
+    # Keep resource use bounded. Tune per service.
+    cpus: "1.00"
+    mem_limit: 512m
+    pids_limit: 256
+
+    # Tighten defaults where compatible with the image.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # Use read_only when the image can run with explicit writable mounts.
+    # read_only: true
+    # tmpfs:
+    #   - /tmp
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    labels:
+      agent-control-plane.service: app
+      agent-control-plane.exposure: private
+

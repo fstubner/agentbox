@@ -1,0 +1,20 @@
+services:
+  example-service:
+    image: docker.io/hashicorp/http-echo:1.0
+    command:
+      - "-listen=:8080"
+      - "-text=agent-control-plane example service"
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:8088:8080"
+    cpus: "0.50"
+    mem_limit: 128m
+    pids_limit: 128
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    labels:
+      agent-control-plane.service: example-service
+      agent-control-plane.exposure: private

@@ -1,0 +1,40 @@
+services:
+  vikunja-bridge:
+    build:
+      context: .
+    image: agent-control-plane/vikunja-bridge:local
+    environment:
+      VIKUNJA_URL: "${VIKUNJA_URL:-http://vikunja:3456}"
+      VIKUNJA_API_TOKEN: "${VIKUNJA_API_TOKEN:-}"
+      VIKUNJA_BRIDGE_TOKEN: "${VIKUNJA_BRIDGE_TOKEN:-}"
+      BRIDGE_HOST: "0.0.0.0"
+      BRIDGE_PORT: "8080"
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:3466:8080"
+    networks:
+      vikunja:
+    cpus: "0.50"
+    mem_limit: 128m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    labels:
+      agent-control-plane.service: vikunja-bridge
+      agent-control-plane.exposure: private
+
+networks:
+  vikunja:
+    external: true
+    name: agent-control-plane-vikunja_default

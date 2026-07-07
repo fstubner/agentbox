@@ -1,0 +1,40 @@
+services:
+  google-workspace-mcp-lite:
+    build:
+      context: .
+    image: agent-control-plane/google-workspace-mcp-lite:local
+    environment:
+      GOOGLE_BRIDGE_URL: "${GOOGLE_BRIDGE_URL:-http://google-workspace-bridge:8080}"
+      GOOGLE_BRIDGE_TOKEN: "${GOOGLE_BRIDGE_TOKEN:-}"
+      GOOGLE_MCP_SHARED_TOKEN: "${GOOGLE_MCP_SHARED_TOKEN:-}"
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8080"
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:3473:8080"
+    networks:
+      google:
+    cpus: "0.50"
+    mem_limit: 128m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    labels:
+      agent-control-plane.service: google-workspace-mcp-lite
+      agent-control-plane.exposure: private
+
+networks:
+  google:
+    external: true
+    name: agent-control-plane-google-workspace-bridge_default

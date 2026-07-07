@@ -1,0 +1,40 @@
+services:
+  memory-mcp:
+    build:
+      context: .
+    image: agent-control-plane/memory-mcp:local
+    environment:
+      MEMORY_BRIDGE_URL: "${MEMORY_BRIDGE_URL:-http://memory-bridge:8080}"
+      MEMORY_BRIDGE_TOKEN: "${MEMORY_BRIDGE_TOKEN:-}"
+      MEMORY_MCP_SHARED_TOKEN: "${MEMORY_MCP_SHARED_TOKEN:-}"
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8080"
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:3472:8080"
+    networks:
+      memory:
+    cpus: "0.50"
+    mem_limit: 128m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    labels:
+      agent-control-plane.service: memory-mcp
+      agent-control-plane.exposure: private
+
+networks:
+  memory:
+    external: true
+    name: agent-control-plane-memory-bridge_default
