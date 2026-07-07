@@ -21,7 +21,7 @@ MAIN_BASE = os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1")
 CONTEXT_BASE = os.environ.get("AGENTBOX_CONTEXT_BASE", "http://127.0.0.1:1235/v1")
 REASON_BASE = os.environ.get("AGENTBOX_REASON_BASE", "http://127.0.0.1:1236/v1")
 
-MAIN_MODEL = os.environ.get("AGENTBOX_MAIN_MODEL", "qwen36-35b-a3b-q4")
+MAIN_MODEL = os.environ.get("AGENTBOX_MAIN_MODEL", "local-main")
 CONTEXT_MODEL = os.environ.get("AGENTBOX_CONTEXT_MODEL", "fastcontext-worker")
 REASON_MODEL = os.environ.get("AGENTBOX_REASON_MODEL", "vibethinker-worker")
 
