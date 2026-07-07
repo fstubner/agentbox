@@ -1,0 +1,33 @@
+# Machine-readable mirror of approval-policy.md. Loaded by the gateway/CLI.
+# Semantics: first matching rule wins; default is deny -> approval_required.
+version: 1
+tiers:
+  allowed:        # no approval needed
+    - read_repo_files
+    - inspect_service_logs
+    - run_validators_and_tests
+    - draft_plans_issues_prs_skills
+    - create_branches
+    - generate_compose_proposals
+  approval_required:
+    - service_lifecycle          # start/stop/restart/remove services
+    - host_package_install
+    - add_mcp_server
+    - enable_skill_bundle_production
+    - modify_production_gateway_config
+    - change_network_bindings_or_ports
+    - personal_data_access_beyond_task   # gmail/calendar/drive
+    - email_mutations                    # archive/read/label/unsubscribe
+    - gmail_label_management
+    - spend_money                        # incl. grocery orders, paid APIs over limit
+    - store_sensitive_memory             # health/relationship/household
+    - health_sensitive_recommendations
+    - send_external_communications       # messages/emails/invites
+  always_denied:  # only a human, outside the assistant, may do these
+    - merge_own_pr
+    - disable_approval_gates
+    - expose_services_to_internet
+    - read_raw_longlived_credentials
+    - delete_emails_files_repos_backups_prod_data
+    - modify_upstream_agent_source
+    - medical_diagnosis_or_medication_guidance

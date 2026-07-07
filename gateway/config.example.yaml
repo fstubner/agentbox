@@ -15,14 +15,14 @@ approvals:
 
 model:
   provider: openai-compatible
-  default: qwen36-35b-a3b-q4
+  default: local-main
   base_url: http://127.0.0.1:1234/v1
   api_mode: chat_completions
 
 model_aliases:
-  local-qwen:
+  local-main:
     provider: openai-compatible
-    model: qwen36-35b-a3b-q4
+    model: local-main
     base_url: http://127.0.0.1:1234/v1
   local-gemma:
     provider: openai-compatible
