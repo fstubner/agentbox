@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""agentbox — operator CLI for the Agentbox platform.
+
+Subcommands:
+  validate            repo hygiene checks (secrets, bindings, compose guardrails)
+  doctor              live-host health probes (endpoints, services, docker, disk)
+  status              one-line service/port summary
+  policy check ACTION resolve an action against policies/approval-policy.yaml
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.parent))
+
+OK, WARN, FAIL = "OK", "WARN", "FAIL"
+
+
+def report(level: str, msg: str) -> None:
+    print(f"[{level.lower()}] {msg}")
+
+
+# --- policy ---------------------------------------------------------------
+
+
+def load_policy() -> dict:
+    """Parse policies/approval-policy.yaml without external deps (flat 2-level lists)."""
+    path = REPO / "policies" / "approval-policy.yaml"
+    tiers: dict[str, list[str]] = {}
+    current: str | None = None
+    in_tiers = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line == "tiers:":
+            in_tiers = True
+            continue
+        if in_tiers:
+            m = re.match(r"^  (\w+):\s*$", line)
+            if m:
+                current = m.group(1)
+                tiers[current] = []
+                continue
+            m = re.match(r"^    - (\S+)", line)
+            if m and current:
+                tiers[current].append(m.group(1))
+                continue
+            if not line.startswith("  "):
+                in_tiers = False
+    return tiers
+
+
+def policy_check(action: str) -> int:
+    tiers = load_policy()
+    for tier in ("always_denied", "approval_required", "allowed"):
+        if action in tiers.get(tier, []):
+            print(json.dumps({"action": action, "tier": tier}))
+            return 2 if tier == "always_denied" else 0
+    # deny-by-default: unknown actions require approval
+    print(json.dumps({"action": action, "tier": "approval_required", "reason": "unknown_action_default"}))
+    return 0
+
+
+# --- validate ---------------------------------------------------------------
+
+SECRET_FILE_NAMES = re.compile(r"^(\.env(\..*)?|.*\.pem|.*\.key|id_rsa|id_ed25519)$")
+PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+PORT_MAPPING = re.compile(r'^\s*-\s*"?\d+:\d+')
+
+
+def validate() -> int:
+    failures = 0
+
+    def error(msg: str) -> None:
+        nonlocal failures
+        failures += 1
+        report(FAIL, msg)
+
+    tracked = [
+        p for p in REPO.rglob("*")
+        if p.is_file() and ".git" not in p.parts and "__pycache__" not in p.parts
+    ]
+
+    for p in tracked:
+        name = p.name
+        if SECRET_FILE_NAMES.match(name) and not name.endswith((".env.example", ".op.env.example")):
+            error(f"secret-like file present: {p.relative_to(REPO)}")
+
+    for p in tracked:
+        if p.suffix in {".py", ".yaml", ".yml", ".md", ".sh", ".env", ".example", ".json", ".service"} or not p.suffix:
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if PRIVATE_KEY.search(text) and p.name != Path(__file__).name:
+                error(f"private key material detected: {p.relative_to(REPO)}")
+
+    compose_files = list((REPO / "services").rglob("compose.y*ml")) if (REPO / "services").exists() else []
+    for compose in compose_files:
+        text = compose.read_text(encoding="utf-8")
+        rel = compose.relative_to(REPO)
+        if "0.0.0.0:" in text:
+            error(f"0.0.0.0 binding is not allowed: {rel}")
+        for line in text.splitlines():
+            if PORT_MAPPING.match(line) and "127.0.0.1" not in line and "${" not in line:
+                error(f"unqualified port mapping (bind to localhost/LAN/tailscale explicitly): {rel}: {line.strip()}")
+        if not re.search(r"^\s*(cpus|mem_limit|pids_limit):", text, re.M):
+            error(f"compose service should define resource limits: {rel}")
+        if "no-new-privileges:true" not in text:
+            error(f"compose service should set no-new-privileges: {rel}")
+
+    if shutil.which("docker"):
+        for compose in compose_files:
+            proc = subprocess.run(
+                ["docker", "compose", "-f", compose.name, "config", "--no-interpolate"],
+                cwd=compose.parent, capture_output=True, text=True,
+            )
+            if proc.returncode != 0:
+                error(f"docker compose config failed: {compose.relative_to(REPO)}")
+    else:
+        report(WARN, "docker not found; skipped compose config validation")
+
+    try:
+        tiers = load_policy()
+        for required in ("allowed", "approval_required", "always_denied"):
+            if not tiers.get(required):
+                error(f"approval-policy.yaml missing or empty tier: {required}")
+    except OSError:
+        error("policies/approval-policy.yaml missing")
+
+    report(OK if failures == 0 else FAIL, f"validate finished with {failures} error(s)")
+    return 1 if failures else 0
+
+
+# --- doctor / status --------------------------------------------------------
+
+
+def probe(url: str, timeout: float = 5) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+ENDPOINTS = {
+    "main model": os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models",
+    "router": "http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health",
+}
+
+
+def doctor() -> int:
+    bad = 0
+    for tool in ("git", "curl", "docker"):
+        if shutil.which(tool):
+            report(OK, f"{tool} available")
+        else:
+            report(FAIL, f"{tool} missing")
+            bad += 1
+    for name, url in ENDPOINTS.items():
+        if probe(url):
+            report(OK, f"{name} responding: {url}")
+        else:
+            report(FAIL, f"{name} not responding: {url}")
+            bad += 1
+    disk = shutil.disk_usage("/")
+    pct = disk.used * 100 // disk.total
+    report(OK if pct < 90 else WARN, f"disk usage {pct}%")
+    bad += validate()
+    return 1 if bad else 0
+
+
+def status() -> int:
+    for name, url in ENDPOINTS.items():
+        print(f"{name:12} {'up' if probe(url) else 'DOWN':4} {url}")
+    return 0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="agentbox")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("validate")
+    sub.add_parser("doctor")
+    sub.add_parser("status")
+    pol = sub.add_parser("policy")
+    pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
+    check = pol_sub.add_parser("check")
+    check.add_argument("action")
+    args = parser.parse_args()
+
+    if args.cmd == "validate":
+        sys.exit(validate())
+    if args.cmd == "doctor":
+        sys.exit(doctor())
+    if args.cmd == "status":
+        sys.exit(status())
+    if args.cmd == "policy" and args.pol_cmd == "check":
+        sys.exit(policy_check(args.action))
+
+
+if __name__ == "__main__":
+    main()
