@@ -1,0 +1,30 @@
+services:
+  example-bridge:
+    build: .
+    image: agentbox/example-bridge:local
+    environment:
+      EXAMPLE_UPSTREAM_TOKEN: "${EXAMPLE_UPSTREAM_TOKEN:?set EXAMPLE_UPSTREAM_TOKEN in the service env file}"
+      EXAMPLE_BRIDGE_TOKEN: "${EXAMPLE_BRIDGE_TOKEN:?set EXAMPLE_BRIDGE_TOKEN in the service env file}"
+      BRIDGE_HOST: "0.0.0.0"
+      BRIDGE_PORT: "8080"
+    ports:
+      # Bind to localhost on the host; the assistant reaches it over the loopback.
+      - "${LAN_BIND_IP:-127.0.0.1}:3480:8080"
+    cpus: "0.50"
+    mem_limit: 256m
+    pids_limit: 128
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      agentbox.service: example-bridge
+      agentbox.exposure: private
