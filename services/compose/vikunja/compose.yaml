@@ -10,8 +10,8 @@ services:
     ports:
       - "${LAN_BIND_IP:-127.0.0.1}:3456:3456"
     volumes:
-      - "${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/files:/app/vikunja/files"
-      - "${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/db:/db"
+      - "${AGENT_CONTROL_PLANE_STATE_DIR:?set AGENT_CONTROL_PLANE_STATE_DIR or deploy via cli/agentbox deploy}/vikunja/files:/app/vikunja/files"
+      - "${AGENT_CONTROL_PLANE_STATE_DIR:?set AGENT_CONTROL_PLANE_STATE_DIR or deploy via cli/agentbox deploy}/vikunja/db:/db"
     cpus: "1.50"
     mem_limit: 1024m
     pids_limit: 256

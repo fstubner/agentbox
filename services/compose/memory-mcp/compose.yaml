@@ -37,4 +37,4 @@ services:
 networks:
   memory:
     external: true
-    name: agent-control-plane-memory-bridge_default
+    name: ${AGENTBOX_COMPOSE_PREFIX:-}memory-bridge_default

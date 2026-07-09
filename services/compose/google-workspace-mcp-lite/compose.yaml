@@ -37,4 +37,4 @@ services:
 networks:
   google:
     external: true
-    name: agent-control-plane-google-workspace-bridge_default
+    name: ${AGENTBOX_COMPOSE_PREFIX:-}google-workspace-bridge_default

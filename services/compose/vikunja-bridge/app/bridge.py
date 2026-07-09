@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hmac
 import json
 import os
 import re
@@ -138,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
     def require_auth(self):
         header = self.headers.get("Authorization", "")
         expected = f"Bearer {BRIDGE_TOKEN}"
-        if header != expected:
+        if not hmac.compare_digest(header, expected):
             raise BridgeError(401, "invalid bridge token")
 
     def route(self):
@@ -236,6 +237,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(status, payload)
         except BridgeError as exc:
             self.send_json(exc.status, {"error": exc.message})
+        except Exception as exc:  # noqa: BLE001
+            self.send_json(500, {"error": f"internal error: {type(exc).__name__}"})
 
     do_GET = handle_request
     do_POST = handle_request

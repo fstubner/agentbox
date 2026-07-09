@@ -4,7 +4,7 @@
 skills:
   write_approval: true
   external_dirs:
-    - ~/agent-control-plane/hermes/skills
+    - ./skills
 
 memory:
   write_approval: true

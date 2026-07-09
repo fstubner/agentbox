@@ -1,0 +1,13 @@
+[Unit]
+Description=Agentbox FastContext local worker
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+ExecStart=%h/llama.cpp/build-vulkan/bin/llama-server -m %h/models/FastContext-1.0-4B-SFT-f16.gguf --alias fastcontext-worker -c 32768 --host 127.0.0.1 --port 1235 -ngl 999 --flash-attn on --jinja
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

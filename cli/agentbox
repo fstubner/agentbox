@@ -3,6 +3,7 @@
 
 Subcommands:
   validate            repo hygiene checks (secrets, bindings, compose guardrails)
+  deploy SERVICE      validate then docker-compose up a service with its env file
   doctor              live-host health probes (endpoints, services, docker, disk)
   status              one-line service/port summary
   policy check ACTION resolve an action against policies/approval-policy.yaml
@@ -141,6 +142,69 @@ def validate() -> int:
     return 1 if failures else 0
 
 
+# --- deploy -----------------------------------------------------------------
+
+
+def deploy(service: str, dry_run: bool = False) -> int:
+    """Validate, then bring up services/compose/<service> with its env file.
+
+    Env file: $AGENTBOX_ENV_DIR/<service>.env (default ~/.config/agentbox,
+    falling back to ~/.config/agent-control-plane for older installs).
+    op:// references are resolved through the 1Password CLI without printing
+    secret values. Compose project name is $AGENTBOX_COMPOSE_PREFIX + service.
+    """
+    compose_dir = REPO / "services" / "compose" / service
+    if not (compose_dir / "compose.yaml").exists():
+        report(FAIL, f"no compose file for service: {service}")
+        return 1
+    if validate() != 0:
+        return 1
+
+    env_dir = os.environ.get("AGENTBOX_ENV_DIR")
+    if not env_dir:
+        for candidate in ("~/.config/agentbox", "~/.config/agent-control-plane"):
+            expanded = Path(candidate).expanduser()
+            if expanded.is_dir():
+                env_dir = str(expanded)
+                break
+        env_dir = env_dir or str(Path("~/.config/agentbox").expanduser())
+    env_file = Path(env_dir) / f"{service}.env"
+
+    env = dict(os.environ)
+    env.setdefault("AGENT_CONTROL_PLANE_STATE_DIR",
+                   str(Path("~/.local/state/agent-control-plane").expanduser()))
+    env.setdefault("AGENTBOX_COMPOSE_PREFIX", "")
+    project = env["AGENTBOX_COMPOSE_PREFIX"] + service
+
+    compose_cmd = ["docker", "compose", "-p", project, "-f", "compose.yaml",
+                   "config", "--no-interpolate"] if dry_run else                   ["docker", "compose", "-p", project, "-f", "compose.yaml", "up", "-d"]
+
+    if env_file.exists():
+        text = env_file.read_text(encoding="utf-8")
+        if "op://" in text:
+            if not shutil.which("op"):
+                report(FAIL, "env file uses op:// references but 1Password CLI is missing")
+                return 1
+            auth_file = Path(env_dir) / "1password.env"
+            if auth_file.exists():
+                for line in auth_file.read_text(encoding="utf-8").splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        key, _, value = line.partition("=")
+                        env.setdefault(key.strip(), value.strip())
+            compose_cmd = ["op", "run", "--env-file", str(env_file), "--"] + compose_cmd
+        else:
+            for line in text.splitlines():
+                if "=" in line and not line.lstrip().startswith("#"):
+                    key, _, value = line.partition("=")
+                    env.setdefault(key.strip(), value.strip())
+    else:
+        report(WARN, f"no env file at {env_file}; deploying without service env")
+
+    proc = subprocess.run(compose_cmd, cwd=compose_dir, env=env)
+    report(OK if proc.returncode == 0 else FAIL, f"deploy {service} finished")
+    return proc.returncode
+
+
 # --- doctor / status --------------------------------------------------------
 
 
@@ -189,6 +253,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="agentbox")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("validate")
+    dep = sub.add_parser("deploy")
+    dep.add_argument("service")
+    dep.add_argument("--dry-run", action="store_true")
     sub.add_parser("doctor")
     sub.add_parser("status")
     pol = sub.add_parser("policy")
@@ -199,6 +266,8 @@ def main() -> None:
 
     if args.cmd == "validate":
         sys.exit(validate())
+    if args.cmd == "deploy":
+        sys.exit(deploy(args.service, args.dry_run))
     if args.cmd == "doctor":
         sys.exit(doctor())
     if args.cmd == "status":

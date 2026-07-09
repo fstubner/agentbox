@@ -317,7 +317,7 @@ class Handler(BaseHTTPRequestHandler):
         if not origin:
             return
         parsed = urllib.parse.urlparse(origin)
-        if parsed.hostname not in ("127.0.0.1", "localhost", "agentbox.local"):
+        if parsed.hostname not in ("127.0.0.1", "localhost", *(os.environ.get("VIKUNJA_MCP_ALLOWED_ORIGINS", "agentbox.local").split(","))):
             raise McpError(-32000, "origin not allowed")
 
     def require_auth_ok(self):

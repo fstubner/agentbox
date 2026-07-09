@@ -17,7 +17,7 @@ Vikunja gives the assistant a practical place to manage tasks, projects, boards,
 For LAN access on the AMD box, set:
 
 ```bash
-LAN_BIND_IP=192.0.2.10
+LAN_BIND_IP=192.168.x.x
 VIKUNJA_SERVICE_PUBLICURL=http://agentbox.local:3456/
 ```
 

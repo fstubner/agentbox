@@ -37,4 +37,4 @@ services:
 networks:
   vikunja:
     external: true
-    name: agent-control-plane-vikunja_default
+    name: ${AGENTBOX_COMPOSE_PREFIX:-}vikunja_default

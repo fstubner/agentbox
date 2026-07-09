@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hmac
 import json
 import os
 import time
@@ -56,7 +57,7 @@ def parse_json_body(handler):
 def require_auth(handler):
     if not TOKEN:
         raise BridgeError(503, "MEMORY_BRIDGE_TOKEN is not configured")
-    if handler.headers.get("Authorization", "") != f"Bearer {TOKEN}":
+    if not hmac.compare_digest(handler.headers.get("Authorization", ""), f"Bearer {TOKEN}"):
         raise BridgeError(401, "invalid bridge token")
 
 
@@ -145,6 +146,7 @@ class Handler(BaseHTTPRequestHandler):
             proposal["status"] = "approved"
             proposal["updated_at"] = now()
             store["memories"].append(proposal)
+            store["proposals"] = [x for x in store["proposals"] if x.get("id") != proposal_id]
             save_store(store)
             return 200, proposal
         raise BridgeError(404, "not found")

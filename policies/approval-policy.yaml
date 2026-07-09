@@ -1,5 +1,6 @@
 # Machine-readable mirror of approval-policy.md. Loaded by the gateway/CLI.
-# Semantics: first matching rule wins; default is deny -> approval_required.
+# Semantics: tiers are checked always_denied -> approval_required -> allowed;
+# unknown actions default to approval_required (deny-by-default).
 version: 1
 tiers:
   allowed:        # no approval needed

@@ -20,9 +20,14 @@ Returns the action's tier (`allowed` / `approval_required` / `always_denied`) as
 
 ## Bringing up services
 ```
-cd services/compose/<service>
-docker compose up -d
+cli/agentbox deploy <service>
 ```
+`deploy` validates the repo, loads `$AGENTBOX_ENV_DIR/<service>.env`
+(default `~/.config/agentbox`, falling back to `~/.config/agent-control-plane`),
+resolves `op://` secrets through the 1Password CLI when present, and runs
+`docker compose -p $AGENTBOX_COMPOSE_PREFIX<service> up -d`. Set
+`AGENTBOX_COMPOSE_PREFIX` if your existing stacks were created under a
+different compose project prefix.
 Each service directory ships a `*.env.example` or `*.op.env.example` — copy and fill in before first start. Bridges resolve 1Password `op://` references at deploy time if you use 1Password; otherwise populate the plain `.env` directly.
 
 ## Router

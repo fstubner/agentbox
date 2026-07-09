@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64
+import hmac
 import html
 import json
 import os
@@ -57,7 +58,9 @@ def parse_json_body(handler):
 
 
 def require_auth(handler):
-    if handler.headers.get("Authorization", "") != f"Bearer {BRIDGE_TOKEN}":
+    if not BRIDGE_TOKEN:
+        raise BridgeError(503, "GOOGLE_BRIDGE_TOKEN is not configured")
+    if not hmac.compare_digest(handler.headers.get("Authorization", ""), f"Bearer {BRIDGE_TOKEN}"):
         raise BridgeError(401, "invalid bridge token")
 
 
@@ -175,7 +178,7 @@ def grocer_item_candidates(text):
         candidates.append(product)
 
     skip = re.compile(r"(?i)(clubcard|subtotal|total|delivery|receipt|order|payment|unavailable|substitution|privacy|terms|vat|help|customer|barcode|quantity|price|eur|€)")
-    productish = re.compile(r"(?i)(\\b\\d+\\s?(g|kg|ml|l|pack|pk|pcs|slices|ct)\\b|\\b(fresh|organic|finest|free range|whole|semi skimmed|chicken|beef|pork|salmon|cod|egg|milk|cheese|yoghurt|bread|rice|pasta|potato|tomato|onion|pepper|apple|banana|lettuce|carrot|broccoli|beans|sauce|soup|cereal)\\b)")
+    productish = re.compile(r"(?i)(\b\d+\s?(g|kg|ml|l|pack|pk|pcs|slices|ct)\b|\b(fresh|organic|finest|free range|whole|semi skimmed|chicken|beef|pork|salmon|cod|egg|milk|cheese|yoghurt|bread|rice|pasta|potato|tomato|onion|pepper|apple|banana|lettuce|carrot|broccoli|beans|sauce|soup|cereal)\b)")
     for line in lines:
         if len(line) < 4 or len(line) > 140:
             continue
