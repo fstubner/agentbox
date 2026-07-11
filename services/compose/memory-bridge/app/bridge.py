@@ -1,67 +1,40 @@
 #!/usr/bin/env python3
-import hmac
+"""Memory bridge on the shared bridge_base. Stores memories/proposals in a
+JSON file behind a process-wide lock (single-writer semantics)."""
+from __future__ import annotations
+
 import json
 import os
+import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
+from bridge_base import BridgeError, BridgeHandler, serve
 
-TOKEN = os.environ.get("MEMORY_BRIDGE_TOKEN", "")
-HOST = os.environ.get("BRIDGE_HOST", "0.0.0.0")
-PORT = int(os.environ.get("BRIDGE_PORT", "8080"))
 MEMORY_PATH = Path(os.environ.get("MEMORY_PATH", "/data/memory.json"))
-MAX_BODY_BYTES = 128 * 1024
+_LOCK = threading.Lock()
 
 
-class BridgeError(Exception):
-    def __init__(self, status, message):
-        super().__init__(str(message))
-        self.status = status
-        self.message = message
-
-
-def now():
+def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def load_store():
+def load_store() -> dict[str, Any]:
     if not MEMORY_PATH.exists():
         return {"memories": [], "proposals": []}
     return json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
 
 
-def save_store(store):
+def save_store(store: dict[str, Any]) -> None:
     MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = MEMORY_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(store, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(MEMORY_PATH)
 
 
-def parse_json_body(handler):
-    length = int(handler.headers.get("Content-Length", "0"))
-    if length > MAX_BODY_BYTES:
-        raise BridgeError(413, "request body too large")
-    if length == 0:
-        return {}
-    try:
-        body = json.loads(handler.rfile.read(length).decode("utf-8"))
-    except json.JSONDecodeError:
-        raise BridgeError(400, "invalid JSON body")
-    if not isinstance(body, dict):
-        raise BridgeError(400, "JSON body must be an object")
-    return body
-
-
-def require_auth(handler):
-    if not TOKEN:
-        raise BridgeError(503, "MEMORY_BRIDGE_TOKEN is not configured")
-    if not hmac.compare_digest(handler.headers.get("Authorization", ""), f"Bearer {TOKEN}"):
-        raise BridgeError(401, "invalid bridge token")
-
-
-def clean_memory(body, status):
+def clean_memory(body: dict[str, Any], status: str) -> dict[str, Any]:
     statement = str(body.get("statement", "")).strip()
     if not statement:
         raise BridgeError(400, "statement is required")
@@ -79,99 +52,89 @@ def clean_memory(body, status):
     }
 
 
-def filter_items(items, query):
-    typ = query.get("type")
-    status = query.get("status")
-    sensitivity = query.get("sensitivity")
+def filter_items(items: list[dict[str, Any]], query: dict[str, Any]) -> list[dict[str, Any]]:
     result = items
-    if typ:
-        result = [x for x in result if x.get("type") == typ]
-    if status:
-        result = [x for x in result if x.get("status") == status]
-    if sensitivity:
-        result = [x for x in result if x.get("sensitivity") == sensitivity]
+    for field in ("type", "status", "sensitivity"):
+        wanted = query.get(field)
+        if wanted:
+            result = [x for x in result if x.get(field) == wanted]
     return result
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "memory-bridge/0.1"
+# --- routes -----------------------------------------------------------------
 
-    def log_message(self, fmt, *args):
-        print(f"{self.address_string()} {self.command} {self.path.split('?', 1)[0]} {fmt % args}", flush=True)
 
-    def send_json(self, status, payload):
-        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
+def get_schema(handler, body):
+    return 200, {"service": "memory-bridge", "tools": [
+        "POST /v1/proposals",
+        "GET /v1/proposals",
+        "POST /v1/proposals/{id}/approve",
+        "POST /v1/memories",
+        "GET /v1/memories",
+    ]}
 
-    def route(self):
-        path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if self.command == "GET" and path == "/health":
-            return 200, {"ok": True}
-        require_auth(self)
+
+def list_proposals(handler, body):
+    with _LOCK:
         store = load_store()
-        if self.command == "GET" and path == "/schema":
-            return 200, {"service": "memory-bridge", "tools": [
-                "POST /v1/proposals",
-                "GET /v1/proposals",
-                "POST /v1/proposals/{id}/approve",
-                "POST /v1/memories",
-                "GET /v1/memories",
-            ]}
-        if self.command == "GET" and path == "/v1/proposals":
-            return 200, {"proposals": filter_items(store["proposals"], {})}
-        if self.command == "POST" and path == "/v1/proposals":
-            item = clean_memory(parse_json_body(self), "proposed")
-            store["proposals"].append(item)
-            save_store(store)
-            return 201, item
-        if self.command == "POST" and path == "/v1/memories":
-            item = clean_memory(parse_json_body(self), "approved")
-            store["memories"].append(item)
-            save_store(store)
-            return 201, item
-        if self.command == "GET" and path == "/v1/memories":
-            return 200, {"memories": filter_items(store["memories"], {})}
-        prefix = "/v1/proposals/"
-        suffix = "/approve"
-        if self.command == "POST" and path.startswith(prefix) and path.endswith(suffix):
-            proposal_id = path[len(prefix):-len(suffix)]
-            proposal = next((x for x in store["proposals"] if x.get("id") == proposal_id), None)
-            if not proposal:
-                raise BridgeError(404, "proposal not found")
-            proposal["status"] = "approved"
-            proposal["updated_at"] = now()
-            store["memories"].append(proposal)
-            store["proposals"] = [x for x in store["proposals"] if x.get("id") != proposal_id]
-            save_store(store)
-            return 200, proposal
+    return 200, {"proposals": filter_items(store["proposals"], {})}
+
+
+def create_proposal(handler, body):
+    item = clean_memory(body or {}, "proposed")
+    with _LOCK:
+        store = load_store()
+        store["proposals"].append(item)
+        save_store(store)
+    return 201, item
+
+
+def create_memory(handler, body):
+    item = clean_memory(body or {}, "approved")
+    with _LOCK:
+        store = load_store()
+        store["memories"].append(item)
+        save_store(store)
+    return 201, item
+
+
+def list_memories(handler, body):
+    with _LOCK:
+        store = load_store()
+    return 200, {"memories": filter_items(store["memories"], {})}
+
+
+def approve_proposal(proposal_id: str):
+    with _LOCK:
+        store = load_store()
+        proposal = next((x for x in store["proposals"] if x.get("id") == proposal_id), None)
+        if not proposal:
+            raise BridgeError(404, "proposal not found")
+        proposal["status"] = "approved"
+        proposal["updated_at"] = now()
+        store["memories"].append(proposal)
+        store["proposals"] = [x for x in store["proposals"] if x.get("id") != proposal_id]
+        save_store(store)
+    return 200, proposal
+
+
+class MemoryBridge(BridgeHandler):
+    server_version = "memory-bridge/1.0"
+    bridge_token = os.environ.get("MEMORY_BRIDGE_TOKEN", "")
+    routes = {
+        ("GET", "/schema"): get_schema,
+        ("GET", "/v1/proposals"): list_proposals,
+        ("POST", "/v1/proposals"): create_proposal,
+        ("GET", "/v1/memories"): list_memories,
+        ("POST", "/v1/memories"): create_memory,
+    }
+
+    def route_fallback(self, method: str, path: str, body):
+        prefix, suffix = "/v1/proposals/", "/approve"
+        if method == "POST" and path.startswith(prefix) and path.endswith(suffix):
+            return approve_proposal(path[len(prefix):-len(suffix)])
         raise BridgeError(404, "not found")
-
-    def do_GET(self):
-        self.handle_request()
-
-    def do_POST(self):
-        self.handle_request()
-
-    def handle_request(self):
-        try:
-            status, payload = self.route()
-        except BridgeError as exc:
-            status, payload = exc.status, {"error": exc.message}
-        except Exception as exc:
-            status, payload = 500, {"error": type(exc).__name__}
-        self.send_json(status, payload)
-
-
-def main():
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"memory-bridge listening on http://{HOST}:{PORT}", flush=True)
-    server.serve_forever()
 
 
 if __name__ == "__main__":
-    main()
+    serve(MemoryBridge)

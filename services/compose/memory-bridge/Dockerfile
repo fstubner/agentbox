@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY app/bridge.py /app/bridge.py
+COPY app/*.py /app/
 
 EXPOSE 8080
 CMD ["python", "/app/bridge.py"]
