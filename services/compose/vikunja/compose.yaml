@@ -23,3 +23,4 @@ services:
     labels:
       agent-control-plane.service: vikunja
       agent-control-plane.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"

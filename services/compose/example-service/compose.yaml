@@ -18,3 +18,4 @@ services:
     labels:
       agent-control-plane.service: example-service
       agent-control-plane.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"

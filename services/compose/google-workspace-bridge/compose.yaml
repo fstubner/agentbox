@@ -32,3 +32,4 @@ services:
     labels:
       agent-control-plane.service: google-workspace-bridge
       agent-control-plane.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"

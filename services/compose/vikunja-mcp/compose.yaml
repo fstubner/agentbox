@@ -33,6 +33,7 @@ services:
     labels:
       agent-control-plane.service: vikunja-mcp
       agent-control-plane.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
 
 networks:
   vikunja:
