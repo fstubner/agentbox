@@ -177,7 +177,7 @@ def deploy(service: str, dry_run: bool = False) -> int:
     project = env["AGENTBOX_COMPOSE_PREFIX"] + service
 
     compose_cmd = ["docker", "compose", "-p", project, "-f", "compose.yaml",
-                   "config", "--no-interpolate"] if dry_run else                   ["docker", "compose", "-p", project, "-f", "compose.yaml", "up", "-d"]
+                   "config", "--no-interpolate"] if dry_run else                   ["docker", "compose", "-p", project, "-f", "compose.yaml", "up", "-d", "--build"]
 
     if env_file.exists():
         text = env_file.read_text(encoding="utf-8")
@@ -222,6 +222,36 @@ ENDPOINTS = {
 }
 
 
+def image_freshness() -> int:
+    """Warn when a running service image is older than its source's last commit."""
+    stale = 0
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "--format", "{{.Image}}"],
+            capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        report(WARN, "docker unavailable; skipped image freshness check")
+        return 0
+    images = {line.strip() for line in out.splitlines() if ":local" in line}
+    for image in sorted(images):
+        service = image.split("/")[-1].split(":")[0]
+        svc_dir = REPO / "services" / "compose" / service
+        if not svc_dir.exists():
+            continue
+        created = subprocess.run(
+            ["docker", "image", "inspect", image, "--format", "{{.Created}}"],
+            capture_output=True, text=True).stdout.strip()[:19]
+        commit_ts = subprocess.run(
+            ["git", "-C", str(REPO), "log", "-1", "--format=%cI", "--", str(svc_dir)],
+            capture_output=True, text=True).stdout.strip()[:19]
+        if created and commit_ts and created < commit_ts:
+            report(FAIL, f"stale image: {image} built {created} < last source commit {commit_ts} — run cli/agentbox deploy {service}")
+            stale += 1
+        elif created:
+            report(OK, f"image fresh: {image}")
+    return stale
+
+
 def doctor() -> int:
     bad = 0
     for tool in ("git", "curl", "docker"):
@@ -239,6 +269,7 @@ def doctor() -> int:
     disk = shutil.disk_usage("/")
     pct = disk.used * 100 // disk.total
     report(OK if pct < 90 else WARN, f"disk usage {pct}%")
+    bad += image_freshness()
     bad += validate()
     return 1 if bad else 0
 
