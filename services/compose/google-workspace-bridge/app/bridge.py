@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import base64
-import hmac
 import html
 import json
 import os
@@ -8,7 +7,8 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from bridge_base import BridgeError, BridgeHandler, serve
 
 
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -22,13 +22,6 @@ PORT = int(os.environ.get("BRIDGE_PORT", "8080"))
 MAX_BODY_BYTES = 128 * 1024
 
 
-class BridgeError(Exception):
-    def __init__(self, status, message):
-        super().__init__(str(message))
-        self.status = status
-        self.message = message
-
-
 def require_config():
     missing = [
         name for name, value in {
@@ -40,28 +33,6 @@ def require_config():
     ]
     if missing:
         raise BridgeError(503, {"missing_env": missing})
-
-
-def parse_json_body(handler):
-    length = int(handler.headers.get("Content-Length", "0"))
-    if length > MAX_BODY_BYTES:
-        raise BridgeError(413, "request body too large")
-    if length == 0:
-        return {}
-    try:
-        body = json.loads(handler.rfile.read(length).decode("utf-8"))
-    except json.JSONDecodeError:
-        raise BridgeError(400, "invalid JSON body")
-    if not isinstance(body, dict):
-        raise BridgeError(400, "JSON body must be an object")
-    return body
-
-
-def require_auth(handler):
-    if not BRIDGE_TOKEN:
-        raise BridgeError(503, "GOOGLE_BRIDGE_TOKEN is not configured")
-    if not hmac.compare_digest(handler.headers.get("Authorization", ""), f"Bearer {BRIDGE_TOKEN}"):
-        raise BridgeError(401, "invalid bridge token")
 
 
 def post_form(url, data):
@@ -378,89 +349,43 @@ def calendar_create_event(body):
     return google_json("POST", f"https://www.googleapis.com/calendar/v3/calendars/{urllib.parse.quote(calendar_id, safe='')}/events", event) or {}
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "google-workspace-bridge/0.1"
+SCHEMA = {"service": "google-workspace-bridge", "tools": [
+    "POST /v1/gmail/search", "POST /v1/gmail/read", "POST /v1/gmail/clean",
+    "POST /v1/gmail/search_grocer_orders", "POST /v1/gmail/extract_grocer_order",
+    "POST /v1/gmail/labels/list", "POST /v1/gmail/labels/create", "POST /v1/gmail/modify",
+    "POST /v1/calendar/list", "POST /v1/calendar/events", "POST /v1/calendar/freebusy",
+    "POST /v1/calendar/events/create",
+]}
 
-    def log_message(self, fmt, *args):
-        print(f"{self.address_string()} {self.command} {self.path.split('?', 1)[0]} {fmt % args}", flush=True)
-
-    def send_json(self, status, payload):
-        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def route(self):
-        path = urllib.parse.urlparse(self.path).path.rstrip("/") or "/"
-        if self.command == "GET" and path == "/health":
-            return 200, {"ok": True}
-        require_auth(self)
-        if self.command == "GET" and path == "/schema":
-            return 200, {"service": "google-workspace-bridge", "tools": [
-                "POST /v1/gmail/search",
-                "POST /v1/gmail/read",
-                "POST /v1/gmail/clean",
-                "POST /v1/gmail/search_grocer_orders",
-                "POST /v1/gmail/extract_grocer_order",
-                "POST /v1/gmail/labels/list",
-                "POST /v1/gmail/labels/create",
-                "POST /v1/gmail/modify",
-                "POST /v1/calendar/list",
-                "POST /v1/calendar/events",
-                "POST /v1/calendar/freebusy",
-                "POST /v1/calendar/events/create",
-            ]}
-        body = parse_json_body(self)
-        if self.command == "POST" and path == "/v1/gmail/search":
-            return 200, gmail_search(body)
-        if self.command == "POST" and path == "/v1/gmail/read":
-            return 200, gmail_read(body)
-        if self.command == "POST" and path == "/v1/gmail/clean":
-            return 200, gmail_clean(body)
-        if self.command == "POST" and path == "/v1/gmail/search_grocer_orders":
-            return 200, search_grocer_orders(body)
-        if self.command == "POST" and path == "/v1/gmail/extract_grocer_order":
-            return 200, extract_grocer_order(body)
-        if self.command == "POST" and path == "/v1/gmail/labels/list":
-            return 200, gmail_list_labels(body)
-        if self.command == "POST" and path == "/v1/gmail/labels/create":
-            return 200, gmail_create_label(body)
-        if self.command == "POST" and path == "/v1/gmail/modify":
-            return 200, gmail_modify(body)
-        if self.command == "POST" and path == "/v1/calendar/list":
-            return 200, calendar_list(body)
-        if self.command == "POST" and path == "/v1/calendar/events":
-            return 200, calendar_events(body)
-        if self.command == "POST" and path == "/v1/calendar/freebusy":
-            return 200, calendar_freebusy(body)
-        if self.command == "POST" and path == "/v1/calendar/events/create":
-            return 200, calendar_create_event(body)
-        raise BridgeError(404, "not found")
-
-    def do_GET(self):
-        self.handle_request()
-
-    def do_POST(self):
-        self.handle_request()
-
-    def handle_request(self):
-        try:
-            status, payload = self.route()
-        except BridgeError as exc:
-            status, payload = exc.status, {"error": exc.message}
-        except Exception as exc:
-            status, payload = 500, {"error": type(exc).__name__}
-        self.send_json(status, payload)
+# Each route function takes the request body and returns a JSON-able payload.
+_POST_ROUTES = {
+    "/v1/gmail/search": gmail_search,
+    "/v1/gmail/read": gmail_read,
+    "/v1/gmail/clean": gmail_clean,
+    "/v1/gmail/search_grocer_orders": search_grocer_orders,
+    "/v1/gmail/extract_grocer_order": extract_grocer_order,
+    "/v1/gmail/labels/list": gmail_list_labels,
+    "/v1/gmail/labels/create": gmail_create_label,
+    "/v1/gmail/modify": gmail_modify,
+    "/v1/calendar/list": calendar_list,
+    "/v1/calendar/events": calendar_events,
+    "/v1/calendar/freebusy": calendar_freebusy,
+    "/v1/calendar/events/create": calendar_create_event,
+}
 
 
-def main():
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"google-workspace-bridge listening on http://{HOST}:{PORT}", flush=True)
-    server.serve_forever()
+def _wrap(fn):
+    return lambda handler, body: (200, fn(body or {}))
+
+
+class GoogleWorkspaceBridge(BridgeHandler):
+    server_version = "google-workspace-bridge/1.0"
+    bridge_token = BRIDGE_TOKEN
+    routes = {
+        ("GET", "/schema"): lambda handler, body: (200, SCHEMA),
+        **{("POST", path): _wrap(fn) for path, fn in _POST_ROUTES.items()},
+    }
 
 
 if __name__ == "__main__":
-    main()
+    serve(GoogleWorkspaceBridge)
