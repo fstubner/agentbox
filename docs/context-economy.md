@@ -115,6 +115,40 @@ execution (CPU) + rate-distortion (send the surprise, not the data). A proxy
 has no model, so it cannot predict — this is only possible because we own a
 free local model at the producer side.
 
+## Round 2 — farther-afield domains (second independent fan-out)
+
+A second fan-out, restricted to domains not yet used (logistics, immunology,
+auction theory, cartography, journalism, ATC, psychology), produced two more
+promotions — both named independently by all three reviewers:
+
+### 6. Context-slot auction (mechanism design / VCG)
+
+Context is a scarce resource with competing producers; today nothing prices
+it. Let each bridge/payload *bid* its estimated value-of-information per token,
+and let the gateway admit only value-density winners into the window. This is
+the missing *mechanism* that operationalizes the VoI principle when several
+sources compete — and it only works because we own both the bidders and the
+auctioneer. (Vickrey-style scoring keeps producers honest about their VoI
+estimates.)
+
+### 7. Cartographic generalization (zoom levels / vector tiles)
+
+Strengthens LOD (§3) from "summarize prose" to a structural contract: bridges
+partition data into semantic zoom levels (year → week → event → full body) and
+serve exactly the zoom the current task needs, with IDs as tile handles for
+zoom-in. Map generalization (Douglas-Peucker) for data: drop detail below the
+decision's resolution *before* transmission.
+
+Also promoted to the parked list from round 2: **ATC flow control** (meter
+tool-call arrivals into fixed context "runway slots" — backpressure at the
+producer instead of buffering in context), **working-memory rehearsal**
+(psychology: emit 4±1 named chunks; re-inject only items whose decay the
+model's behavior reveals), **immune memory/tolerance** (whitelist stable
+"self" patterns, spend tokens only on anomalies; clonal memory for recurring
+intents), and **delta + checksum integrity** (ECC: terse deltas with periodic
+checksums; full resync only on mismatch — the integrity layer §4's coherence
+needs anyway).
+
 ## The governing principle the review sharpened: value-of-information
 
 Underneath all five mechanisms is one economic gate (named by two reviewers as
