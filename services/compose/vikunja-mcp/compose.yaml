@@ -2,7 +2,7 @@ services:
   vikunja-mcp:
     build:
       context: .
-    image: agent-control-plane/vikunja-mcp:local
+    image: agentbox/vikunja-mcp:local
     environment:
       VIKUNJA_BRIDGE_URL: "${VIKUNJA_BRIDGE_URL:-http://vikunja-bridge:8080}"
       VIKUNJA_BRIDGE_TOKEN: "${VIKUNJA_BRIDGE_TOKEN:-}"
@@ -31,11 +31,11 @@ services:
       start_period: 10s
     restart: unless-stopped
     labels:
-      agent-control-plane.service: vikunja-mcp
-      agent-control-plane.exposure: private
+      agentbox.service: vikunja-mcp
+      agentbox.exposure: private
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
 
 networks:
   vikunja:
     external: true
-    name: ${AGENTBOX_COMPOSE_PREFIX:-}vikunja_default
+    name: vikunja_default

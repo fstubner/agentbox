@@ -166,7 +166,7 @@ def deploy(service: str, dry_run: bool = False) -> int:
     Env file: $AGENTBOX_ENV_DIR/<service>.env (default ~/.config/agentbox,
     falling back to ~/.config/agent-control-plane for older installs).
     op:// references are resolved through the 1Password CLI without printing
-    secret values. Compose project name is $AGENTBOX_COMPOSE_PREFIX + service.
+    secret values. Compose project name is the service name.
     """
     compose_dir = REPO / "services" / "compose" / service
     if not (compose_dir / "compose.yaml").exists():
@@ -188,9 +188,8 @@ def deploy(service: str, dry_run: bool = False) -> int:
     env = dict(os.environ)
     env.setdefault("AGENT_CONTROL_PLANE_STATE_DIR",
                    str(Path("~/.local/state/agent-control-plane").expanduser()))
-    env.setdefault("AGENTBOX_COMPOSE_PREFIX", "")
     env["AGENTBOX_SOURCE_SHA"] = source_sha(service)
-    project = env["AGENTBOX_COMPOSE_PREFIX"] + service
+    project = service
 
     compose_cmd = ["docker", "compose", "-p", project, "-f", "compose.yaml",
                    "config", "--no-interpolate"] if dry_run else                   ["docker", "compose", "-p", project, "-f", "compose.yaml", "up", "-d", "--build"]
@@ -255,7 +254,7 @@ def deploy_freshness() -> int:
         if not label or label == "<no value>":
             continue  # not an agentbox-managed service, or built before hashing existed
         service = subprocess.run(
-            ["docker", "inspect", name, "--format", "{{ index .Config.Labels \"agentbox.service\" }}{{ index .Config.Labels \"agent-control-plane.service\" }}"],
+            ["docker", "inspect", name, "--format", "{{ index .Config.Labels \"agentbox.service\" }}"],
             capture_output=True, text=True).stdout.strip().replace("<no value>", "")
         if not service or not (REPO / "services" / "compose" / service).exists():
             continue

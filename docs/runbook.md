@@ -25,9 +25,9 @@ cli/agentbox deploy <service>
 `deploy` validates the repo, loads `$AGENTBOX_ENV_DIR/<service>.env`
 (default `~/.config/agentbox`, falling back to `~/.config/agent-control-plane`),
 resolves `op://` secrets through the 1Password CLI when present, and runs
-`docker compose -p $AGENTBOX_COMPOSE_PREFIX<service> up -d`. Set
-`AGENTBOX_COMPOSE_PREFIX` if your existing stacks were created under a
-different compose project prefix.
+`docker compose -p <service> up -d`. The compose project name is the service
+name, so a service's default network is `<service>_default` — that is the name
+the bridge/MCP pairs join as an external network.
 Each service directory ships a `*.env.example` or `*.op.env.example` — copy and fill in before first start. Bridges resolve 1Password `op://` references at deploy time if you use 1Password; otherwise populate the plain `.env` directly.
 
 ## Router

@@ -2,7 +2,7 @@ services:
   google-workspace-bridge:
     build:
       context: .
-    image: agent-control-plane/google-workspace-bridge:local
+    image: agentbox/google-workspace-bridge:local
     environment:
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
       GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
@@ -30,6 +30,6 @@ services:
       start_period: 10s
     restart: unless-stopped
     labels:
-      agent-control-plane.service: google-workspace-bridge
-      agent-control-plane.exposure: private
+      agentbox.service: google-workspace-bridge
+      agentbox.exposure: private
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
