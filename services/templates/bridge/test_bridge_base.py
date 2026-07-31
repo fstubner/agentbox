@@ -117,3 +117,89 @@ def test_unexpected_exception_becomes_json_500():
         assert "traceback" not in exc.read().decode().lower()
     finally:
         server.shutdown()
+
+
+# --- readiness and structured logging ---------------------------------------
+
+
+def test_ready_is_public_and_defaults_ok():
+    server, base = serve(make_handler("secret"))
+    try:
+        with urllib.request.urlopen(base + "/ready", timeout=5) as resp:
+            payload = json.loads(resp.read())
+        assert resp.status == 200 and payload["ok"] is True
+    finally:
+        server.shutdown()
+
+
+def test_ready_returns_503_when_upstream_down():
+    """The Vikunja-outage case: bridge alive, backing service gone."""
+    cls = type("H", (bridge_base.BridgeHandler,), {
+        "bridge_token": "secret",
+        "routes": {},
+        "upstream_status": lambda self: {"ok": False, "upstream": {"reachable": False}},
+    })
+    server, base = serve(cls)
+    try:
+        urllib.request.urlopen(base + "/ready", timeout=5)
+        raise AssertionError("expected 503")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 503
+    finally:
+        server.shutdown()
+
+
+def test_health_stays_up_when_upstream_is_down():
+    """Liveness must not depend on the upstream, or Docker restart-loops us."""
+    cls = type("H", (bridge_base.BridgeHandler,), {
+        "bridge_token": "secret",
+        "routes": {},
+        "upstream_status": lambda self: {"ok": False, "upstream": {"reachable": False}},
+    })
+    server, base = serve(cls)
+    try:
+        with urllib.request.urlopen(base + "/health", timeout=5) as resp:
+            assert resp.status == 200 and json.loads(resp.read())["ok"] is True
+    finally:
+        server.shutdown()
+
+
+def test_request_log_is_json_with_size_and_allowlisted_params(capfd):
+    server, base = serve(make_handler("secret"))
+    try:
+        call(base, "/v1/thing?view=lean&s=secret-search", token="secret",
+             body={"v": 1}, method="POST")
+    finally:
+        server.shutdown()
+    lines = [ln for ln in capfd.readouterr().out.splitlines() if ln.startswith("{")]
+    record = json.loads(lines[-1])
+    assert record["method"] == "POST"
+    assert record["path"] == "/v1/thing"
+    assert record["status"] == 200
+    assert record["bytes"] > 0
+    assert isinstance(record["ms"], float)
+    assert record["params"] == {"view": "lean"}
+
+
+def test_request_log_never_contains_credentials_or_free_text(capfd):
+    """Auth header, body, and non-allowlisted params must never be logged."""
+    server, base = serve(make_handler("secret"))
+    try:
+        call(base, "/v1/thing?s=private-search-term", token="secret",
+             body={"v": "sensitive-body-value"}, method="POST")
+    finally:
+        server.shutdown()
+    out = capfd.readouterr().out
+    assert "secret" not in out
+    assert "private-search-term" not in out
+    assert "sensitive-body-value" not in out
+
+
+def test_probe_requests_are_not_logged(capfd):
+    server, base = serve(make_handler("secret"))
+    try:
+        urllib.request.urlopen(base + "/health", timeout=5).read()
+        urllib.request.urlopen(base + "/ready", timeout=5).read()
+    finally:
+        server.shutdown()
+    assert [ln for ln in capfd.readouterr().out.splitlines() if ln.startswith("{")] == []

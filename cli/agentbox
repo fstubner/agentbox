@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -236,6 +237,64 @@ ENDPOINTS = {
     "router": "http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health",
 }
 
+# Bridges that front a backing service expose /ready, which probes it. Their
+# container healthcheck deliberately does not — see bridge_base's module
+# docstring. Without this check a downed backing service is invisible: on
+# 2026-07-31 Vikunja was down for hours while all six bridges reported healthy.
+BRIDGE_READY_PORTS = {
+    "vikunja-bridge": 3466,
+    "memory-bridge": 3471,
+    "google-workspace-bridge": 3470,
+}
+
+
+# Must exceed the bridge's own upstream probe timeout (5s in bridge_base), or
+# a hanging upstream trips this timeout first and the outage is misreported as
+# "not deployed" — a warning, which would let doctor exit 0 during an outage.
+READY_TIMEOUT = 10
+
+
+def bridge_readiness() -> int:
+    """Report bridges whose upstream is unreachable."""
+    bad = 0
+    for service, port in BRIDGE_READY_PORTS.items():
+        url = f"http://127.0.0.1:{port}/ready"
+        try:
+            with urllib.request.urlopen(url, timeout=READY_TIMEOUT) as response:
+                payload = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = json.loads(exc.read()).get("upstream", {}).get("error", "")
+            except Exception:  # noqa: BLE001 — diagnostics only
+                pass
+            report(FAIL, f"{service} not ready (HTTP {exc.code}){': ' + detail if detail else ''}")
+            bad += 1
+            continue
+        except TimeoutError:
+            report(FAIL, f"{service} /ready timed out after {READY_TIMEOUT}s")
+            bad += 1
+            continue
+        except urllib.error.URLError as exc:
+            # Connection refused means nothing is listening — most likely the
+            # service is simply not deployed, which is not a readiness failure.
+            if isinstance(exc.reason, ConnectionRefusedError):
+                report(WARN, f"{service} /ready refused; is it deployed?")
+                continue
+            report(FAIL, f"{service} /ready unreachable: {exc.reason}")
+            bad += 1
+            continue
+        except Exception as exc:  # noqa: BLE001
+            report(FAIL, f"{service} /ready failed: {type(exc).__name__}")
+            bad += 1
+            continue
+        upstream = payload.get("upstream")
+        if upstream is None:
+            report(OK, f"{service} ready (no upstream)")
+        else:
+            report(OK, f"{service} ready; upstream reachable")
+    return bad
+
 
 def deploy_freshness() -> int:
     """Flag running containers whose image source differs from current source."""
@@ -285,6 +344,7 @@ def doctor() -> int:
     pct = disk.used * 100 // disk.total
     report(OK if pct < 90 else WARN, f"disk usage {pct}%")
     bad += deploy_freshness()
+    bad += bridge_readiness()
     bad += validate()
     return 1 if bad else 0
 

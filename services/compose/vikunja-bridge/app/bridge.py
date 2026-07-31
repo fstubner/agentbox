@@ -177,6 +177,22 @@ def add_comment(handler, task_id, body):
 class VikunjaBridge(BridgeHandler):
     server_version = "vikunja-bridge/1.0"
     bridge_token = os.environ.get("VIKUNJA_BRIDGE_TOKEN", "")
+
+    def upstream_status(self):
+        """Probe Vikunja itself, so /ready fails when the task backend is down.
+
+        Deliberately not wired into /health: the container healthcheck uses
+        that, and a Vikunja outage should not restart-loop a working bridge.
+        """
+        try:
+            with urllib.request.urlopen(f"{VIKUNJA_URL}/api/v1/info", timeout=5) as response:
+                reachable = response.status == 200
+            return {"ok": reachable, "upstream": {"vikunja": VIKUNJA_URL,
+                                                  "reachable": reachable}}
+        except (urllib.error.URLError, OSError) as exc:
+            return {"ok": False, "upstream": {"vikunja": VIKUNJA_URL,
+                                              "reachable": False,
+                                              "error": str(getattr(exc, "reason", exc))[:200]}}
     routes = {
         ("GET", "/schema"): get_schema,
         ("GET", "/v1/projects"): list_projects,
