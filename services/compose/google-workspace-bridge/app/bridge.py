@@ -381,6 +381,32 @@ def _wrap(fn):
 class GoogleWorkspaceBridge(BridgeHandler):
     server_version = "google-workspace-bridge/1.0"
     bridge_token = BRIDGE_TOKEN
+
+    def upstream_status(self):
+        """Validate the OAuth refresh token, which is this bridge's upstream.
+
+        A credential bridge fronting a remote API looks like it has nothing to
+        probe — it holds a secret rather than pointing at a service we run.
+        That is wrong, and the mistake was expensive: the refresh token was
+        revoked and every Gmail and Calendar route returned 500 while /health
+        and a stubbed /ready both reported fine. An expired credential is the
+        single most likely failure for this bridge, and it is checkable.
+        """
+        try:
+            access_token()
+            return {"ok": True, "upstream": {"google_oauth": "token refresh succeeded"}}
+        except urllib.error.HTTPError as exc:
+            detail = "unknown"
+            try:
+                body = json.loads(exc.read().decode("utf-8"))
+                detail = body.get("error", "unknown")
+            except Exception:  # noqa: BLE001 — diagnostics only
+                pass
+            hint = (" — refresh token revoked or expired; re-run the OAuth consent flow"
+                    if detail == "invalid_grant" else "")
+            return {"ok": False, "upstream": {"google_oauth": f"HTTP {exc.code}: {detail}{hint}"}}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "upstream": {"google_oauth": f"{type(exc).__name__}"}}
     routes = {
         ("GET", "/schema"): lambda handler, body: (200, SCHEMA),
         **{("POST", path): _wrap(fn) for path, fn in _POST_ROUTES.items()},

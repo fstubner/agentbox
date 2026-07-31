@@ -295,7 +295,10 @@ def bridge_readiness() -> int:
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
-                detail = json.loads(exc.read()).get("upstream", {}).get("error", "")
+                upstream = json.loads(exc.read()).get("upstream") or {}
+                # Bridges name the field after their upstream, so take whatever
+                # strings are there rather than guessing a key.
+                detail = "; ".join(str(v) for v in upstream.values() if isinstance(v, str))
             except Exception:  # noqa: BLE001 — diagnostics only
                 pass
             report(FAIL, f"{service} not ready (HTTP {exc.code}){': ' + detail if detail else ''}")
