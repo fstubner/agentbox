@@ -154,6 +154,19 @@ def validate() -> int:
     except OSError:
         error("policies/approval-policy.yaml missing")
 
+    # bridge_base.py is vendored into each bridge (the Dockerfile only copies
+    # app/*.py, so it cannot be shared at build time). Nothing prevented the
+    # copies from drifting, which would silently un-fix a security property in
+    # one bridge while the template still looked correct.
+    canonical = REPO / "services" / "templates" / "bridge" / "app" / "bridge_base.py"
+    if canonical.exists():
+        expected = hashlib.sha256(canonical.read_bytes()).hexdigest()
+        for copy in sorted(REPO.glob("services/compose/*/app/bridge_base.py")):
+            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
+                error(f"bridge_base.py drifted from template: {copy.relative_to(REPO)}")
+    else:
+        error("services/templates/bridge/app/bridge_base.py missing")
+
     report(OK if failures == 0 else FAIL, f"validate finished with {failures} error(s)")
     return 1 if failures else 0
 
@@ -232,9 +245,26 @@ def probe(url: str, timeout: float = 5) -> bool:
         return False
 
 
+# Every service in docs/architecture.md, so "is the platform up" is one command
+# rather than a set of remembered curls.
+#
+# Severity is deliberate. The role workers are core: the router hands
+# /context/extract and /reason/check to them, so a stopped worker is a broken
+# capability. Vision and the control plane are auxiliary — nothing in the
+# assistant's request path depends on them, and the evaluator legitimately
+# stops model servers while benchmarking. Marking those FAIL would make doctor
+# red during normal work, which trains people to ignore it.
 ENDPOINTS = {
-    "main model": os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models",
-    "router": "http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health",
+    "main model": (os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models", FAIL),
+    "router": ("http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health", FAIL),
+    "context worker": ("http://127.0.0.1:1235/v1/models", FAIL),
+    "reason worker": ("http://127.0.0.1:1236/v1/models", FAIL),
+    "vikunja-mcp": ("http://127.0.0.1:3467/health", FAIL),
+    "memory-mcp": ("http://127.0.0.1:3472/health", FAIL),
+    "google-workspace-mcp-lite": ("http://127.0.0.1:3473/health", FAIL),
+    "vision model": ("http://127.0.0.1:1240/v1/models", WARN),
+    "control plane api": ("http://127.0.0.1:8000/api/evals/health", WARN),
+    "control plane ui": ("http://127.0.0.1:4321/", WARN),
 }
 
 # Bridges that front a backing service expose /ready, which probes it. Their
@@ -334,12 +364,13 @@ def doctor() -> int:
         else:
             report(FAIL, f"{tool} missing")
             bad += 1
-    for name, url in ENDPOINTS.items():
+    for name, (url, severity) in ENDPOINTS.items():
         if probe(url):
             report(OK, f"{name} responding: {url}")
         else:
-            report(FAIL, f"{name} not responding: {url}")
-            bad += 1
+            report(severity, f"{name} not responding: {url}")
+            if severity is FAIL:
+                bad += 1
     disk = shutil.disk_usage("/")
     pct = disk.used * 100 // disk.total
     report(OK if pct < 90 else WARN, f"disk usage {pct}%")
@@ -350,8 +381,8 @@ def doctor() -> int:
 
 
 def status() -> int:
-    for name, url in ENDPOINTS.items():
-        print(f"{name:12} {'up' if probe(url) else 'DOWN':4} {url}")
+    for name, (url, _severity) in ENDPOINTS.items():
+        print(f"{name:26} {'up' if probe(url) else 'DOWN':4} {url}")
     return 0
 
 
