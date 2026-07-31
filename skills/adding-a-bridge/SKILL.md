@@ -17,8 +17,14 @@ empty token because auth was hand-rolled.
    `cp -r services/templates/bridge services/compose/<name>-bridge`
 
 2. **Do NOT edit `app/bridge_base.py`.** It provides auth, error handling,
-   body limits, health, and the server loop. Editing it per-bridge is how
-   divergence bugs start.
+   body limits, health, readiness, request logging, and the server loop.
+   Editing it per-bridge is how divergence bugs start.
+
+   The file is *vendored* — each bridge has its own copy, because the
+   Dockerfile only copies `app/*.py` and cannot reach outside the build
+   context. When the template legitimately changes, copy it into every bridge
+   in the same commit. `cli/agentbox validate` hashes the copies against the
+   template and fails on drift, so a partial sync cannot ship.
 
 3. **Write `app/bridge.py`** — the only file you author:
    - Read two secrets from env: the upstream credential and `*_BRIDGE_TOKEN`.
@@ -26,32 +32,62 @@ empty token because auth was hand-rolled.
      Raise `BridgeError(status, msg)` for expected failures; return only the
      safe subset of the upstream response.
    - Subclass `BridgeHandler`, set `bridge_token` and `routes`.
+   - **If your bridge fronts a service you run** (rather than a remote SaaS
+     API), override `upstream_status()` to probe it. Return
+     `{"ok": bool, "upstream": {...}}`. This is what makes `/ready` meaningful.
+     Do not add the upstream to `/health` — see below.
+   - Consider a `view` parameter on list endpoints that return many objects.
+     Emitting only the fields the agent acts on is the cheapest context saving
+     available, because the tokens are never generated. See
+     `docs/context-economy.md` and `vikunja-bridge` for the pattern.
 
-4. **Rename the env vars** in `compose.yaml` and `*.env.example` to match your
+4. **Know which probe is which.** `/health` is liveness and must never touch
+   the upstream — the container healthcheck uses it, and a bridge that
+   restart-loops because its backing service is down is strictly worse than
+   one that stays up and reports honestly. `/ready` is readiness and does probe
+   the upstream. A downed backing service should turn `/ready` red and leave
+   `/health` green.
+
+5. **Rename the env vars** in `compose.yaml` and `*.env.example` to match your
    service. Keep the `:?` guards so a missing secret fails the deploy loudly.
    Keep the host port bound to `127.0.0.1` (or an explicit LAN IP).
 
-5. **Add the token to the deny-by-default policy if the bridge can mutate
+6. **Add the token to the deny-by-default policy if the bridge can mutate
    state.** A read-only bridge is `approval_required` at most; a bridge that
    sends/deletes/pays belongs in `always_denied` unless explicitly gated.
    Update `policies/approval-policy.yaml`.
 
-6. **Register the bridge with the assistant** as an MCP lever (a matching
+7. **Register the bridge with the assistant** as an MCP lever (a matching
    `*-mcp` service), not by giving the assistant the bridge URL directly, if
    the assistant needs to call it.
 
-7. **Verify before deploy:**
-   - `python3 -m pytest services/compose/<name>-bridge` (copy the base test).
-   - `cli/agentbox validate` (checks bindings, resource limits, non-root).
-   - `curl -s localhost:<port>/health` → 200; the same route without a token → 401.
+8. **Add it to `doctor`.** A service nothing checks is a service that can be
+   down for hours without anyone noticing — that has already happened once.
+   Put the port in `BRIDGE_READY_PORTS` in `cli/agentbox` if it has an
+   upstream, and in `ENDPOINTS` otherwise.
 
-8. **Deploy:** `cli/agentbox deploy <name>-bridge`.
+9. **Verify before deploy:**
+   - `python3 -m pytest services/compose/<name>-bridge` (copy the base test).
+   - `cli/agentbox validate` (bindings, resource limits, non-root, base drift).
+   - `curl -s localhost:<port>/health` → 200; the same route without a token → 401.
+   - `curl -s localhost:<port>/ready` → 200 with the upstream up.
+   - **Run the outage drill if you implemented `upstream_status()`:** stop the
+     backing service, confirm `/health` stays 200 while `/ready` returns 503
+     and `cli/agentbox doctor` exits non-zero, then restart it. A readiness
+     check nobody has seen fail is a readiness check that may not work — the
+     first version of this one silently downgraded a real outage to a warning.
+
+10. **Deploy:** `cli/agentbox deploy <name>-bridge`.
 
 ## Checklist (all enforced by base/template/validate — confirm you didn't undo them)
 
-- [ ] `bridge_base.py` unchanged
+- [ ] `bridge_base.py` unchanged, and identical to the template in every bridge
 - [ ] upstream credential and bridge token are distinct env vars
 - [ ] every mutating route validates its input and returns only allowlisted fields
 - [ ] host port bound to loopback/LAN, never `0.0.0.0` on the host
 - [ ] policy entry added for any state-changing capability
+- [ ] `upstream_status()` implemented if the bridge fronts a service you run
+- [ ] `/health` does **not** touch the upstream
+- [ ] registered in `doctor` so an outage is visible
+- [ ] no secret, request body, or free-text query param reaches the request log
 - [ ] tests + `validate` pass
