@@ -74,6 +74,32 @@ def first(query, key, default):
     return value[0] if value else default
 
 
+# --- projection pushdown (docs/context-economy.md §1) ------------------------
+#
+# A lean view emits only the fields a task-picking agent acts on, so the excess
+# is never generated rather than compressed after the fact. `full` stays the
+# default until the A/B eval shows lean costs no task accuracy.
+
+LEAN_TASK_FIELDS = ("id", "title", "done", "priority")
+TASK_VIEWS = {"full", "lean"}
+
+
+def require_view(query, allowed=TASK_VIEWS, default="full"):
+    view = first(query, "view", default)
+    if view not in allowed:
+        raise BridgeError(400, f"view must be one of: {', '.join(sorted(allowed))}")
+    return view
+
+
+def project_tasks(payload, fields=LEAN_TASK_FIELDS):
+    """Narrow a task list to `fields`. Absent keys are omitted, not nulled, so
+    the projection never invents data. Non-list payloads pass through."""
+    if not isinstance(payload, list):
+        return payload
+    return [{k: item[k] for k in fields if k in item}
+            for item in payload if isinstance(item, dict)]
+
+
 # --- static routes ----------------------------------------------------------
 
 
@@ -82,7 +108,14 @@ def get_schema(handler, body):
         "GET /v1/projects", "POST /v1/projects", "GET /v1/tasks", "GET /v1/tasks/{id}",
         "POST /v1/projects/{project_id}/tasks", "PATCH /v1/tasks/{id}",
         "POST /v1/tasks/{id}/comments",
-    ]}
+    ], "views": {
+        "GET /v1/tasks": {
+            "param": "view", "default": "full", "values": sorted(TASK_VIEWS),
+            "lean_fields": list(LEAN_TASK_FIELDS),
+            "hint": "use view=lean when picking or ranking tasks; "
+                    "re-read a single task with GET /v1/tasks/{id} for full detail",
+        },
+    }}
 
 
 def list_projects(handler, body):
@@ -103,12 +136,14 @@ def create_project(handler, body):
 
 def list_tasks(handler, body):
     q = query_of(handler)
-    return 200, vikunja_request("GET", "/tasks", query={
+    view = require_view(q)
+    tasks = vikunja_request("GET", "/tasks", query={
         "page": first(q, "page", "1"), "per_page": first(q, "per_page", "50"),
         "s": first(q, "search", ""), "sort_by": first(q, "sort_by", ""),
         "order_by": first(q, "order_by", ""), "filter": first(q, "filter", ""),
         "expand": first(q, "expand", ""),
     })
+    return 200, (project_tasks(tasks) if view == "lean" else tasks)
 
 
 # --- dynamic routes (via route_fallback) ------------------------------------
