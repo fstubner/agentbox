@@ -2,7 +2,7 @@ services:
   vikunja-bridge:
     build:
       context: .
-    image: agent-control-plane/vikunja-bridge:local
+    image: agentbox/vikunja-bridge:local
     environment:
       VIKUNJA_URL: "${VIKUNJA_URL:-http://vikunja:3456}"
       VIKUNJA_API_TOKEN: "${VIKUNJA_API_TOKEN:-}"
@@ -31,11 +31,11 @@ services:
       start_period: 10s
     restart: unless-stopped
     labels:
-      agent-control-plane.service: vikunja-bridge
-      agent-control-plane.exposure: private
+      agentbox.service: vikunja-bridge
+      agentbox.exposure: private
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
 
 networks:
   vikunja:
     external: true
-    name: ${AGENTBOX_COMPOSE_PREFIX:-}vikunja_default
+    name: vikunja_default

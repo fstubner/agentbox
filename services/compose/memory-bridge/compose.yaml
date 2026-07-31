@@ -2,7 +2,7 @@ services:
   memory-bridge:
     build:
       context: .
-    image: agent-control-plane/memory-bridge:local
+    image: agentbox/memory-bridge:local
     environment:
       MEMORY_BRIDGE_TOKEN: "${MEMORY_BRIDGE_TOKEN:-}"
       BRIDGE_HOST: "0.0.0.0"
@@ -30,8 +30,8 @@ services:
       start_period: 10s
     restart: unless-stopped
     labels:
-      agent-control-plane.service: memory-bridge
-      agent-control-plane.exposure: private
+      agentbox.service: memory-bridge
+      agentbox.exposure: private
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
 
 volumes:

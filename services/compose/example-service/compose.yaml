@@ -3,7 +3,7 @@ services:
     image: docker.io/hashicorp/http-echo:1.0
     command:
       - "-listen=:8080"
-      - "-text=agent-control-plane example service"
+      - "-text=agentbox example service"
     ports:
       - "${LAN_BIND_IP:-127.0.0.1}:8088:8080"
     cpus: "0.50"
@@ -16,6 +16,6 @@ services:
       - ALL
     restart: unless-stopped
     labels:
-      agent-control-plane.service: example-service
-      agent-control-plane.exposure: private
+      agentbox.service: example-service
+      agentbox.exposure: private
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"

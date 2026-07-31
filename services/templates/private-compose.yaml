@@ -35,6 +35,6 @@ services:
       start_period: 10s
 
     labels:
-      agent-control-plane.service: app
-      agent-control-plane.exposure: private
+      agentbox.service: app
+      agentbox.exposure: private
 

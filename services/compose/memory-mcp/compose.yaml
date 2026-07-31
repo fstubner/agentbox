@@ -2,7 +2,7 @@ services:
   memory-mcp:
     build:
       context: .
-    image: agent-control-plane/memory-mcp:local
+    image: agentbox/memory-mcp:local
     environment:
       MEMORY_BRIDGE_URL: "${MEMORY_BRIDGE_URL:-http://memory-bridge:8080}"
       MEMORY_BRIDGE_TOKEN: "${MEMORY_BRIDGE_TOKEN:-}"
@@ -31,11 +31,11 @@ services:
       start_period: 10s
     restart: unless-stopped
     labels:
-      agent-control-plane.service: memory-mcp
-      agent-control-plane.exposure: private
+      agentbox.service: memory-mcp
+      agentbox.exposure: private
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
 
 networks:
   memory:
     external: true
-    name: ${AGENTBOX_COMPOSE_PREFIX:-}memory-bridge_default
+    name: memory-bridge_default

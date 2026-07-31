@@ -64,7 +64,7 @@ Deploy after `vikunja` is already running:
 ./deploy/deploy.sh vikunja-bridge
 ```
 
-The bridge joins the existing `agent-control-plane-vikunja_default` Docker network and talks to Vikunja at `http://vikunja:3456`.
+The bridge joins the existing `vikunja_default` Docker network and talks to Vikunja at `http://vikunja:3456`.
 
 ## Sources
 
