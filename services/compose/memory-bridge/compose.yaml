@@ -5,6 +5,9 @@ services:
     image: agentbox/memory-bridge:local
     environment:
       MEMORY_BRIDGE_TOKEN: "${MEMORY_BRIDGE_TOKEN:-}"
+      # Operator credential for approving proposals. Unset = approval
+      # disabled (fails closed); the assistant never receives this.
+      MEMORY_REVIEW_TOKEN: "${MEMORY_REVIEW_TOKEN:-}"
       BRIDGE_HOST: "0.0.0.0"
       BRIDGE_PORT: "8080"
       MEMORY_PATH: "/data/memory.json"

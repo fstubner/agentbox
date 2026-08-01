@@ -19,8 +19,10 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.parent))
 
@@ -389,6 +391,109 @@ def status() -> int:
     return 0
 
 
+# --- memory review ----------------------------------------------------------
+#
+# The assistant proposes; a human approves. Approval needs a credential the
+# assistant does not hold, so it lives here rather than on the MCP surface.
+
+MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE", "http://127.0.0.1:3471")
+
+
+def env_dir() -> str:
+    configured = os.environ.get("AGENTBOX_ENV_DIR")
+    if configured:
+        return configured
+    for candidate in ("~/.config/agentbox", "~/.config/agent-control-plane"):
+        expanded = Path(candidate).expanduser()
+        if expanded.is_dir():
+            return str(expanded)
+    return str(Path("~/.config/agentbox").expanduser())
+
+
+def service_env_values(service: str, keys: tuple[str, ...]) -> dict[str, str]:
+    """Read selected values from a service env file, resolving op:// refs."""
+    directory = Path(env_dir())
+    env_file = directory / f"{service}.env"
+    if not env_file.exists():
+        return {}
+    raw: dict[str, str] = {}
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, _, value = line.partition("=")
+            if key.strip() in keys:
+                raw[key.strip()] = value.strip().strip("'\"")
+    if not any(v.startswith("op://") for v in raw.values()):
+        return raw
+    op_env = dict(os.environ)
+    auth_file = directory / "1password.env"
+    if auth_file.exists() and not op_env.get("OP_SERVICE_ACCOUNT_TOKEN"):
+        for line in auth_file.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition("=")
+                op_env.setdefault(key.strip(), value.strip())
+    resolved = {}
+    for key, value in raw.items():
+        if not value.startswith("op://"):
+            resolved[key] = value
+            continue
+        out = subprocess.run(["op", "read", value], capture_output=True, text=True,
+                             timeout=30, env=op_env, stdin=subprocess.DEVNULL)
+        if out.returncode != 0:
+            report(FAIL, f"could not resolve {key}: {out.stderr.strip()}")
+            return {}
+        resolved[key] = out.stdout.strip()
+    return resolved
+
+
+def memory_request(method: str, path: str, payload: dict | None = None) -> Any:
+    tokens = service_env_values("memory-bridge", ("MEMORY_BRIDGE_TOKEN", "MEMORY_REVIEW_TOKEN"))
+    bridge_token = tokens.get("MEMORY_BRIDGE_TOKEN", "")
+    if not bridge_token:
+        report(FAIL, "MEMORY_BRIDGE_TOKEN not found; is memory-bridge.env configured?")
+        return None
+    headers = {"Authorization": f"Bearer {bridge_token}", "Accept": "application/json"}
+    if tokens.get("MEMORY_REVIEW_TOKEN"):
+        headers["X-Memory-Review-Token"] = tokens["MEMORY_REVIEW_TOKEN"]
+    data = json.dumps(payload).encode() if payload is not None else None
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(MEMORY_BRIDGE_URL + path, data=data,
+                                     method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode()[:300]
+        report(FAIL, f"memory-bridge returned {exc.code}: {detail}")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        report(FAIL, f"memory-bridge unreachable: {type(exc).__name__}")
+        return None
+
+
+def memory_list() -> int:
+    payload = memory_request("GET", "/v1/proposals")
+    if payload is None:
+        return 1
+    proposals = payload.get("proposals", [])
+    if not proposals:
+        print("no pending proposals")
+        return 0
+    for item in proposals:
+        print(f"{item.get('id')}  [{item.get('sensitivity', '?')}]  {item.get('statement', '')}")
+    print(f"\n{len(proposals)} pending — approve with: agentbox memory approve <id>")
+    return 0
+
+
+def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
+    body = {"reason": reason} if action == "reject" else None
+    payload = memory_request("POST", f"/v1/proposals/{urllib.parse.quote(proposal_id)}/{action}", body)
+    if payload is None:
+        return 1
+    report(OK, f"{action}d: {payload.get('statement', proposal_id)}")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="agentbox")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -402,6 +507,14 @@ def main() -> None:
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
     check = pol_sub.add_parser("check")
     check.add_argument("action")
+    mem = sub.add_parser("memory", help="review memory proposals (operator only)")
+    mem_sub = mem.add_subparsers(dest="mem_cmd", required=True)
+    mem_sub.add_parser("list")
+    approve = mem_sub.add_parser("approve")
+    approve.add_argument("proposal_id")
+    reject = mem_sub.add_parser("reject")
+    reject.add_argument("proposal_id")
+    reject.add_argument("--reason", default="")
     args = parser.parse_args()
 
     if args.cmd == "validate":
@@ -414,6 +527,10 @@ def main() -> None:
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":
         sys.exit(policy_check(args.action))
+    if args.cmd == "memory":
+        if args.mem_cmd == "list":
+            sys.exit(memory_list())
+        sys.exit(memory_decide(args.mem_cmd, args.proposal_id, getattr(args, "reason", "")))
 
 
 if __name__ == "__main__":

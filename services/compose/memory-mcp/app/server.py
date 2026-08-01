@@ -63,8 +63,12 @@ MEMORY_FIELDS = {
 TOOLS = [
     {"name": "propose_memory", "description": "Create a memory proposal for user review.", "inputSchema": schema_object(MEMORY_FIELDS, ["statement"])},
     {"name": "list_memory_proposals", "description": "List pending memory proposals.", "inputSchema": schema_object({})},
-    {"name": "approve_memory_proposal", "description": "Approve a memory proposal after explicit user approval.", "inputSchema": schema_object({"proposal_id": {"type": "string"}}, ["proposal_id"])},
-    {"name": "write_memory", "description": "Write an approved low-risk memory. Do not use for sensitive memory without approval.", "inputSchema": schema_object(MEMORY_FIELDS, ["statement"])},
+    # approve_memory_proposal and write_memory are deliberately absent. Both are
+    # operator actions behind the review token (see memory-bridge). Exposing
+    # them here let the assistant approve its own proposals or skip the queue
+    # entirely, which meant there was no review gate at all — only a prose
+    # instruction not to use them, which is not enforcement.
+    # Operators use: cli/agentbox memory approve|reject.
     {"name": "search_memories", "description": "List stored memories for context retrieval.", "inputSchema": schema_object({})},
 ]
 
@@ -75,10 +79,6 @@ def tool_call(name, args):
         return bridge_request("POST", "/v1/proposals", args)
     if name == "list_memory_proposals":
         return bridge_request("GET", "/v1/proposals")
-    if name == "approve_memory_proposal":
-        return bridge_request("POST", f"/v1/proposals/{urllib.parse.quote(args['proposal_id'])}/approve")
-    if name == "write_memory":
-        return bridge_request("POST", "/v1/memories", args)
     if name == "search_memories":
         return bridge_request("GET", "/v1/memories")
     raise ToolError(f"unknown tool: {name}")
