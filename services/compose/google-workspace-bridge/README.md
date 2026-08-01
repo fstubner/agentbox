@@ -56,6 +56,41 @@ LAN_BIND_IP=127.0.0.1
 The raw values are resolved by `deploy/deploy.sh` through 1Password. Do not put
 raw values in the repo or model-visible config.
 
+## Re-authorising (minting a new refresh token)
+
+`GOOGLE_REFRESH_TOKEN` is the only credential here that expires or gets
+revoked. When it does, every route returns 500 and `cli/agentbox doctor`
+reports the bridge as not ready with `invalid_grant`.
+
+```
+python3 services/compose/google-workspace-bridge/oauth-setup.py
+```
+
+It runs the loopback consent flow and prints a new refresh token to stdout
+(never to disk). Store it and redeploy:
+
+```
+op item edit google-workspace-bridge refresh_token='<token>' --vault Agentbox
+cli/agentbox deploy google-workspace-bridge
+cli/agentbox doctor
+```
+
+Over SSH, forward the callback port first — the redirect lands on the server's
+loopback, not your workstation's:
+
+```
+ssh -L 8899:127.0.0.1:8899 alex@<host>
+```
+
+**If the token dies again within a week**, the OAuth consent screen is still in
+"Testing" publishing status, where Google expires refresh tokens after 7 days.
+Publish the app (Cloud console → APIs & Services → OAuth consent screen →
+Publish app). Re-minting without changing that only resets the clock.
+
+Scopes requested are `gmail.modify` and `calendar`, derived from what
+`app/bridge.py` actually calls. Widening them widens what a leaked token
+could do.
+
 ## Gmail Search Examples
 
 Search recent Grocer emails:
