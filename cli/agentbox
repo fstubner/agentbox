@@ -490,7 +490,7 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
     payload = memory_request("POST", f"/v1/proposals/{urllib.parse.quote(proposal_id)}/{action}", body)
     if payload is None:
         return 1
-    report(OK, f"{action}d: {payload.get('statement', proposal_id)}")
+    report(OK, f"{payload.get('status', action)}: {payload.get('statement', proposal_id)}")
     return 0
 
 
