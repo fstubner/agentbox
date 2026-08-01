@@ -36,12 +36,14 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import os
 import subprocess
 import sys
 import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -56,15 +58,53 @@ SCOPES = (
 )
 
 
+AUTH_FILES = (
+    "~/.config/agentbox/1password.env",
+    "~/.config/agent-control-plane/1password.env",
+)
+
+
+def op_environment() -> dict[str, str]:
+    """Load the 1Password service account token the way cli/agentbox does.
+
+    Without OP_SERVICE_ACCOUNT_TOKEN, `op` tries to authenticate interactively
+    and prompts on the terminal — which a subprocess with captured output turns
+    into an invisible hang. Sourcing the file here means the caller does not
+    have to remember to, which is a documented footgun that has already caused
+    a session to wrongly conclude 1Password was broken.
+    """
+    env = dict(os.environ)
+    if env.get("OP_SERVICE_ACCOUNT_TOKEN"):
+        return env
+    for candidate in AUTH_FILES:
+        path = Path(candidate).expanduser()
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition("=")
+                env.setdefault(key.strip(), value.strip().strip("'\""))
+        break
+    return env
+
+
 def from_1password(field: str) -> str:
     ref = f"op://Agentbox/google-workspace-mcp/{field}"
+    env = op_environment()
+    if not env.get("OP_SERVICE_ACCOUNT_TOKEN"):
+        sys.exit("OP_SERVICE_ACCOUNT_TOKEN is not set and no 1password.env was found.\n"
+                 "Source it first:\n"
+                 "  set -a; . ~/.config/agent-control-plane/1password.env; set +a\n"
+                 "or pass --client-id/--client-secret directly.")
     try:
-        out = subprocess.run(["op", "read", ref], capture_output=True, text=True, timeout=30)
+        out = subprocess.run(["op", "read", ref], capture_output=True, text=True,
+                             timeout=30, env=env, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
         sys.exit("1Password CLI (op) not found — pass --client-id/--client-secret instead")
+    except subprocess.TimeoutExpired:
+        sys.exit(f"timed out reading {ref} — is the service account token valid?")
     if out.returncode != 0:
-        sys.exit(f"could not read {ref}: {out.stderr.strip()}\n"
-                 f"Is ~/.config/agent-control-plane/1password.env sourced?")
+        sys.exit(f"could not read {ref}: {out.stderr.strip()}")
     return out.stdout.strip()
 
 
