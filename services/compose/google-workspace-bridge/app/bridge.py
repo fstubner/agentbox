@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from bridge_base import BridgeError, BridgeHandler, serve
+from bridge_base import BridgeError, BridgeHandler, project_fields, resolve_view, serve
 
 
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -310,7 +310,22 @@ def calendar_list(_body):
     return google_json("GET", "https://www.googleapis.com/calendar/v3/users/me/calendarList") or {}
 
 
-def calendar_events(body):
+# The largest payload in the platform by a wide margin: 23 KB (~7k tokens) for
+# ten events, 28x the full vikunja task list, and it lands in context on every
+# schedule lookup. `status` is carried even though it is not needed to answer
+# "what is on my calendar" — without it a cancelled event is indistinguishable
+# from a live one, which is an accuracy loss, not a saving.
+LEAN_EVENT_FIELDS = ("id", "summary", "start", "end", "location", "status")
+
+# Response-level Google metadata that costs tokens and answers nothing:
+# kind, etag, updated, timeZone, accessRole, defaultReminders, description.
+LEAN_ENVELOPE_FIELDS = ("summary", "nextPageToken")
+
+
+def calendar_events(body, handler=None):
+    view = resolve_view(body.get("view"))
+    if handler is not None:
+        handler.note("view", view)
     calendar_id = urllib.parse.quote(str(body.get("calendar_id", "primary")), safe="")
     params = {
         "singleEvents": "true",
@@ -320,7 +335,12 @@ def calendar_events(body):
     for key in ("timeMin", "timeMax", "q"):
         if body.get(key):
             params[key] = str(body[key])
-    return google_json("GET", f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events?{urllib.parse.urlencode(params)}") or {}
+    result = google_json("GET", f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events?{urllib.parse.urlencode(params)}") or {}
+    if view != "lean" or not isinstance(result, dict):
+        return result
+    lean = {k: result[k] for k in LEAN_ENVELOPE_FIELDS if k in result}
+    lean["items"] = project_fields(result.get("items", []), LEAN_EVENT_FIELDS)
+    return lean
 
 
 def calendar_freebusy(body):
@@ -374,7 +394,15 @@ _POST_ROUTES = {
 }
 
 
-def _wrap(fn):
+# Routes that need the handler, to record the resolved view on the log line.
+# POST bodies are never logged, so without this a lean calendar call would be
+# indistinguishable from a full one in the traffic record.
+_HANDLER_AWARE = frozenset({"/v1/calendar/events"})
+
+
+def _wrap(fn, path):
+    if path in _HANDLER_AWARE:
+        return lambda handler, body: (200, fn(body or {}, handler))
     return lambda handler, body: (200, fn(body or {}))
 
 
@@ -409,7 +437,7 @@ class GoogleWorkspaceBridge(BridgeHandler):
             return {"ok": False, "upstream": {"google_oauth": f"{type(exc).__name__}"}}
     routes = {
         ("GET", "/schema"): lambda handler, body: (200, SCHEMA),
-        **{("POST", path): _wrap(fn) for path, fn in _POST_ROUTES.items()},
+        **{("POST", path): _wrap(fn, path) for path, fn in _POST_ROUTES.items()},
     }
 
 

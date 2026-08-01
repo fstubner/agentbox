@@ -11,7 +11,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from bridge_base import BridgeError, BridgeHandler, serve
+from bridge_base import (BridgeError, BridgeHandler, VIEWS, project_fields,
+                         resolve_view, serve)
 
 VIKUNJA_URL = os.environ.get("VIKUNJA_URL", "http://vikunja:3456").rstrip("/")
 VIKUNJA_API_TOKEN = os.environ.get("VIKUNJA_API_TOKEN", "")
@@ -79,25 +80,19 @@ def first(query, key, default):
 # A lean view emits only the fields a task-picking agent acts on, so the excess
 # is never generated rather than compressed after the fact. `full` stays the
 # default until the A/B eval shows lean costs no task accuracy.
+#
+# The mechanics live in bridge_base so every bridge projects identically.
 
 LEAN_TASK_FIELDS = ("id", "title", "done", "priority")
-TASK_VIEWS = {"full", "lean"}
+TASK_VIEWS = VIEWS
 
 
 def require_view(query, allowed=TASK_VIEWS, default="full"):
-    view = first(query, "view", default)
-    if view not in allowed:
-        raise BridgeError(400, f"view must be one of: {', '.join(sorted(allowed))}")
-    return view
+    return resolve_view(first(query, "view", default), allowed, default)
 
 
 def project_tasks(payload, fields=LEAN_TASK_FIELDS):
-    """Narrow a task list to `fields`. Absent keys are omitted, not nulled, so
-    the projection never invents data. Non-list payloads pass through."""
-    if not isinstance(payload, list):
-        return payload
-    return [{k: item[k] for k in fields if k in item}
-            for item in payload if isinstance(item, dict)]
+    return project_fields(payload, fields)
 
 
 # --- static routes ----------------------------------------------------------

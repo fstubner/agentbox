@@ -100,15 +100,29 @@ Field breakdown of one event (19 fields, 924 B):
 | `creator` | 82 | 8.9% |
 | `location` | 69 | 7.5% |
 
-A lean view of `id, summary, start, end, location` is 243 B — **26% of the
-full event, so ~74% reduction**, and it retains everything needed to answer
-"what is on my calendar and when". `attendees`, `creator`, `organizer`,
-`htmlLink`, `iCalUID` and the rest are pure context cost for scheduling
-questions.
+### Measured after shipping the lean views
 
-For comparison, the vikunja lean view saves ~227 tokens per call. Calendar
-projection would save on the order of 5,000. Same mechanism, an order of
-magnitude more value, and it was invisible until the request log existed.
+| Path | full | lean | reduction |
+|---|---|---|---|
+| `calendar/events` at the bridge | 23022 B | 3258 B | **85.8%** |
+| `list_calendar_events` via MCP | 27002 B | 4105 B | **84.8%** |
+| `list_tasks` via MCP | 989 B | 100 B | **89.9%** |
+
+The calendar saving is ~5,600 tokens per schedule lookup. It beat the 74%
+estimate because dropping the response envelope (`defaultReminders`,
+`timeZone`, `accessRole`, `description`, `etag`, `kind`) stacks on top of the
+per-event projection. `nextPageToken` is deliberately retained — dropping it
+would silently truncate a multi-page calendar.
+
+`status` is kept in the lean event even though a scheduling answer does not
+need it: without it a cancelled event is indistinguishable from a live one,
+which is an accuracy loss rather than a saving.
+
+**The MCP layer inflates every tool result by ~17%** (23022 B at the bridge
+becomes 27002 B through MCP) because `tool_result` serialises with
+`json.dumps(..., indent=2)`. Pretty-printing costs tokens and buys a model
+nothing. Not yet changed — it affects every tool on every MCP, so it wants its
+own before/after rather than riding along with this change.
 
 Disk: root 43%, models on a dedicated volume at 20% (312 GB free).
 

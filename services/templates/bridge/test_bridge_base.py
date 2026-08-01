@@ -203,3 +203,55 @@ def test_probe_requests_are_not_logged(capfd):
     finally:
         server.shutdown()
     assert [ln for ln in capfd.readouterr().out.splitlines() if ln.startswith("{")] == []
+
+
+# --- shared projection helpers ----------------------------------------------
+
+
+def test_resolve_view_defaults_to_full():
+    assert bridge_base.resolve_view(None) == "full"
+    assert bridge_base.resolve_view("") == "full"
+
+
+def test_resolve_view_accepts_lean():
+    assert bridge_base.resolve_view("lean") == "lean"
+
+
+def test_resolve_view_rejects_unknown():
+    try:
+        bridge_base.resolve_view("compact")
+        raise AssertionError("expected rejection")
+    except bridge_base.BridgeError as exc:
+        assert exc.status == 400
+
+
+def test_project_fields_omits_absent_keys():
+    assert bridge_base.project_fields([{"a": 1}], ("a", "b")) == [{"a": 1}]
+
+
+def test_project_fields_passes_through_non_lists():
+    assert bridge_base.project_fields(None, ("a",)) is None
+    assert bridge_base.project_fields({"error": "x"}, ("a",)) == {"error": "x"}
+
+
+def test_project_fields_skips_non_dict_entries():
+    assert bridge_base.project_fields([{"a": 1}, "junk", None], ("a",)) == [{"a": 1}]
+
+
+def test_note_appears_in_the_request_log(capfd):
+    """POST-body endpoints record their view via note(); bodies are never logged."""
+    def noted(handler, body):
+        handler.note("view", "lean")
+        return 200, {"ok": True}
+
+    cls = type("H", (bridge_base.BridgeHandler,), {
+        "bridge_token": "secret",
+        "routes": {("POST", "/v1/noted"): noted},
+    })
+    server, base = serve(cls)
+    try:
+        call(base, "/v1/noted", token="secret", body={})
+    finally:
+        server.shutdown()
+    lines = [ln for ln in capfd.readouterr().out.splitlines() if ln.startswith("{")]
+    assert json.loads(lines[-1])["params"] == {"view": "lean"}
