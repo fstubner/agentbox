@@ -99,6 +99,13 @@ TOOLS = [
             "filter": {"type": "string", "description": "Optional Vikunja filter expression."},
             "page": {"type": "integer", "minimum": 1, "default": 1},
             "per_page": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+            "view": {
+                "type": "string", "enum": ["full", "lean"], "default": "full",
+                "description": "Use 'lean' when picking, counting or ranking tasks — "
+                               "returns only id, title, done and priority, about a "
+                               "tenth the size. Use 'full' only when you need "
+                               "descriptions, dates or labels.",
+            },
         }),
     },
     {
@@ -191,6 +198,7 @@ def tool_call(name, args):
             "filter": args.get("filter", ""),
             "page": args.get("page", 1),
             "per_page": args.get("per_page", 50),
+            "view": args.get("view", ""),
         })
 
     if name == "create_task":

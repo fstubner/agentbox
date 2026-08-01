@@ -61,6 +61,41 @@ LOG_PROBES = os.environ.get("BRIDGE_LOG_PROBES", "0") == "1"
 # Allowlist, not a denylist: anything not named here is never logged.
 LOGGED_QUERY_PARAMS = ("view", "page", "per_page", "expand")
 
+# --- projection pushdown (docs/context-economy.md §1) ------------------------
+#
+# Shared so every bridge narrows results the same way. Named views rather than
+# a caller-supplied field list: the agent spends one token and needs no schema
+# knowledge, and /schema advertises what each view contains.
+#
+# `lean` means fewer FIELDS on the same items. Two neighbouring names are
+# reserved for different contracts and must not be used for this:
+#   `summary` — counts + top-N, i.e. fewer ITEMS
+#   `compact` — a reduced view PLUS a raw-reference handle to rematerialise
+VIEWS = ("full", "lean")
+
+
+def resolve_view(value: str | None, allowed: tuple[str, ...] = VIEWS,
+                 default: str = "full") -> str:
+    """Validate a requested view. Rejects unknown values rather than silently
+    falling back, so a typo cannot quietly return more data than intended."""
+    view = value or default
+    if view not in allowed:
+        raise BridgeError(400, f"view must be one of: {', '.join(sorted(allowed))}")
+    return view
+
+
+def project_fields(items: Any, fields: tuple[str, ...]) -> Any:
+    """Narrow a list of objects to `fields`.
+
+    Absent keys are omitted rather than nulled, so the projection never invents
+    data. Non-list payloads pass through untouched, so an upstream error body
+    is never reshaped into a list.
+    """
+    if not isinstance(items, list):
+        return items
+    return [{k: item[k] for k in fields if k in item}
+            for item in items if isinstance(item, dict)]
+
 
 class BridgeError(Exception):
     def __init__(self, status: int, message: str) -> None:
@@ -112,6 +147,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def note(self, key: str, value: Any) -> None:
+        """Attach a field to this request's log line.
+
+        Query parameters are picked up automatically, but POST-body endpoints
+        (the Google routes) would otherwise be unobservable — bodies are never
+        logged. Handlers call this so the resolved view still shows up.
+        """
+        if not hasattr(self, "_log_extra"):
+            self._log_extra = {}
+        self._log_extra[key] = value
+
     def upstream_status(self) -> dict[str, Any]:
         """Report whether the backing service is reachable.
 
@@ -141,6 +187,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         started = time.monotonic()
         self._response_bytes = 0
+        self._log_extra = {}
         status = 500
         try:
             if path == "/health" and method == "GET":
@@ -175,6 +222,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         params = {k: query[k][0] for k in LOGGED_QUERY_PARAMS if query.get(k)}
+        params.update(getattr(self, "_log_extra", {}))
         record = {
             "service": self.server_version.split("/")[0],
             "method": method,
