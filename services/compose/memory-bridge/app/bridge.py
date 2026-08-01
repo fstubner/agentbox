@@ -3,6 +3,7 @@
 JSON file behind a process-wide lock (single-writer semantics)."""
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import threading
@@ -15,6 +16,29 @@ from bridge_base import BridgeError, BridgeHandler, serve
 
 MEMORY_PATH = Path(os.environ.get("MEMORY_PATH", "/data/memory.json"))
 _LOCK = threading.Lock()
+
+# --- the review gate --------------------------------------------------------
+#
+# The assistant may PROPOSE a memory. It may not approve one, and it may not
+# write straight to durable memory. Those are operator actions, gated by a
+# second credential the assistant never holds — the bridge token alone is not
+# enough. This is the same reasoning that puts merge_own_pr in always_denied:
+# proposing and accepting your own change is not review.
+#
+# Fails closed. With MEMORY_REVIEW_TOKEN unset nobody can approve, which is the
+# safe direction: durable memory stops accepting writes rather than silently
+# accepting them from anyone holding the bridge token.
+REVIEW_TOKEN = os.environ.get("MEMORY_REVIEW_TOKEN", "")
+REVIEW_HEADER = "X-Memory-Review-Token"
+
+
+def require_review(handler) -> None:
+    if not REVIEW_TOKEN:
+        raise BridgeError(503, "memory review token is not configured; "
+                               "approval is disabled until an operator sets MEMORY_REVIEW_TOKEN")
+    provided = handler.headers.get(REVIEW_HEADER, "")
+    if not hmac.compare_digest(provided, REVIEW_TOKEN):
+        raise BridgeError(403, "memory approval requires the operator review token")
 
 
 def now() -> str:
@@ -68,10 +92,15 @@ def get_schema(handler, body):
     return 200, {"service": "memory-bridge", "tools": [
         "POST /v1/proposals",
         "GET /v1/proposals",
-        "POST /v1/proposals/{id}/approve",
-        "POST /v1/memories",
         "GET /v1/memories",
-    ]}
+    ], "operator_only": {
+        "tools": ["POST /v1/proposals/{id}/approve",
+                  "POST /v1/proposals/{id}/reject",
+                  "POST /v1/memories"],
+        "requires": REVIEW_HEADER,
+        "note": "approval and direct writes are operator actions; the assistant "
+                "proposes and reads only. Use cli/agentbox memory.",
+    }}
 
 
 def list_proposals(handler, body):
@@ -90,6 +119,12 @@ def create_proposal(handler, body):
 
 
 def create_memory(handler, body):
+    """Write straight to durable memory, bypassing the proposal queue.
+
+    Operator-only: this is the path that makes the queue optional, so it takes
+    the review token like approval does.
+    """
+    require_review(handler)
     item = clean_memory(body or {}, "approved")
     with _LOCK:
         store = load_store()
@@ -104,7 +139,8 @@ def list_memories(handler, body):
     return 200, {"memories": filter_items(store["memories"], {})}
 
 
-def approve_proposal(proposal_id: str):
+def approve_proposal(handler, proposal_id: str):
+    require_review(handler)
     with _LOCK:
         store = load_store()
         proposal = next((x for x in store["proposals"] if x.get("id") == proposal_id), None)
@@ -114,6 +150,25 @@ def approve_proposal(proposal_id: str):
         proposal["updated_at"] = now()
         store["memories"].append(proposal)
         store["proposals"] = [x for x in store["proposals"] if x.get("id") != proposal_id]
+        save_store(store)
+    return 200, proposal
+
+
+def reject_proposal(handler, proposal_id: str, body):
+    """Decline a proposal. Without this the queue only ever grows — the live
+    store had a proposal sitting unreviewed for six weeks because there was no
+    way to say no."""
+    require_review(handler)
+    with _LOCK:
+        store = load_store()
+        proposal = next((x for x in store["proposals"] if x.get("id") == proposal_id), None)
+        if not proposal:
+            raise BridgeError(404, "proposal not found")
+        proposal["status"] = "rejected"
+        proposal["updated_at"] = now()
+        proposal["rejected_reason"] = str((body or {}).get("reason", ""))[:500]
+        store["proposals"] = [x for x in store["proposals"] if x.get("id") != proposal_id]
+        store.setdefault("rejected", []).append(proposal)
         save_store(store)
     return 200, proposal
 
@@ -130,9 +185,14 @@ class MemoryBridge(BridgeHandler):
     }
 
     def route_fallback(self, method: str, path: str, body):
-        prefix, suffix = "/v1/proposals/", "/approve"
-        if method == "POST" and path.startswith(prefix) and path.endswith(suffix):
-            return approve_proposal(path[len(prefix):-len(suffix)])
+        prefix = "/v1/proposals/"
+        if method == "POST" and path.startswith(prefix):
+            for suffix, handler in (("/approve", approve_proposal), ("/reject", reject_proposal)):
+                if path.endswith(suffix):
+                    proposal_id = path[len(prefix):-len(suffix)]
+                    if handler is reject_proposal:
+                        return handler(self, proposal_id, body)
+                    return handler(self, proposal_id)
         raise BridgeError(404, "not found")
 
 
