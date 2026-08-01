@@ -70,18 +70,45 @@ policy check read_repo_files           -> exit 0
 policy check send_email                -> approval_required (unknown_action_default)
 ```
 
-Payload sizes through vikunja-bridge, from the request log:
+Payload sizes across both bridges, measured against real accounts:
 
-| Endpoint | Bytes |
-|---|---|
-| `GET /v1/tasks` (1 task, full) | 829 |
-| `GET /v1/tasks?view=lean` | 76 |
-| `GET /v1/projects` | 3450 |
+| Endpoint | Bytes | Items | Per item |
+|---|---|---|---|
+| `POST /v1/calendar/events` | **23022** | 10 | ~2302 |
+| `GET /v1/projects` (vikunja) | 3450 | — | — |
+| `POST /v1/calendar/list` | 1818 | 3 | ~606 |
+| `POST /v1/gmail/labels/list` | 1764 | 18 | ~98 |
+| `GET /v1/tasks` (1 task, full) | 829 | 1 | 829 |
+| `POST /v1/gmail/search` | 682 | 10 | ~68 |
+| `GET /v1/tasks?view=lean` | 76 | 1 | 76 |
 
-`/v1/projects` being 4× the full task list is worth noting: the
-context-economy v1 proposal assumed `/v1/tasks` was the waste. On real traffic
-it is not even the largest payload in this one bridge. Let the logs pick the
-next projection target.
+**Calendar events dominate everything else by a wide margin** — 23 KB, roughly
+7,000 tokens, for ten events. That is 28× the full vikunja task list, and it
+lands in context every time the assistant looks at a schedule.
+
+The v1 proposal in `docs/context-economy.md` picked `vikunja/v1/tasks` as the
+first projection target. On measured traffic that is the *second smallest*
+payload in the system. `calendar/events` is where projection actually pays.
+
+Field breakdown of one event (19 fields, 924 B):
+
+| Field | Bytes | Share |
+|---|---|---|
+| `attendees` | 242 | 26.2% |
+| `htmlLink` | 100 | 10.8% |
+| `organizer` | 82 | 8.9% |
+| `creator` | 82 | 8.9% |
+| `location` | 69 | 7.5% |
+
+A lean view of `id, summary, start, end, location` is 243 B — **26% of the
+full event, so ~74% reduction**, and it retains everything needed to answer
+"what is on my calendar and when". `attendees`, `creator`, `organizer`,
+`htmlLink`, `iCalUID` and the rest are pure context cost for scheduling
+questions.
+
+For comparison, the vikunja lean view saves ~227 tokens per call. Calendar
+projection would save on the order of 5,000. Same mechanism, an order of
+magnitude more value, and it was invisible until the request log existed.
 
 Disk: root 43%, models on a dedicated volume at 20% (312 GB free).
 
