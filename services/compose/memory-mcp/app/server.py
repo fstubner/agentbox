@@ -7,6 +7,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import policy_gate
+
 
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
@@ -74,6 +76,9 @@ TOOLS = [
 
 
 def tool_call(name, args):
+    # Deny-by-default gate. One choke point: every tool call passes
+    # through here, so a new tool cannot skip the policy by omission.
+    policy_gate.check(name)
     args = args or {}
     if name == "propose_memory":
         return bridge_request("POST", "/v1/proposals", args)

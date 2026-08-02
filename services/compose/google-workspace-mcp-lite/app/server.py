@@ -7,6 +7,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import policy_gate
+
 
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
@@ -56,7 +58,6 @@ TOOLS = [
     {"name": "search_gmail", "description": "Search Gmail messages.", "inputSchema": schema_object({"query": {"type": "string"}, "max_results": {"type": "integer", "minimum": 1, "maximum": 25}}, ["query"])},
     {"name": "read_gmail", "description": "Read one Gmail message by id.", "inputSchema": schema_object({"message_id": {"type": "string"}}, ["message_id"])},
     {"name": "clean_gmail", "description": "Read and normalize one Gmail message into compact text and useful line candidates.", "inputSchema": schema_object({"message_id": {"type": "string"}}, ["message_id"])},
-    {"name": "extract_receipt_items", "description": "Extract item candidates from receipt emails. Find the messages with search_gmail first and pass their ids.", "inputSchema": schema_object({"message_ids": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}}, ["message_ids"])},
     {"name": "create_gmail_draft", "description": "Compose a Gmail draft. Drafts are never sent — you review and send it yourself in Gmail.", "inputSchema": schema_object({"to": {"type": "array", "items": {"type": "string"}}, "cc": {"type": "array", "items": {"type": "string"}}, "subject": {"type": "string"}, "body": {"type": "string"}, "thread_id": {"type": "string", "description": "Optional: reply within an existing thread."}}, ["subject"])},
     {"name": "list_gmail_labels", "description": "List Gmail labels.", "inputSchema": schema_object({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 100}})},
     {"name": "create_gmail_label", "description": "Create an agent-owned Gmail label.", "inputSchema": schema_object({"name": {"type": "string"}}, ["name"])},
@@ -71,6 +72,9 @@ TOOLS = [
 
 
 def tool_call(name, args):
+    # Deny-by-default gate. One choke point: every tool call passes
+    # through here, so a new tool cannot skip the policy by omission.
+    policy_gate.check(name)
     args = args or {}
     if name == "search_gmail":
         return bridge_post("/v1/gmail/search", args)
@@ -78,8 +82,6 @@ def tool_call(name, args):
         return bridge_post("/v1/gmail/read", args)
     if name == "clean_gmail":
         return bridge_post("/v1/gmail/clean", args)
-    if name == "extract_receipt_items":
-        return bridge_post("/v1/gmail/extract_receipt_items", args)
     if name == "create_gmail_draft":
         return bridge_post("/v1/gmail/drafts/create", args)
     if name == "list_gmail_labels":

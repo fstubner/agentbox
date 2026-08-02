@@ -10,7 +10,7 @@ import urllib.request
 
 from email.message import EmailMessage
 
-from bridge_base import (BridgeError, BridgeHandler, clamp_limit, project_fields,
+from bridge_base import (BridgeError, BridgeHandler, resolve_limit, project_fields,
                          resolve_view, serve)
 
 
@@ -134,41 +134,6 @@ def compact_email_text(text):
     return text.strip()
 
 
-def receipt_item_candidates(text):
-    compact = compact_email_text(text)
-    lines = [line.strip(" -•\t") for line in compact.splitlines()]
-    candidates = []
-    price = re.compile(r"^(€|§\s*€|-€|Was €)")
-    qty = re.compile(r"^\d+$")
-    header_or_noise = re.compile(r"(?i)^(qty|product|unit\s*price|total|saved|fridge|frozen|cupboard|bakery|delivery|unavailable|substitutions?|substituted with:|update your .*)$")
-    for i, line in enumerate(lines[:-1]):
-        if not qty.match(line):
-            continue
-        product = re.sub(r"^[†§]\s*", "", lines[i + 1].strip())
-        if len(product) < 4 or len(product) > 140:
-            continue
-        if price.search(product) or qty.match(product) or header_or_noise.match(product):
-            continue
-        candidates.append(product)
-
-    skip = re.compile(r"(?i)(clubcard|subtotal|total|delivery|receipt|order|payment|unavailable|substitution|privacy|terms|vat|help|customer|barcode|quantity|price|eur|€)")
-    productish = re.compile(r"(?i)(\b\d+\s?(g|kg|ml|l|pack|pk|pcs|slices|ct)\b|\b(fresh|organic|finest|free range|whole|semi skimmed|chicken|beef|pork|salmon|cod|egg|milk|cheese|yoghurt|bread|rice|pasta|potato|tomato|onion|pepper|apple|banana|lettuce|carrot|broccoli|beans|sauce|soup|cereal)\b)")
-    for line in lines:
-        if len(line) < 4 or len(line) > 140:
-            continue
-        if skip.search(line):
-            continue
-        if productish.search(line):
-            candidates.append(line)
-    deduped = []
-    seen = set()
-    for item in candidates:
-        key = item.casefold()
-        if key not in seen:
-            seen.add(key)
-            deduped.append(item)
-    return deduped[:120]
-
 
 def line_candidates(text, limit=160):
     compact = compact_email_text(text)
@@ -195,7 +160,7 @@ def gmail_search(body):
     query = str(body.get("query", "")).strip()
     if not query:
         raise BridgeError(400, "query is required")
-    max_results = clamp_limit(body.get("limit", body.get("max_results")), default=10, maximum=25)
+    max_results = resolve_limit(body.get("limit", body.get("max_results")), default=10, maximum=25)
     params = urllib.parse.urlencode({"q": query, "maxResults": max_results})
     return google_json("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages?{params}") or {}
 
@@ -306,37 +271,6 @@ def gmail_modify(body):
 
 
 
-def extract_receipt_items(body):
-    """Pull item candidates out of receipt emails identified by message id.
-
-    Takes explicit ids rather than running its own search, so it composes with
-    gmail/search instead of duplicating it. The previous version hardcoded a
-    Grocer query, which made a general capability look vendor-specific and hid
-    a second search implementation inside an extraction tool.
-
-    The parser's heuristics were developed against Grocer receipts and work best
-    on that layout; nothing in them is vendor-specific, but treat the output as
-    candidates, not a parsed order.
-    """
-    message_ids = body.get("message_ids")
-    if not isinstance(message_ids, list) or not message_ids:
-        raise BridgeError(400, "message_ids must be a non-empty list; "
-                               "use /v1/gmail/search to find them")
-    limit = clamp_limit(body.get("limit"), default=3, maximum=5)
-    receipts = []
-    for message_id in message_ids[:limit]:
-        message = gmail_read({"message_id": str(message_id)})
-        text = message.get("text", "")
-        receipts.append({
-            "id": message.get("id"),
-            "threadId": message.get("threadId"),
-            "headers": message.get("headers", {}),
-            "snippet": message.get("snippet", ""),
-            "item_candidates": receipt_item_candidates(text),
-            "text_excerpt": text[:4000],
-        })
-    return {"receipts": receipts}
-
 
 def gmail_create_draft(body):
     """Compose a draft. Deliberately the only write toward sending.
@@ -446,7 +380,7 @@ def calendar_create_event(body):
 
 SCHEMA = {"service": "google-workspace-bridge", "tools": [
     "POST /v1/gmail/search", "POST /v1/gmail/read", "POST /v1/gmail/clean",
-    "POST /v1/gmail/extract_receipt_items", "POST /v1/gmail/drafts/create",
+    "POST /v1/gmail/drafts/create",
     "POST /v1/gmail/labels/list", "POST /v1/gmail/labels/create", "POST /v1/gmail/modify",
     "POST /v1/calendar/list", "POST /v1/calendar/events", "POST /v1/calendar/freebusy",
     "POST /v1/calendar/events/create",
@@ -457,7 +391,6 @@ _POST_ROUTES = {
     "/v1/gmail/search": gmail_search,
     "/v1/gmail/read": gmail_read,
     "/v1/gmail/clean": gmail_clean,
-    "/v1/gmail/extract_receipt_items": extract_receipt_items,
     "/v1/gmail/drafts/create": gmail_create_draft,
     "/v1/gmail/labels/list": gmail_list_labels,
     "/v1/gmail/labels/create": gmail_create_label,

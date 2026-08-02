@@ -13,6 +13,13 @@ services:
       - "${LAN_BIND_IP:-127.0.0.1}:3467:8080"
     networks:
       vikunja:
+    volumes:
+      # Grants written by `agentbox grant`. Read-only: the assistant side
+      # must never be able to issue itself permission.
+      - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
+      # Consumption records. Writable, but writing here can only spend a
+      # grant, never create one — so it confers no authority.
+      - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
     cpus: "0.50"
     mem_limit: 128m
     pids_limit: 128

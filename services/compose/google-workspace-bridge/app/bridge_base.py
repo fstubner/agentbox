@@ -84,7 +84,7 @@ def resolve_view(value: str | None, allowed: tuple[str, ...] = VIEWS,
     return view
 
 
-def clamp_limit(value: Any, default: int, maximum: int) -> int:
+def resolve_limit(value: Any, default: int, maximum: int) -> int:
     """Resolve a caller-supplied result limit.
 
     Every list endpoint takes one. An unbounded list is a context-economy

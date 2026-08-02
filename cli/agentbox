@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import sys
 import urllib.error
 import urllib.parse
@@ -391,6 +392,114 @@ def status() -> int:
     return 0
 
 
+# --- runtime policy grants --------------------------------------------------
+#
+# An approval_required tool is refused until an operator issues a grant. Grants
+# are time-boxed and single-use by default so an approval cannot quietly become
+# a standing permission.
+
+GRANTS_PATH = Path(os.environ.get(
+    "AGENTBOX_POLICY_GRANTS",
+    str(Path("~/.local/state/agentbox/policy/grants.json").expanduser())))
+
+
+def load_runtime_tiers() -> dict[str, list[str]]:
+    path = REPO / "policies" / "runtime-actions.yaml"
+    tiers: dict[str, list[str]] = {}
+    current = None
+    in_tiers = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.rstrip(":") == "tiers":
+            in_tiers = True
+            continue
+        if not in_tiers:
+            continue
+        if not line.startswith(" "):
+            break
+        stripped = line.strip()
+        if stripped.endswith(":") or stripped.endswith(": []"):
+            current = stripped.split(":", 1)[0].strip()
+            tiers.setdefault(current, [])
+        elif stripped.startswith("- ") and current:
+            tiers[current].append(stripped[2:].strip())
+    return tiers
+
+
+def parse_ttl(value: str) -> int:
+    units = {"s": 1, "m": 60, "h": 3600}
+    if value and value[-1] in units:
+        return int(float(value[:-1]) * units[value[-1]])
+    return int(value)
+
+
+def grant(tool: str, ttl: str, repeatable: bool) -> int:
+    tiers = load_runtime_tiers()
+    if tool in tiers.get("always_denied", []):
+        report(FAIL, f"'{tool}' is always_denied and cannot be granted at runtime")
+        return 2
+    if tool in tiers.get("allowed", []):
+        report(WARN, f"'{tool}' is already allowed; no grant needed")
+        return 0
+    known = {t for entries in tiers.values() for t in entries}
+    if tool not in known:
+        report(WARN, f"'{tool}' is not tiered; it defaults to approval_required")
+    seconds = parse_ttl(ttl)
+    GRANTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing = []
+    if GRANTS_PATH.exists():
+        try:
+            existing = json.loads(GRANTS_PATH.read_text()).get("grants", [])
+        except ValueError:
+            existing = []
+    now = int(time.time())
+    existing = [g for g in existing if float(g.get("expires_at", 0)) > now]
+    existing.append({"tool": tool, "expires_at": now + seconds,
+                     "single_use": not repeatable, "granted_at": now})
+    GRANTS_PATH.write_text(json.dumps({"grants": existing}, indent=2), encoding="utf-8")
+    GRANTS_PATH.chmod(0o644)
+    scope = "repeatable" if repeatable else "single-use"
+    report(OK, f"granted {tool} for {seconds}s ({scope})")
+    return 0
+
+
+def grants_list() -> int:
+    now = int(time.time())
+    if not GRANTS_PATH.exists():
+        print("no grants issued")
+        return 0
+    try:
+        entries = json.loads(GRANTS_PATH.read_text()).get("grants", [])
+    except ValueError:
+        report(FAIL, f"grants file is not valid JSON: {GRANTS_PATH}")
+        return 1
+    active = [g for g in entries if float(g.get("expires_at", 0)) > now]
+    if not active:
+        print("no active grants")
+        return 0
+    for g in active:
+        left = int(float(g["expires_at"]) - now)
+        scope = "single-use" if g.get("single_use", True) else "repeatable"
+        print(f"{g['tool']:28} {left:5d}s left  ({scope})")
+    return 0
+
+
+def grants_revoke(tool: str | None) -> int:
+    if not GRANTS_PATH.exists():
+        print("no grants to revoke")
+        return 0
+    try:
+        entries = json.loads(GRANTS_PATH.read_text()).get("grants", [])
+    except ValueError:
+        entries = []
+    remaining = [g for g in entries if tool and g.get("tool") != tool]
+    GRANTS_PATH.write_text(json.dumps({"grants": remaining}, indent=2), encoding="utf-8")
+    report(OK, f"revoked {'all grants' if not tool else tool}")
+    return 0
+
+
 # --- memory review ----------------------------------------------------------
 #
 # The assistant proposes; a human approves. Approval needs a credential the
@@ -507,6 +616,16 @@ def main() -> None:
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
     check = pol_sub.add_parser("check")
     check.add_argument("action")
+    gr = sub.add_parser("grant", help="authorise an approval_required tool for a period")
+    gr.add_argument("tool")
+    gr.add_argument("--ttl", default="15m", help="e.g. 30s, 15m, 2h (default 15m)")
+    gr.add_argument("--repeatable", action="store_true",
+                    help="allow repeated use until expiry instead of single-use")
+    grs = sub.add_parser("grants", help="list or revoke runtime grants")
+    grs_sub = grs.add_subparsers(dest="grants_cmd", required=True)
+    grs_sub.add_parser("list")
+    rv = grs_sub.add_parser("revoke")
+    rv.add_argument("tool", nargs="?")
     mem = sub.add_parser("memory", help="review memory proposals (operator only)")
     mem_sub = mem.add_subparsers(dest="mem_cmd", required=True)
     mem_sub.add_parser("list")
@@ -527,6 +646,10 @@ def main() -> None:
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":
         sys.exit(policy_check(args.action))
+    if args.cmd == "grant":
+        sys.exit(grant(args.tool, args.ttl, args.repeatable))
+    if args.cmd == "grants":
+        sys.exit(grants_list() if args.grants_cmd == "list" else grants_revoke(args.tool))
     if args.cmd == "memory":
         if args.mem_cmd == "list":
             sys.exit(memory_list())
