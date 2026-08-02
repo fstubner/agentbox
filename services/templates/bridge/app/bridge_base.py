@@ -121,6 +121,25 @@ def project_fields(items: Any, fields: tuple[str, ...]) -> Any:
             for item in items if isinstance(item, dict)]
 
 
+# --- authoritative policy enforcement ----------------------------------------
+#
+# The MCP already gates tool calls, but the MCP also holds this bridge's token
+# — gate and credential in one process, so compromising it defeats both. This
+# is the second, independent gate, in the process the compromised one cannot
+# bypass. Borrowed from OpenShell, where egress enforcement sits outside the
+# sandbox entirely rather than inside the agent.
+#
+# A bridge declares which capability an incoming request exercises; the base
+# resolves that against the same policy file and grant store the MCP uses. The
+# MCP checks without consuming (fast, informative denial); the bridge consumes,
+# because it is the one whose answer is authoritative.
+
+try:
+    import policy_gate
+except ImportError:  # a bridge with no policy file mounted enforces nothing
+    policy_gate = None  # type: ignore[assignment]
+
+
 class BridgeError(Exception):
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -200,6 +219,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(provided, f"Bearer {self.bridge_token}"):
             raise BridgeError(401, "invalid bridge token")
 
+    def capability_for(self, method: str, path: str,
+                       body: dict[str, Any] | None) -> str | None:
+        """Which policy capability does this request exercise?
+
+        Return None for requests that need no approval. Override in bridges
+        that expose anything gated. Body-aware on purpose: gmail/modify carries
+        its verb in the body, so the path alone cannot decide.
+        """
+        return None
+
+    def _enforce_policy(self, method: str, path: str, body: dict[str, Any] | None) -> None:
+        capability = self.capability_for(method, path, body)
+        if capability is None:
+            return
+        if policy_gate is None:
+            raise BridgeError(503, "policy enforcement unavailable; refusing a gated request")
+        try:
+            policy_gate.check_capability(capability, subject=path)
+        except policy_gate.PolicyDenied as exc:
+            raise BridgeError(403, str(exc))
+
     def route_fallback(self, method: str, path: str, body: dict[str, Any] | None) -> "tuple[int, Any]":
         """Override for dynamic paths (e.g. /v1/things/{id}/action).
 
@@ -226,6 +266,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if path not in self.public_paths:
                 self._require_auth()
             body = self.json_body() if method in ("POST", "PATCH", "PUT") else None
+            self._enforce_policy(method, path, body)
             handler = self.routes.get((method, path))
             if handler is None:
                 status, payload = self.route_fallback(method, path, body)

@@ -143,7 +143,8 @@ def _consumed_key(grant: dict) -> str:
 
 
 def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
-                  consumed_path: Path | None = None) -> bool:
+                  consumed_path: Path | None = None, consume: bool = True,
+                  tool_map: dict[str, str] | None = None) -> bool:
     """Return True if an unexpired, unconsumed grant covers `tool`.
 
     Grants are mounted read-only so a compromised MCP cannot issue itself
@@ -160,10 +161,19 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
     store = CONSUMED_PATH if consumed_path is None else consumed_path
     stamp = time.time() if now is None else now
     consumed = _load_consumed(store)
+    mapping = load_tool_map() if tool_map is None else tool_map
     for grant in _load_grants(path):
-        if grant.get("tool") != tool or float(grant.get("expires_at", 0)) <= stamp:
+        granted = grant.get("tool")
+        # A grant names a tool; a bridge asks by capability. Accept either, so
+        # `agentbox grant archive_gmail` authorises the email_state_change the
+        # bridge sees.
+        if granted != tool and mapping.get(granted) != tool:
+            continue
+        if float(grant.get("expires_at", 0)) <= stamp:
             continue
         if not grant.get("single_use", True):
+            return True
+        if not consume:
             return True
         key = _consumed_key(grant)
         if key in consumed:
@@ -181,10 +191,41 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
     return False
 
 
+def check_capability(capability: str, tiers: dict[str, list[str]] | None = None,
+                     grants_path: Path = GRANTS_PATH,
+                     consumed_path: Path | None = None,
+                     consume: bool = True, subject: str | None = None,
+                     tool_map: dict[str, str] | None = None) -> None:
+    """Raise PolicyDenied unless `capability` may be exercised now.
+
+    Used by the bridges, which know the capability directly rather than a tool
+    name. `consume=False` checks without spending a single-use grant, so a
+    caller can deny early without stealing the grant from the layer whose
+    answer is authoritative.
+    """
+    resolved = load_tiers() if tiers is None else tiers
+    label = subject or capability
+    tier = ALLOWED if capability in resolved.get(ALLOWED, []) else (
+        ALWAYS_DENIED if capability in resolved.get(ALWAYS_DENIED, []) else APPROVAL_REQUIRED)
+    if tier == ALLOWED:
+        return
+    if tier == ALWAYS_DENIED:
+        raise PolicyDenied(
+            f"'{label}' is always denied by policy and cannot be approved at runtime. "
+            f"Only a human, outside the assistant, may do this.")
+    if consume_grant(capability, grants_path, consumed_path=consumed_path,
+                     consume=consume, tool_map=tool_map):
+        return
+    raise PolicyDenied(
+        f"'{label}' ({capability}) requires operator approval and no grant is "
+        f"active. Ask the operator to run: agentbox grant {label} --ttl 15m")
+
+
 def check(tool: str, tiers: dict[str, list[str]] | None = None,
           grants_path: Path = GRANTS_PATH,
           consumed_path: Path | None = None,
-          tool_map: dict[str, str] | None = None) -> None:
+          tool_map: dict[str, str] | None = None,
+          consume: bool = True) -> None:
     """Raise PolicyDenied unless `tool` may run now."""
     resolved = load_tiers() if tiers is None else tiers
     tier = tier_of(tool, resolved, tool_map)
@@ -194,7 +235,8 @@ def check(tool: str, tiers: dict[str, list[str]] | None = None,
         raise PolicyDenied(
             f"'{tool}' is always denied by policy and cannot be approved at runtime. "
             f"Only a human, outside the assistant, may do this.")
-    if consume_grant(tool, grants_path, consumed_path=consumed_path):
+    if consume_grant(tool, grants_path, consumed_path=consumed_path,
+                     consume=consume, tool_map=tool_map):
         return
     mapping = load_tool_map() if tool_map is None else tool_map
     capability = mapping.get(tool, "no mapped capability")

@@ -418,6 +418,19 @@ class GoogleWorkspaceBridge(BridgeHandler):
     server_version = "google-workspace-bridge/1.0"
     bridge_token = BRIDGE_TOKEN
 
+    # Gate and credential must not share a process. The MCP checks first for a
+    # fast, informative denial; this is the authoritative check, in the process
+    # that actually holds the OAuth token — so a compromised MCP cannot spend
+    # what it does not have.
+    def capability_for(self, method, path, body):
+        if path == "/v1/gmail/modify":
+            action = str((body or {}).get("action", ""))
+            if action in ("archive", "mark_read"):
+                return "email_state_change"
+            if action == "add_labels":
+                return "email_label_own_namespace"
+        return None
+
     def upstream_status(self):
         """Validate the OAuth refresh token, which is this bridge's upstream.
 

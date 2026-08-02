@@ -32,6 +32,10 @@ empty token because auth was hand-rolled.
      Raise `BridgeError(status, msg)` for expected failures; return only the
      safe subset of the upstream response.
    - Subclass `BridgeHandler`, set `bridge_token` and `routes`.
+   - **Override `capability_for()` for anything gated.** Return the policy
+     capability a request exercises, or None. The MCP gates tool calls too, but
+     the MCP holds your bridge token — a gate in the same process as the
+     credential falls with it. Yours is the authoritative check.
    - **If your bridge fronts a service you run** (rather than a remote SaaS
      API), override `upstream_status()` to probe it. Return
      `{"ok": bool, "upstream": {...}}`. This is what makes `/ready` meaningful.
@@ -112,6 +116,7 @@ empty token because auth was hand-rolled.
 - [ ] policy entry added for any state-changing capability
 - [ ] `upstream_status()` implemented if the bridge fronts a service you run
 - [ ] `/health` does **not** touch the upstream
+- [ ] `capability_for()` returns a capability for every gated route
 - [ ] every list endpoint takes a bound via `clamp_limit`
 - [ ] creates are idempotent, or a `find_or_create_*` variant exists
 - [ ] write constraints are symmetric between create and apply

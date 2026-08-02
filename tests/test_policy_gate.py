@@ -176,3 +176,50 @@ def test_every_live_mcp_tool_is_mapped(tool_map):
         block = src.split("TOOLS = [", 1)[1].split("\ndef ", 1)[0]
         for name in re.findall(r'"name":\s*"([a-z_]+)"', block):
             assert name in tiered, f"{mcp} exposes untiered tool: {name}"
+
+
+# --- bridge-side authoritative enforcement ----------------------------------
+
+
+def test_capability_check_allows_an_allowed_capability(tiers, grants, consumed):
+    pg.check_capability("task_management", tiers, grants, consumed)
+
+
+def test_capability_check_denies_without_a_grant(tiers, grants, consumed):
+    with pytest.raises(pg.PolicyDenied):
+        pg.check_capability("email_state_change", tiers, grants, consumed)
+
+
+def test_grant_named_by_tool_authorises_the_capability(tiers, grants, consumed, tool_map):
+    """The operator grants `archive_gmail`; the bridge asks for
+    `email_state_change`. One grant, two vocabularies."""
+    write_grant(grants, "archive_gmail")
+    pg.check_capability("email_state_change", tiers, grants, consumed, tool_map=tool_map)
+
+
+def test_non_consuming_check_leaves_the_grant_for_the_bridge(tiers, grants, consumed, tool_map):
+    """The MCP checks without consuming so it cannot spend a single-use grant
+    the bridge then needs — otherwise every gated call would fail at the layer
+    whose answer actually matters."""
+    write_grant(grants, "archive_gmail")
+    pg.check("archive_gmail", tiers, grants, consumed, tool_map, consume=False)
+    pg.check_capability("email_state_change", tiers, grants, consumed, tool_map=tool_map)
+    with pytest.raises(pg.PolicyDenied):
+        pg.check_capability("email_state_change", tiers, grants, consumed, tool_map=tool_map)
+
+
+def test_always_denied_capability_cannot_be_granted(grants, consumed):
+    tiers = {"always_denied": ["nuke_cap"], "approval_required": [], "allowed": []}
+    write_grant(grants, "nuke_cap")
+    with pytest.raises(pg.PolicyDenied) as exc:
+        pg.check_capability("nuke_cap", tiers, grants, consumed)
+    assert "cannot be approved at runtime" in str(exc.value)
+
+
+def test_google_bridge_declares_its_gated_capabilities():
+    """The bridge must recognise the gated actions, or the second gate is
+    decorative."""
+    src = (REPO / "services" / "compose" / "google-workspace-bridge" /
+           "app" / "bridge.py").read_text()
+    assert "def capability_for" in src
+    assert "email_state_change" in src
