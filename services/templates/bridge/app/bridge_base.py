@@ -53,10 +53,15 @@ import os
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable
 
 MAX_BODY_BYTES = int(os.environ.get("BRIDGE_MAX_BODY_BYTES", str(1 << 20)))
 LOG_PROBES = os.environ.get("BRIDGE_LOG_PROBES", "0") == "1"
+# Persisted request log. stdout is for tailing; this is the record that
+# survives a container recreate, which every deploy performs.
+LOG_FILE = os.environ.get("BRIDGE_LOG_FILE", "")
+LOG_MAX_BYTES = int(os.environ.get("BRIDGE_LOG_MAX_BYTES", str(32 << 20)))
 
 # Allowlist, not a denylist: anything not named here is never logged.
 LOGGED_QUERY_PARAMS = ("view", "page", "per_page", "expand")
@@ -236,6 +241,30 @@ class BridgeHandler(BaseHTTPRequestHandler):
         finally:
             self._log_request(method, path, status, time.monotonic() - started)
 
+    def _write_log_file(self, line: str) -> None:
+        """Append the record to the mounted log, if one is configured.
+
+        stdout alone is not a record. `docker logs` does not survive a container
+        recreate, and every `cli/agentbox deploy` recreates — so a day of
+        traffic disappears the next time anything ships. That defeats the reason
+        the request log exists, which is deciding the lean default from evidence.
+
+        Rotation is size-based and deliberately crude: one previous generation,
+        no compression. This is a decision aid, not an audit trail, and a
+        logging path that can fill the disk is worse than one that loses old
+        lines.
+        """
+        if not LOG_FILE:
+            return
+        try:
+            path = Path(LOG_FILE)
+            if path.exists() and path.stat().st_size > LOG_MAX_BYTES:
+                path.replace(path.with_suffix(path.suffix + ".1"))
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except OSError:
+            pass  # logging must never break a response
+
     def _log_request(self, method: str, path: str, status: int, elapsed: float) -> None:
         if path in ("/health", "/ready") and not LOG_PROBES:
             return
@@ -253,7 +282,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if params:
             record["params"] = params
         try:
-            print(json.dumps(record), flush=True)
+            line = json.dumps(record)
+            print(line, flush=True)
+            self._write_log_file(line)
         except Exception:  # noqa: BLE001 — logging must never break a response
             pass
 
