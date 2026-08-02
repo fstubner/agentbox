@@ -144,6 +144,36 @@ and on a drifted vendored copy.
 `approval_required` tools need an operator grant (`cli/agentbox grant`), which
 is time-boxed and single-use by default. See the runbook.
 
+## MCP protocol version
+
+The MCP servers speak `2025-11-25`, negotiating down to `2025-06-18` if a client
+asks for it. The current specification is `2026-07-28`; we deliberately do not
+target it.
+
+`2026-07-28` removed the `initialize` handshake and made MCP stateless — every
+request carries its version and capabilities in `_meta` — and added a mandatory
+`server/discover` RPC. The gateway ships `mcp` 1.28.1, whose newest supported
+revision is `2025-11-25`. Advertising a version no client here can negotiate
+would break the only consumer we have.
+
+Two things worth revisiting when the client moves:
+
+- **Multi Round-Trip Requests** (`resultType: "input_required"`). A server
+  returns the inputs it needs and the client retries with the answers. That is
+  the native form of runtime approval — `archive_gmail` could ask in the
+  conversation instead of directing the operator to a terminal. Elicitation is
+  the `2025-11-25` equivalent, but the gateway does not implement an
+  elicitation callback, so neither path is reachable today.
+- **`CacheableResult`** (`ttlMs`, `cacheScope` on `tools/list`). Tool schemas
+  are the largest fixed cost in this system at roughly 2,250 tokens per turn,
+  and this is the protocol's own answer to it. Only available at `2026-07-28`.
+
+Already adopted from `2025-11-25`: JSON Schema 2020-12 declared explicitly on
+tool schemas, and input-validation failures returned as tool execution errors
+rather than protocol errors so the model can self-correct. Tools are returned in
+deterministic order — a `2026-07-28` SHOULD, harmless at any version, and it
+helps prompt-cache hit rates on the largest fixed cost we have.
+
 ## Extension points
 
 - **Builder sandbox** — implemented: `cli/agentbox scaffold <name>` generates a
