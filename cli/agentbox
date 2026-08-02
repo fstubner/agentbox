@@ -38,12 +38,21 @@ def report(level: str, msg: str) -> None:
 
 
 def source_sha(service: str) -> str:
-    """Deterministic hash of a service's build source (excludes volatile dirs)."""
+    """Deterministic hash of what actually determines the running container.
+
+    Only the build context and runtime config: `app/`, the Dockerfile, and the
+    compose file. Not the README — the Dockerfile copies `app/*` and nothing
+    else, so documentation cannot change the image, and a freshness check that
+    fires on a doc edit is one people learn to ignore.
+    """
     svc_dir = REPO / "services" / "compose" / service
     h = hashlib.sha256()
+    tracked = {"Dockerfile", "compose.yaml", "compose.yml"}
     files = sorted(
         f for f in svc_dir.rglob("*")
-        if f.is_file() and not any(part in ("__pycache__", "data", ".pytest_cache") for part in f.parts)
+        if f.is_file()
+        and not any(part in ("__pycache__", "data", ".pytest_cache") for part in f.parts)
+        and (f.parent.name == "app" or f.name in tracked)
     )
     for f in files:
         h.update(str(f.relative_to(svc_dir)).encode())
