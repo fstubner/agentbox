@@ -5,6 +5,7 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 COPY app/server.py /app/server.py
+COPY app/mcp_base.py /app/mcp_base.py
 COPY app/policy_gate.py /app/policy_gate.py
 COPY app/approval-policy.yaml /app/approval-policy.yaml
 

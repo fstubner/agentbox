@@ -186,6 +186,15 @@ def validate() -> int:
             if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
                 error(f"approval-policy.yaml drifted from policies/: {copy.relative_to(REPO)}")
 
+    canonical_mcp = REPO / "services" / "templates" / "mcp" / "mcp_base.py"
+    if canonical_mcp.exists():
+        expected = hashlib.sha256(canonical_mcp.read_bytes()).hexdigest()
+        for copy in sorted(REPO.glob("services/compose/*/app/mcp_base.py")):
+            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
+                error(f"mcp_base.py drifted from template: {copy.relative_to(REPO)}")
+    else:
+        error("services/templates/mcp/mcp_base.py missing")
+
     canonical_gate = REPO / "services" / "templates" / "mcp" / "policy_gate.py"
     if canonical_gate.exists():
         expected = hashlib.sha256(canonical_gate.read_bytes()).hexdigest()
