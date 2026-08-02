@@ -13,7 +13,8 @@ Initial endpoints:
 - `GET /schema`
 - `POST /v1/proposals`
 - `GET /v1/proposals`
-- `POST /v1/proposals/{id}/approve`
+- `POST /v1/proposals/{id}/approve` — operator only
+- `POST /v1/proposals/{id}/reject` — operator only
 - `POST /v1/memories`
 - `GET /v1/memories`
 
@@ -42,3 +43,13 @@ LAN_BIND_IP=127.0.0.1
 ```
 
 Data is stored in a Docker named volume at `/data/memory.json`.
+
+## Review gate
+
+The assistant may propose a memory. Approving one, or writing straight to
+durable memory, requires `MEMORY_REVIEW_TOKEN` sent as
+`X-Memory-Review-Token` — a second credential the assistant never holds.
+With it unset, approval returns 503: durable memory stops accepting writes
+rather than accepting them from anyone holding the bridge token.
+
+Operators use `cli/agentbox memory list|approve|reject`.
