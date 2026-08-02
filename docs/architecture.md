@@ -24,6 +24,45 @@ raw shell access or raw credentials — it gets narrow, policy-gated levers.
         :1234          :1235        :1236
 ```
 
+## Trust boundaries, and what the diagram overstates
+
+The diagram above shows the intended topology. Two things about the live
+deployment differ, and both matter more than the drawing.
+
+**The role router is not in the assistant's path.** The gateway config points
+at the main model (`:1234`), the vision model (`:1240`), and the three MCPs
+(`:3467`, `:3472`, `:3473`). It does not reference the router (`:8765`) or
+either role worker (`:1235`, `:1236`), and the router's access log shows only
+health probes. The router and its workers currently serve the evaluator, not
+the assistant.
+
+**Tool results are untrusted input.** Anything a bridge returns may contain
+text an outsider wrote — an email body is the obvious case. A small worker
+model on this host (FastContext-4B, `:1235`) was measured obeying an
+instruction embedded in tool data in 10 of 10 attempts on a memory-reconcile
+task (n=10, single task type, measured in `agentbox-evals`). Treat that as the
+default assumption for any model in the loop, not a quirk of one worker.
+
+The practical consequence: **do not wire `/context/extract` into the assistant's
+path for content that originated outside the account** without deciding what
+happens when the extraction obeys the content instead of summarising it. Today
+that path does not exist, which is the only reason this is a note rather than a
+defect.
+
+Where this is already contained, and why those choices were containment rather
+than gating:
+
+- calendar events refuse `attendees` and send `sendUpdates=none`, so an
+  injected instruction cannot make the assistant email anyone;
+- Gmail labels can only be applied from the `agentbox/` namespace, so an
+  injected label id is refused;
+- durable memory needs an operator token the assistant does not hold, so an
+  injected "remember that…" reaches a review queue and stops;
+- no tool sends mail or deletes anything, because those are not exposed.
+
+A constraint holds when the model is compromised. An approval only helps if a
+human reads carefully first.
+
 ## Design principles
 
 - **Levers, not shell.** Every capability is an explicit endpoint with a
