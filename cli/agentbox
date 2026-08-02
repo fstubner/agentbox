@@ -38,24 +38,36 @@ def report(level: str, msg: str) -> None:
 
 
 def source_sha(service: str) -> str:
-    """Deterministic hash of what actually determines the running container.
+    """Hash exactly the files the Dockerfile copies, plus the compose file.
 
-    Only the build context and runtime config: `app/`, the Dockerfile, and the
-    compose file. Not the README — the Dockerfile copies `app/*` and nothing
-    else, so documentation cannot change the image, and a freshness check that
-    fires on a doc edit is one people learn to ignore.
+    Derived from the Dockerfile's own COPY lines rather than a directory walk,
+    so it measures precisely what determines the image. Shared sources live in
+    services/templates and policies/ and are copied from the repo root at build
+    time — reading the COPY lines means the hash follows them without anyone
+    maintaining a second list.
+
+    This replaced a directory walk that hashed the README, so a doc edit marked
+    a service stale. A freshness check that fires on documentation is one people
+    learn to click past, and this one exists because a security fix once sat in
+    git for three weeks without reaching the running container.
     """
     svc_dir = REPO / "services" / "compose" / service
+    dockerfile = svc_dir / "Dockerfile"
+    paths = []
+    if dockerfile.exists():
+        paths.append(dockerfile)
+        for line in dockerfile.read_text(encoding="utf-8").splitlines():
+            m = re.match(r"^COPY\s+(\S+)\s", line.strip())
+            if m:
+                paths.append(REPO / m.group(1))
+    for candidate in ("compose.yaml", "compose.yml"):
+        if (svc_dir / candidate).exists():
+            paths.append(svc_dir / candidate)
     h = hashlib.sha256()
-    tracked = {"Dockerfile", "compose.yaml", "compose.yml"}
-    files = sorted(
-        f for f in svc_dir.rglob("*")
-        if f.is_file()
-        and not any(part in ("__pycache__", "data", ".pytest_cache") for part in f.parts)
-        and (f.parent.name == "app" or f.name in tracked)
-    )
-    for f in files:
-        h.update(str(f.relative_to(svc_dir)).encode())
+    for f in sorted(set(paths), key=lambda x: str(x)):
+        if not f.is_file():
+            continue
+        h.update(str(f.relative_to(REPO)).encode())
         h.update(f.read_bytes())
     return h.hexdigest()[:16]
 
@@ -166,41 +178,9 @@ def validate() -> int:
     except OSError:
         error("policies/approval-policy.yaml missing")
 
-    # bridge_base.py is vendored into each bridge (the Dockerfile only copies
-    # app/*.py, so it cannot be shared at build time). Nothing prevented the
-    # copies from drifting, which would silently un-fix a security property in
-    # one bridge while the template still looked correct.
-    canonical = REPO / "services" / "templates" / "bridge" / "app" / "bridge_base.py"
-    if canonical.exists():
-        expected = hashlib.sha256(canonical.read_bytes()).hexdigest()
-        for copy in sorted(REPO.glob("services/compose/*/app/bridge_base.py")):
-            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
-                error(f"bridge_base.py drifted from template: {copy.relative_to(REPO)}")
-    else:
-        error("services/templates/bridge/app/bridge_base.py missing")
-
-    canonical_policy = REPO / "policies" / "approval-policy.yaml"
-    if canonical_policy.exists():
-        expected = hashlib.sha256(canonical_policy.read_bytes()).hexdigest()
-        for copy in sorted(REPO.glob("services/compose/*/app/approval-policy.yaml")):
-            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
-                error(f"approval-policy.yaml drifted from policies/: {copy.relative_to(REPO)}")
-
-    canonical_mcp = REPO / "services" / "templates" / "mcp" / "mcp_base.py"
-    if canonical_mcp.exists():
-        expected = hashlib.sha256(canonical_mcp.read_bytes()).hexdigest()
-        for copy in sorted(REPO.glob("services/compose/*/app/mcp_base.py")):
-            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
-                error(f"mcp_base.py drifted from template: {copy.relative_to(REPO)}")
-    else:
-        error("services/templates/mcp/mcp_base.py missing")
-
-    canonical_gate = REPO / "services" / "templates" / "mcp" / "policy_gate.py"
-    if canonical_gate.exists():
-        expected = hashlib.sha256(canonical_gate.read_bytes()).hexdigest()
-        for copy in sorted(REPO.glob("services/compose/*/app/policy_gate.py")):
-            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
-                error(f"policy_gate.py drifted from template: {copy.relative_to(REPO)}")
+    # Shared sources are copied from the repo root at build time rather than
+    # duplicated per service, so there are no copies left to drift. The hash
+    # checks that used to police that are gone with them.
 
     # Every assistant-visible tool must map to a capability, or it fails closed
     # at runtime — correct, but silently. Catch it here instead.
@@ -451,6 +431,80 @@ def status() -> int:
     return 0
 
 
+# --- backup ------------------------------------------------------------------
+#
+# Two stores hold everything the assistant knows and cannot regenerate: the
+# task database and durable memory. Together roughly 3 MB. Neither had any
+# backup, in a system whose purpose is remembering things.
+#
+# Deliberately a plain tar of the live files rather than a snapshot service.
+# Restoring must be possible with tar and nothing else, by someone who has
+# never read this code.
+
+BACKUP_DIR = Path(os.environ.get(
+    "AGENTBOX_BACKUP_DIR", str(Path("~/.local/state/agentbox/backups").expanduser())))
+
+
+def backup(keep: int = 14) -> int:
+    """Archive the stateful services. Verifies the archive before pruning."""
+    state_dir = Path(os.environ.get(
+        "AGENT_CONTROL_PLANE_STATE_DIR",
+        str(Path("~/.local/state/agent-control-plane").expanduser())))
+    stamp = subprocess.run(["date", "-u", "+%Y%m%dT%H%M%SZ"],
+                           capture_output=True, text=True).stdout.strip()
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    archive = BACKUP_DIR / f"agentbox-{stamp}.tar.gz"
+    staging = BACKUP_DIR / f".staging-{stamp}"
+    (staging / "vikunja").mkdir(parents=True, exist_ok=True)
+    (staging / "memory").mkdir(parents=True, exist_ok=True)
+
+    vikunja_src = state_dir / "vikunja"
+    if vikunja_src.is_dir():
+        subprocess.run(["cp", "-a", f"{vikunja_src}/.", str(staging / "vikunja")], check=False)
+    else:
+        report(WARN, f"vikunja state not found at {vikunja_src}")
+
+    # The memory store lives in a docker volume, so it is read out through a
+    # throwaway container rather than from the host filesystem.
+    volume = os.environ.get("AGENTBOX_MEMORY_VOLUME", "memory-bridge_memory_data")
+    proc = subprocess.run(
+        ["docker", "run", "--rm", "-v", f"{volume}:/src:ro",
+         "-v", f"{staging / 'memory'}:/dst", "alpine", "sh", "-c", "cp -a /src/. /dst/"],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        report(WARN, f"memory volume not archived: {proc.stderr.strip()[:120]}")
+
+    subprocess.run(["tar", "-czf", str(archive), "-C", str(staging), "."], check=False)
+    shutil.rmtree(staging, ignore_errors=True)
+
+    # An archive nobody has opened is not a backup. Verify before pruning, so a
+    # broken run cannot delete the last good copy.
+    verify = subprocess.run(["tar", "-tzf", str(archive)], capture_output=True, text=True)
+    entries = [ln for ln in verify.stdout.splitlines() if ln.strip() not in ("./", ".")]
+    if verify.returncode != 0 or not entries:
+        report(FAIL, f"archive failed verification, keeping everything: {archive.name}")
+        return 1
+    size = archive.stat().st_size
+    report(OK, f"backup {archive.name} — {len(entries)} entries, {size // 1024} KB")
+
+    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"))
+    for old in archives[:-keep] if len(archives) > keep else []:
+        old.unlink()
+        report(OK, f"pruned {old.name}")
+    return 0
+
+
+def backup_list() -> int:
+    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"), reverse=True)
+    if not archives:
+        print(f"no backups in {BACKUP_DIR}")
+        return 0
+    for a in archives:
+        print(f"{a.name}  {a.stat().st_size // 1024:6d} KB")
+    print(f"\nrestore with: tar -xzf {archives[0]} -C <target>")
+    return 0
+
+
 # --- builder sandbox --------------------------------------------------------
 #
 # Scaffolds a new bridge from services/templates/bridge and stops. It never
@@ -503,9 +557,18 @@ def scaffold(name: str, port: int | None, upstream_env: str | None) -> int:
     target.mkdir(parents=True)
     (target / "app").mkdir()
 
-    # The shared base is copied verbatim; validate's drift check enforces that.
-    shutil.copy2(template / "app" / "bridge_base.py", target / "app" / "bridge_base.py")
-    shutil.copy2(template / "Dockerfile", target / "Dockerfile")
+    # No vendoring: the Dockerfile copies the shared base from the repo root at
+    # build time, so there is never a second copy to drift.
+    (target / "Dockerfile").write_text(
+        "FROM python:3.13-alpine\n\n"
+        "ENV PYTHONDONTWRITEBYTECODE=1\n"
+        "ENV PYTHONUNBUFFERED=1\n\n"
+        "WORKDIR /app\n"
+        f"COPY services/compose/{service}/app/bridge.py /app/bridge.py\n"
+        "COPY services/templates/bridge/app/bridge_base.py /app/bridge_base.py\n\n"
+        "USER 65532:65532\n\n"
+        "EXPOSE 8080\n"
+        'CMD ["python", "/app/bridge.py"]\n', encoding="utf-8")
 
     def rewrite(text: str) -> str:
         return (text.replace("EXAMPLE_UPSTREAM_TOKEN", upstream_env)
@@ -517,8 +580,14 @@ def scaffold(name: str, port: int | None, upstream_env: str | None) -> int:
 
     (target / "app" / "bridge.py").write_text(
         rewrite((template / "app" / "bridge.py").read_text(encoding="utf-8")), encoding="utf-8")
-    (target / "compose.yaml").write_text(
-        rewrite((template / "compose.yaml").read_text(encoding="utf-8")), encoding="utf-8")
+    compose = rewrite((template / "compose.yaml").read_text(encoding="utf-8"))
+    compose = compose.replace("    build:\n      context: .\n",
+                              f"    build:\n      context: ../../..\n"
+                              f"      dockerfile: services/compose/{service}/Dockerfile\n")
+    compose = compose.replace("    build: .\n",
+                              f"    build:\n      context: ../../..\n"
+                              f"      dockerfile: services/compose/{service}/Dockerfile\n")
+    (target / "compose.yaml").write_text(compose, encoding="utf-8")
     (target / f"{service}.op.env.example").write_text(
         f"{upstream_env}=op://Agentbox/{service}/api_token\n"
         f"{bridge_env}=op://Agentbox/{service}/bridge_token\n"
@@ -831,6 +900,10 @@ def main() -> None:
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
     check = pol_sub.add_parser("check")
     check.add_argument("action")
+    bk = sub.add_parser("backup", help="archive the task and memory stores")
+    bk.add_argument("--keep", type=int, default=14, help="archives to retain (default 14)")
+    bk_sub = bk.add_subparsers(dest="backup_cmd")
+    bk_sub.add_parser("list")
     sc = sub.add_parser("scaffold", help="generate a new bridge for review (never deploys)")
     sc.add_argument("name", help="service name, e.g. todoist -> todoist-bridge")
     sc.add_argument("--port", type=int, help="host port; auto-picked from 3480-3499 if omitted")
@@ -865,6 +938,8 @@ def main() -> None:
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":
         sys.exit(policy_check(args.action))
+    if args.cmd == "backup":
+        sys.exit(backup_list() if getattr(args, "backup_cmd", None) == "list" else backup(args.keep))
     if args.cmd == "scaffold":
         sys.exit(scaffold(args.name, args.port, args.upstream_env))
     if args.cmd == "grant":
