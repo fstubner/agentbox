@@ -10,8 +10,12 @@ services:
       GOOGLE_BRIDGE_TOKEN: "${GOOGLE_BRIDGE_TOKEN:-}"
       BRIDGE_HOST: "0.0.0.0"
       BRIDGE_PORT: "8080"
+      BRIDGE_LOG_FILE: "/logs/google-workspace-bridge.jsonl"
     ports:
       - "${LAN_BIND_IP:-127.0.0.1}:3470:8080"
+    volumes:
+      # Request log that survives container recreate; `docker logs` does not.
+      - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
     cpus: "0.50"
     mem_limit: 160m
     pids_limit: 128

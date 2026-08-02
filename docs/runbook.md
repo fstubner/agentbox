@@ -27,10 +27,31 @@ curl -s localhost:3466/ready    # vikunja-bridge
 
 ### Request logs
 
-Bridges emit one JSON object per request on stdout:
+Bridges emit one JSON object per request, to stdout and to a persisted file:
 ```
-docker logs vikunja-bridge-vikunja-bridge-1 | grep '^{'
+tail -f ~/.local/state/agentbox/logs/vikunja-bridge.jsonl
 {"service": "vikunja-bridge", "method": "GET", "path": "/v1/tasks", "status": 200, "bytes": 76, "ms": 5.9, "params": {"view": "lean"}}
+```
+
+Use the file, not `docker logs`. Container logs do not survive a recreate and
+every `cli/agentbox deploy` recreates, so stdout loses the record each time
+anything ships. The file rotates at 32 MB keeping one previous generation.
+
+First-time setup, since the bridges run as uid 65532:
+
+```
+sudo chgrp 65532 ~/.local/state/agentbox/logs && sudo chmod 0775 ~/.local/state/agentbox/logs
+```
+
+Where the bytes go, across all bridges:
+```
+cat ~/.local/state/agentbox/logs/*.jsonl | python3 -c "
+import json,sys,collections
+n=collections.Counter(); b=collections.Counter()
+for l in sys.stdin:
+    r=json.loads(l); k=f\"{r['service']} {r['path']}\"
+    n[k]+=1; b[k]+=r['bytes']
+for k,v in b.most_common(15): print(f'{v:9d} B  {n[k]:4d} calls  {k}')"
 ```
 `bytes` is the response size, which is what makes "where does the context
 budget actually go" answerable from real traffic rather than estimated.

@@ -10,10 +10,12 @@ services:
       MEMORY_REVIEW_TOKEN: "${MEMORY_REVIEW_TOKEN:-}"
       BRIDGE_HOST: "0.0.0.0"
       BRIDGE_PORT: "8080"
+      BRIDGE_LOG_FILE: "/logs/memory-bridge.jsonl"
       MEMORY_PATH: "/data/memory.json"
     ports:
       - "${LAN_BIND_IP:-127.0.0.1}:3471:8080"
     volumes:
+      - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
       - memory_data:/data
     cpus: "0.50"
     mem_limit: 128m
