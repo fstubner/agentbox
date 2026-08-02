@@ -25,6 +25,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 MCP_APP = REPO / "services" / "templates" / "mcp"
 sys.path.insert(0, str(MCP_APP))
+
+# policy_gate binds its paths as default arguments at import, so the real policy
+# has to be in place before mcp_base imports it. Without this every tool looks
+# unmapped and the gate denies it — correct behaviour, wrong thing to test here.
+import os  # noqa: E402
+os.environ["AGENTBOX_RUNTIME_POLICY"] = str(REPO / "policies" / "approval-policy.yaml")
+os.environ["AGENTBOX_POLICY_GRANTS"] = str(REPO / ".no-such-grants.json")
 spec = importlib.util.spec_from_file_location("mcp_base", MCP_APP / "mcp_base.py")
 mb = importlib.util.module_from_spec(spec)
 sys.modules["mcp_base"] = mb
@@ -146,3 +153,72 @@ def test_every_mcp_reads_its_token_from_env_not_hardcoded():
     for mcp in ("vikunja-mcp", "memory-mcp", "google-workspace-mcp-lite"):
         src = (REPO / "services" / "compose" / mcp / "app" / "server.py").read_text()
         assert "shared_token = os.environ.get(" in src, mcp
+
+
+# --- protocol conformance ---------------------------------------------------
+
+
+def test_negotiates_rather_than_echoing_the_requested_version():
+    """Echoing claims support for anything the client asks for, including
+    revisions that changed the wire format underneath us."""
+    server, base = serve(make("secret"))
+    try:
+        agreed = rpc(base, "initialize", {"protocolVersion": "2099-01-01"},
+                     token="secret")["result"]["protocolVersion"]
+        assert agreed == mb.PROTOCOL_VERSION
+    finally:
+        server.shutdown()
+
+
+def test_accepts_a_version_we_actually_support():
+    server, base = serve(make("secret"))
+    try:
+        for version in mb.SUPPORTED_PROTOCOL_VERSIONS:
+            agreed = rpc(base, "initialize", {"protocolVersion": version},
+                         token="secret")["result"]["protocolVersion"]
+            assert agreed == version
+    finally:
+        server.shutdown()
+
+
+def test_tools_are_returned_in_deterministic_order():
+    """Stable ordering lets a client cache the tool list and improves prompt
+    cache hits — the schemas are the largest fixed per-turn cost."""
+    cls = type("H", (mb.McpHandler,), {
+        "service_name": "test-mcp", "shared_token": "secret",
+        "tools": [{"name": n, "description": "x", "inputSchema": {}}
+                  for n in ("zebra", "alpha", "middle")],
+        "dispatch": staticmethod(lambda name, args: {}),
+    })
+    server, base = serve(cls)
+    try:
+        names = [t["name"] for t in rpc(base, "tools/list", token="secret")["result"]["tools"]]
+        assert names == ["alpha", "middle", "zebra"]
+    finally:
+        server.shutdown()
+
+
+def test_schemas_declare_the_json_schema_dialect():
+    schema = mb.schema_object({"x": {"type": "string"}}, ["x"])
+    assert schema["$schema"] == mb.SCHEMA_DIALECT
+
+
+def test_tool_failures_are_tool_errors_not_protocol_errors():
+    """2025-11-25 (SEP-1303): input validation failures must come back as tool
+    execution errors so the model can self-correct, not as JSON-RPC errors."""
+    def bad(name, args):
+        raise mb.ToolError("message_id is required")
+
+    cls = type("H", (mb.McpHandler,), {
+        "service_name": "test-mcp", "shared_token": "secret",
+        "tools": [{"name": "list_tasks", "description": "x", "inputSchema": {}}],
+        "dispatch": staticmethod(bad),
+    })
+    server, base = serve(cls)
+    try:
+        payload = rpc(base, "tools/call", {"name": "list_tasks"}, token="secret")
+        assert "error" not in payload, "must not be a protocol-level error"
+        assert payload["result"]["isError"] is True
+        assert "message_id is required" in payload["result"]["content"][0]["text"]
+    finally:
+        server.shutdown()

@@ -48,7 +48,17 @@ from typing import Any, Callable
 
 import policy_gate
 
-PROTOCOL_VERSION = "2025-06-18"
+# Versions we can speak, newest first. Hermes ships mcp 1.28.1, whose latest is
+# 2025-11-25; the current spec is 2026-07-28 but that revision removed the
+# initialize handshake entirely and no client here can negotiate it yet.
+# Targeting the client's ceiling rather than the spec's is the honest choice —
+# advertising a version nothing can talk to buys nothing.
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18")
+PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
+
+# JSON Schema 2020-12 is the default dialect as of 2025-11-25 (SEP-1613).
+# Declared explicitly so a client need not infer it.
+SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 MAX_BODY_BYTES = int(os.environ.get("MCP_MAX_BODY_BYTES", str(128 * 1024)))
 
 
@@ -85,7 +95,7 @@ def response(message_id: Any, result: Any = None, error: Any = None) -> dict[str
 
 
 def schema_object(properties: dict, required: list | None = None) -> dict:
-    return {"type": "object", "properties": properties,
+    return {"$schema": SCHEMA_DIALECT, "type": "object", "properties": properties,
             "required": required or [], "additionalProperties": False}
 
 
@@ -119,8 +129,13 @@ class McpHandler(BaseHTTPRequestHandler):
         message_id = message.get("id")
         params = message.get("params") or {}
         if method == "initialize":
+            # Negotiate rather than echo. Echoing the client's version claims
+            # support for anything it asks for, including revisions that changed
+            # the wire format underneath us.
+            requested = params.get("protocolVersion")
+            agreed = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
             return response(message_id, {
-                "protocolVersion": params.get("protocolVersion") or PROTOCOL_VERSION,
+                "protocolVersion": agreed,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": self.service_name, "version": "1.0.0"},
                 "instructions": self.instructions,
@@ -130,7 +145,12 @@ class McpHandler(BaseHTTPRequestHandler):
         if method == "ping":
             return response(message_id, {})
         if method == "tools/list":
-            return response(message_id, {"tools": self.tools})
+            # Deterministic order. 2026-07-28 makes this a SHOULD explicitly for
+            # client-side caching and LLM prompt-cache hit rates; it is harmless
+            # and beneficial at any version, and the tool schemas are the single
+            # largest fixed cost in this system at ~2,250 tokens per turn.
+            return response(message_id, {
+                "tools": sorted(self.tools, key=lambda tool: tool["name"])})
         if method == "tools/call":
             name = params.get("name")
             try:
