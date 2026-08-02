@@ -51,15 +51,40 @@ raw shell access or raw credentials — it gets narrow, policy-gated levers.
 | `cli/` | Operator CLI: `deploy`, `validate`, `doctor`, `status`, `policy check` |
 | `docs/` | This document and the runbook |
 
-## Extension points (deliberately not implemented in v1)
+## Policy enforcement
 
-- **Cloud escalation**: the intended pattern is escalate-on-failure (try the
-  local model, escalate when validation fails), gated by the approval policy —
-  not an LLM-based tier classifier.
-- **Memory review gates**: the memory bridge stores proposals; a review-queue
-  workflow in front of durable memory is future work.
-- **Builder sandbox**: scaffolding new services behind PR review; the
-  `services/templates/` directory is reserved for it.
+Two files, two audiences, same semantics (`always_denied` → `approval_required`
+→ `allowed`, unknown defaults to `approval_required`):
+
+- `policies/approval-policy.yaml` — **operator and development** actions
+  (`service_lifecycle`, `host_package_install`, `merge_own_pr`). Enforced by
+  `cli/agentbox policy check`.
+- `policies/runtime-actions.yaml` — **assistant tool calls** (`list_tasks`,
+  `archive_gmail`). Enforced in every MCP by `policy_gate.py` at the single
+  `tool_call` dispatch point.
+
+They are separate because the vocabularies do not overlap: no tool name appears
+in the operator policy, so checking tools against it would send every one of
+them to `approval_required` by deny-by-default and stop the assistant doing
+anything. Merging them would also put "install a package on the host" and
+"list my tasks" in one list answering to one command.
+
+`approval_required` tools need an operator grant (`cli/agentbox grant`), which
+is time-boxed and single-use by default. See the runbook.
+
+## Extension points
+
+- **Builder sandbox** — implemented: `cli/agentbox scaffold <name>` generates a
+  complete bridge from `services/templates/bridge`, runs `validate`, and commits
+  it to a `scaffold/*` branch. It never deploys and never merges, because
+  `merge_own_pr` is `always_denied` and a generated service that deployed itself
+  would route around that.
+- **Memory review gates** — implemented: the assistant proposes, an operator
+  approves via `cli/agentbox memory` using a credential the assistant does not
+  hold.
+- **Cloud escalation** (not implemented): the intended pattern is
+  escalate-on-failure (try the local model, escalate when validation fails),
+  gated by the approval policy — not an LLM-based tier classifier.
 
 ## Reference deployment
 

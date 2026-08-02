@@ -40,6 +40,21 @@ any query parameter outside the allowlist in `bridge_base.LOGGED_QUERY_PARAMS`
 (free-text params such as a search string can carry personal data). Probe
 requests are suppressed; set `BRIDGE_LOG_PROBES=1` to include them.
 
+## Scaffolding a new bridge
+
+```
+cli/agentbox scaffold todoist
+```
+
+Generates `services/compose/todoist-bridge` from the template with both
+credentials as distinct `op://` references, a free host port, the platform
+guardrails already in place, and a starter test. It runs `validate`, commits to
+`scaffold/todoist-bridge`, and stops.
+
+It does not deploy and does not merge. Review it against
+`skills/adding-a-bridge/SKILL.md`, replace the placeholder echo route, then
+`cli/agentbox deploy todoist-bridge` when you are satisfied.
+
 ## Runtime policy grants
 
 Assistant tool calls are gated by `policies/runtime-actions.yaml`, enforced in

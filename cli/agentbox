@@ -392,6 +392,139 @@ def status() -> int:
     return 0
 
 
+# --- builder sandbox --------------------------------------------------------
+#
+# Scaffolds a new bridge from services/templates/bridge and stops. It never
+# deploys and never merges: the output is a branch and a commit for review,
+# because merge_own_pr is always_denied and a generated service that deploys
+# itself would route straight around that.
+#
+# Correct-by-construction is the point. Everything the platform requires —
+# fail-closed auth via the shared base, localhost binding, resource limits,
+# no-new-privileges, an env example with op:// refs, a readiness probe, a
+# regression test — is present before a human reads it, so review is about
+# whether the service should exist, not whether it forgot a guardrail.
+
+SCAFFOLD_PORT_RANGE = range(3480, 3500)
+
+
+def used_ports() -> set[int]:
+    ports = set()
+    for compose in (REPO / "services").rglob("compose.y*ml"):
+        for match in re.finditer(r":(\d{4}):8080", compose.read_text(encoding="utf-8")):
+            ports.add(int(match.group(1)))
+    return ports
+
+
+def scaffold(name: str, port: int | None, upstream_env: str | None) -> int:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", name):
+        report(FAIL, "name must be lowercase letters, digits and hyphens (e.g. todoist)")
+        return 1
+    service = f"{name}-bridge"
+    target = REPO / "services" / "compose" / service
+    if target.exists():
+        report(FAIL, f"{service} already exists at {target.relative_to(REPO)}")
+        return 1
+
+    taken = used_ports()
+    if port is None:
+        port = next((p for p in SCAFFOLD_PORT_RANGE if p not in taken), None)
+        if port is None:
+            report(FAIL, f"no free port in {SCAFFOLD_PORT_RANGE.start}-{SCAFFOLD_PORT_RANGE.stop - 1}")
+            return 1
+    elif port in taken:
+        report(FAIL, f"port {port} is already mapped by another service")
+        return 1
+
+    upper = name.upper().replace("-", "_")
+    upstream_env = upstream_env or f"{upper}_API_TOKEN"
+    bridge_env = f"{upper}_BRIDGE_TOKEN"
+
+    template = REPO / "services" / "templates" / "bridge"
+    target.mkdir(parents=True)
+    (target / "app").mkdir()
+
+    # The shared base is copied verbatim; validate's drift check enforces that.
+    shutil.copy2(template / "app" / "bridge_base.py", target / "app" / "bridge_base.py")
+    shutil.copy2(template / "Dockerfile", target / "Dockerfile")
+
+    def rewrite(text: str) -> str:
+        return (text.replace("EXAMPLE_UPSTREAM_TOKEN", upstream_env)
+                    .replace("EXAMPLE_BRIDGE_TOKEN", bridge_env)
+                    .replace("example-bridge", service)
+                    .replace("ExampleBridge", f"{name.replace('-', ' ').title().replace(' ', '')}Bridge")
+                    .replace("agentbox-bridge-example", service)
+                    .replace(":3480:8080", f":{port}:8080"))
+
+    (target / "app" / "bridge.py").write_text(
+        rewrite((template / "app" / "bridge.py").read_text(encoding="utf-8")), encoding="utf-8")
+    (target / "compose.yaml").write_text(
+        rewrite((template / "compose.yaml").read_text(encoding="utf-8")), encoding="utf-8")
+    (target / f"{service}.op.env.example").write_text(
+        f"{upstream_env}=op://Agentbox/{service}/api_token\n"
+        f"{bridge_env}=op://Agentbox/{service}/bridge_token\n"
+        "LAN_BIND_IP=127.0.0.1\n", encoding="utf-8")
+    (target / "README.md").write_text(
+        f"# {service}\n\n"
+        f"Scaffolded by `agentbox scaffold`. Not deployed, not merged.\n\n"
+        f"- Host port: `127.0.0.1:{port}`\n"
+        f"- Upstream credential: `{upstream_env}` (never seen by the assistant)\n"
+        f"- Bridge token: `{bridge_env}`\n\n"
+        f"## Before this is worth merging\n\n"
+        f"1. Replace the echo route in `app/bridge.py` with real calls.\n"
+        f"2. Implement `upstream_status()` if this fronts a service you run.\n"
+        f"3. Follow `skills/adding-a-bridge/SKILL.md` — bounded lists, idempotent\n"
+        f"   creates, symmetric write constraints, no policy stated only in prose.\n"
+        f"4. Tier any new MCP tools in `policies/runtime-actions.yaml`; untiered\n"
+        f"   tools fail closed.\n"
+        f"5. Create the 1Password item, then `cli/agentbox deploy {service}`.\n",
+        encoding="utf-8")
+
+    test_path = REPO / "tests" / f"test_{service.replace('-', '_')}.py"
+    test_path.write_text(
+        f'"""Scaffolded checks for {service}. Extend as routes are added."""\n'
+        "from __future__ import annotations\n\n"
+        "import importlib.util\nimport sys\nfrom pathlib import Path\n\n"
+        "REPO = Path(__file__).resolve().parent.parent\n"
+        f'BRIDGE = REPO / "services" / "compose" / "{service}" / "app" / "bridge.py"\n'
+        'sys.path.insert(0, str(REPO / "services" / "templates" / "bridge" / "app"))\n'
+        f'spec = importlib.util.spec_from_file_location("{service.replace("-", "_")}", BRIDGE)\n'
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n\n\n"
+        "def test_bridge_token_is_read_from_env_not_hardcoded():\n"
+        '    """Fail-closed auth depends on this being empty when unset."""\n'
+        f'    assert mod.BRIDGE_TOKEN == ""\n\n\n'
+        "def test_upstream_credential_is_separate_from_the_bridge_token():\n"
+        '    """One credential guards the door; the other is what the door protects."""\n'
+        "    assert mod.UPSTREAM_TOKEN is not mod.BRIDGE_TOKEN or mod.UPSTREAM_TOKEN == \"\"\n",
+        encoding="utf-8")
+
+    report(OK, f"scaffolded {service} on 127.0.0.1:{port}")
+    if validate() != 0:
+        report(FAIL, "generated service does not pass validate; leaving it in place to inspect")
+        return 1
+
+    branch = f"scaffold/{service}"
+    proc = subprocess.run(["git", "checkout", "-b", branch], cwd=REPO,
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        report(WARN, f"could not create branch {branch}: {proc.stderr.strip()}")
+        report(WARN, "files are written; commit them yourself")
+        return 0
+    subprocess.run(["git", "add", str(target), str(test_path)], cwd=REPO, check=False)
+    subprocess.run(["git", "commit", "-q", "-m",
+                    f"scaffold: {service} bridge skeleton\n\n"
+                    f"Generated by `agentbox scaffold {name}`. Echo route is a placeholder.\n"
+                    f"Not deployed and not merged: review against\n"
+                    f"skills/adding-a-bridge/SKILL.md before either."],
+                   cwd=REPO, check=False)
+    report(OK, f"committed on branch {branch} — not merged, not deployed")
+    print(f"\nNext: edit services/compose/{service}/app/bridge.py, then open a PR.\n"
+          f"Nothing runs this service until someone reviews it and runs "
+          f"`cli/agentbox deploy {service}`.")
+    return 0
+
+
 # --- runtime policy grants --------------------------------------------------
 #
 # An approval_required tool is refused until an operator issues a grant. Grants
@@ -616,6 +749,10 @@ def main() -> None:
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
     check = pol_sub.add_parser("check")
     check.add_argument("action")
+    sc = sub.add_parser("scaffold", help="generate a new bridge for review (never deploys)")
+    sc.add_argument("name", help="service name, e.g. todoist -> todoist-bridge")
+    sc.add_argument("--port", type=int, help="host port; auto-picked from 3480-3499 if omitted")
+    sc.add_argument("--upstream-env", help="upstream credential env var name")
     gr = sub.add_parser("grant", help="authorise an approval_required tool for a period")
     gr.add_argument("tool")
     gr.add_argument("--ttl", default="15m", help="e.g. 30s, 15m, 2h (default 15m)")
@@ -646,6 +783,8 @@ def main() -> None:
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":
         sys.exit(policy_check(args.action))
+    if args.cmd == "scaffold":
+        sys.exit(scaffold(args.name, args.port, args.upstream_env))
     if args.cmd == "grant":
         sys.exit(grant(args.tool, args.ttl, args.repeatable))
     if args.cmd == "grants":
