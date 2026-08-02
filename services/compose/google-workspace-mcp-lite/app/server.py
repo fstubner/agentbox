@@ -56,14 +56,14 @@ TOOLS = [
     {"name": "search_gmail", "description": "Search Gmail messages.", "inputSchema": schema_object({"query": {"type": "string"}, "max_results": {"type": "integer", "minimum": 1, "maximum": 25}}, ["query"])},
     {"name": "read_gmail", "description": "Read one Gmail message by id.", "inputSchema": schema_object({"message_id": {"type": "string"}}, ["message_id"])},
     {"name": "clean_gmail", "description": "Read and normalize one Gmail message into compact text and useful line candidates.", "inputSchema": schema_object({"message_id": {"type": "string"}}, ["message_id"])},
-    {"name": "search_grocer_orders", "description": "Find recent Grocer order/receipt/delivery emails and return readable text.", "inputSchema": schema_object({"query": {"type": "string"}, "max_results": {"type": "integer", "minimum": 1, "maximum": 10}})},
-    {"name": "extract_grocer_order", "description": "Extract compact grocery item candidates from recent Grocer order emails for meal planning.", "inputSchema": schema_object({"query": {"type": "string"}, "max_results": {"type": "integer", "minimum": 1, "maximum": 5}})},
-    {"name": "list_gmail_labels", "description": "List Gmail labels.", "inputSchema": schema_object({})},
+    {"name": "extract_receipt_items", "description": "Extract item candidates from receipt emails. Find the messages with search_gmail first and pass their ids.", "inputSchema": schema_object({"message_ids": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}}, ["message_ids"])},
+    {"name": "create_gmail_draft", "description": "Compose a Gmail draft. Drafts are never sent — you review and send it yourself in Gmail.", "inputSchema": schema_object({"to": {"type": "array", "items": {"type": "string"}}, "cc": {"type": "array", "items": {"type": "string"}}, "subject": {"type": "string"}, "body": {"type": "string"}, "thread_id": {"type": "string", "description": "Optional: reply within an existing thread."}}, ["subject"])},
+    {"name": "list_gmail_labels", "description": "List Gmail labels.", "inputSchema": schema_object({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 100}})},
     {"name": "create_gmail_label", "description": "Create an agent-owned Gmail label.", "inputSchema": schema_object({"name": {"type": "string"}}, ["name"])},
     {"name": "mark_gmail_read", "description": "Mark a Gmail message as read.", "inputSchema": schema_object({"message_id": {"type": "string"}}, ["message_id"])},
     {"name": "archive_gmail", "description": "Archive a Gmail message.", "inputSchema": schema_object({"message_id": {"type": "string"}}, ["message_id"])},
     {"name": "add_gmail_labels", "description": "Add labels to a Gmail message.", "inputSchema": schema_object({"message_id": {"type": "string"}, "label_ids": {"type": "array", "items": {"type": "string"}}}, ["message_id", "label_ids"])},
-    {"name": "list_calendars", "description": "List Google calendars.", "inputSchema": schema_object({})},
+    {"name": "list_calendars", "description": "List Google calendars.", "inputSchema": schema_object({"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}})},
     {"name": "list_calendar_events", "description": "List calendar events in a time range.", "inputSchema": schema_object({"calendar_id": {"type": "string"}, "timeMin": {"type": "string"}, "timeMax": {"type": "string"}, "max_results": {"type": "integer", "minimum": 1, "maximum": 100}, "view": {"type": "string", "enum": ["full", "lean"], "default": "full", "description": "Use 'lean' for scheduling questions — returns only id, summary, start, end, location and status, about a quarter the size. Full events carry attendee lists, links and metadata that are rarely needed to answer what is on the calendar."}})},
     {"name": "calendar_freebusy", "description": "Check calendar free/busy.", "inputSchema": schema_object({"timeMin": {"type": "string"}, "timeMax": {"type": "string"}, "items": {"type": "array", "items": {"type": "string"}}}, ["timeMin", "timeMax", "items"])},
     {"name": "create_agent_calendar_event", "description": "Create an event on the configured assistant-owned calendar only.", "inputSchema": schema_object({"event": {"type": "object"}, "calendar_id": {"type": "string"}}, ["event"])},
@@ -78,10 +78,10 @@ def tool_call(name, args):
         return bridge_post("/v1/gmail/read", args)
     if name == "clean_gmail":
         return bridge_post("/v1/gmail/clean", args)
-    if name == "search_grocer_orders":
-        return bridge_post("/v1/gmail/search_grocer_orders", args)
-    if name == "extract_grocer_order":
-        return bridge_post("/v1/gmail/extract_grocer_order", args)
+    if name == "extract_receipt_items":
+        return bridge_post("/v1/gmail/extract_receipt_items", args)
+    if name == "create_gmail_draft":
+        return bridge_post("/v1/gmail/drafts/create", args)
     if name == "list_gmail_labels":
         return bridge_post("/v1/gmail/labels/list", {})
     if name == "create_gmail_label":
@@ -104,7 +104,7 @@ def tool_call(name, args):
 
 
 def tool_result(payload, is_error=False):
-    text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, sort_keys=True)
+    text = payload if isinstance(payload, str) else json.dumps(payload, sort_keys=True, separators=(',', ':'))
     return {"content": [{"type": "text", "text": text}], "structuredContent": payload if isinstance(payload, (dict, list)) else {"message": text}, "isError": bool(is_error)}
 
 

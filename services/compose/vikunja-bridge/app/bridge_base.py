@@ -84,6 +84,25 @@ def resolve_view(value: str | None, allowed: tuple[str, ...] = VIEWS,
     return view
 
 
+def clamp_limit(value: Any, default: int, maximum: int) -> int:
+    """Resolve a caller-supplied result limit.
+
+    Every list endpoint takes one. An unbounded list is a context-economy
+    problem before it is a performance problem: the caller cannot know how much
+    of its window a call will consume, and the largest payload in this platform
+    was found exactly this way.
+    """
+    if value is None or value == "":
+        return default
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        raise BridgeError(400, "limit must be an integer")
+    if limit < 1:
+        raise BridgeError(400, "limit must be positive")
+    return min(limit, maximum)
+
+
 def project_fields(items: Any, fields: tuple[str, ...]) -> Any:
     """Narrow a list of objects to `fields`.
 

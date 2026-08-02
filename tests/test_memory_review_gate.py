@@ -147,3 +147,33 @@ def test_mcp_does_not_expose_approval_or_direct_write():
     assert "approve_memory_proposal" not in joined
     assert "write_memory" not in joined
     assert "propose_memory" in joined
+
+
+# --- pagination and idempotency ---------------------------------------------
+
+
+def test_proposals_are_idempotent_on_statement(gated):
+    """A retried proposal must not queue the same fact twice for review."""
+    _, base = gated
+    first_status, first_item = call(base, "/v1/proposals", body={"statement": "likes tea"})
+    second_status, second_item = call(base, "/v1/proposals", body={"statement": "likes tea"})
+    assert first_status == 201 and second_status == 200
+    assert first_item["id"] == second_item["id"]
+    _, pending = call(base, "/v1/proposals", method="GET")
+    assert pending["total"] == 1
+
+
+def test_list_respects_limit_and_reports_total(gated):
+    _, base = gated
+    for n in range(5):
+        call(base, "/v1/proposals", body={"statement": f"fact {n}"})
+    _, page = call(base, "/v1/proposals?limit=2", method="GET")
+    assert len(page["proposals"]) == 2
+    assert page["total"] == 5
+
+
+def test_invalid_limit_is_rejected(gated):
+    _, base = gated
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        call(base, "/v1/proposals?limit=abc", method="GET")
+    assert exc.value.code == 400

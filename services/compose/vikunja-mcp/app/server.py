@@ -91,6 +91,19 @@ TOOLS = [
         }, ["title"]),
     },
     {
+        "name": "find_or_create_task",
+        "title": "Find or create a task",
+        "description": "Find an open task by exact title in a project, or create it. "
+                       "Prefer this over create_task when a retry could duplicate work.",
+        "inputSchema": schema_object({
+            "project_id": {"type": "integer", "minimum": 1},
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "due_date": {"type": "string", "description": "Optional ISO-8601 date/time."},
+            "priority": {"type": "integer", "minimum": 0, "maximum": 5},
+        }, ["project_id", "title"]),
+    },
+    {
         "name": "list_tasks",
         "title": "List tasks",
         "description": "List or search tasks. Use this before creating duplicates.",
@@ -151,24 +164,6 @@ TOOLS = [
             "comment": {"type": "string"},
         }, ["task_id", "comment"]),
     },
-    {
-        "name": "mark_cleanup_candidate",
-        "title": "Mark task as cleanup candidate",
-        "description": "Add a cleanup-review comment to a task instead of deleting it.",
-        "inputSchema": schema_object({
-            "task_id": {"type": "integer", "minimum": 1},
-            "reason": {"type": "string"},
-        }, ["task_id", "reason"]),
-    },
-    {
-        "name": "cleanup_report",
-        "title": "Task cleanup report",
-        "description": "List tasks matching cleanup-related search text for user review.",
-        "inputSchema": schema_object({
-            "search": {"type": "string", "default": "cleanup candidate"},
-            "per_page": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
-        }),
-    },
 ]
 
 
@@ -201,6 +196,21 @@ def tool_call(name, args):
             "view": args.get("view", ""),
         })
 
+    if name == "find_or_create_task":
+        project_id = int(args["project_id"])
+        title = str(args["title"]).strip()
+        existing = bridge_request("GET", "/v1/tasks", query={
+            "search": title, "per_page": 100, "view": "full",
+        }) or []
+        for task in existing:
+            if str(task.get("title", "")).strip() == title and not task.get("done"):
+                return task
+        payload = {"title": title, "description": args.get("description", "")}
+        for key in ("due_date", "priority"):
+            if key in args:
+                payload[key] = args[key]
+        return bridge_request("POST", f"/v1/projects/{project_id}/tasks", payload=payload)
+
     if name == "create_task":
         project_id = int(args["project_id"])
         payload = {"title": args["title"], "description": args.get("description", "")}
@@ -228,22 +238,11 @@ def tool_call(name, args):
         task_id = int(args["task_id"])
         return bridge_request("POST", f"/v1/tasks/{task_id}/comments", payload={"comment": args["comment"]})
 
-    if name == "mark_cleanup_candidate":
-        task_id = int(args["task_id"])
-        reason = args.get("reason", "").strip()
-        return bridge_request("POST", f"/v1/tasks/{task_id}/comments", payload={
-            "comment": f"cleanup candidate: {reason}",
-        })
-
-    if name == "cleanup_report":
-        search = args.get("search", "cleanup candidate")
-        return bridge_request("GET", "/v1/tasks", query={"search": search, "per_page": args.get("per_page", 50)})
-
     raise ToolError(f"unknown tool: {name}")
 
 
 def tool_result(payload, is_error=False):
-    text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, sort_keys=True)
+    text = payload if isinstance(payload, str) else json.dumps(payload, sort_keys=True, separators=(',', ':'))
     return {
         "content": [{"type": "text", "text": text}],
         "structuredContent": payload if isinstance(payload, (dict, list)) else {"message": text},
