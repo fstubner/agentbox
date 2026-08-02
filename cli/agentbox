@@ -306,6 +306,12 @@ BRIDGE_READY_PORTS = {
     "vikunja-bridge": 3466,
     "memory-bridge": 3471,
     "google-workspace-bridge": 3470,
+    # MCP readiness is transitive: each probes the bridge it fronts, which
+    # probes its own upstream. Without these, a broken bridge is invisible from
+    # the layer the assistant actually talks to.
+    "vikunja-mcp": 3467,
+    "memory-mcp": 3472,
+    "google-workspace-mcp-lite": 3473,
 }
 
 
@@ -352,7 +358,7 @@ def bridge_readiness() -> int:
             report(FAIL, f"{service} /ready failed: {type(exc).__name__}")
             bad += 1
             continue
-        upstream = payload.get("upstream")
+        upstream = payload.get("upstream", payload.get("bridge"))
         if upstream is None:
             report(OK, f"{service} ready (no upstream)")
         else:

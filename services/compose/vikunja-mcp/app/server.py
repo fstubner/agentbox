@@ -343,6 +343,24 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self.send_json(200, {"ok": True})
             return
+        if self.path == "/ready":
+            # Readiness is transitive: this MCP is only useful if the bridge it
+            # fronts can reach its own upstream. /health stays liveness-only so
+            # a bridge outage cannot restart-loop a working MCP.
+            try:
+                with urllib.request.urlopen(f"{BRIDGE_URL}/ready", timeout=10) as resp:
+                    upstream = json.loads(resp.read())
+                self.send_json(200, {"ok": True, "bridge": upstream})
+            except urllib.error.HTTPError as exc:
+                detail = {}
+                try:
+                    detail = json.loads(exc.read())
+                except Exception:
+                    pass
+                self.send_json(503, {"ok": False, "bridge": detail or f"HTTP {exc.code}"})
+            except Exception as exc:
+                self.send_json(503, {"ok": False, "bridge": f"unreachable: {type(exc).__name__}"})
+            return
         self.send_empty(405)
 
     def do_POST(self):
