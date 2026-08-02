@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY app/server.py /app/server.py
 COPY app/policy_gate.py /app/policy_gate.py
-COPY app/runtime-actions.yaml /app/runtime-actions.yaml
+COPY app/approval-policy.yaml /app/approval-policy.yaml
 
 USER 65532:65532
 
