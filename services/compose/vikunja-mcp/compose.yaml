@@ -1,7 +1,8 @@
 services:
   vikunja-mcp:
     build:
-      context: .
+      context: ../../..
+      dockerfile: services/compose/vikunja-mcp/Dockerfile
     image: agentbox/vikunja-mcp:local
     environment:
       VIKUNJA_BRIDGE_URL: "${VIKUNJA_BRIDGE_URL:-http://vikunja-bridge:8080}"

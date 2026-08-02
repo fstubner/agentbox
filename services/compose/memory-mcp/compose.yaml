@@ -1,7 +1,8 @@
 services:
   memory-mcp:
     build:
-      context: .
+      context: ../../..
+      dockerfile: services/compose/memory-mcp/Dockerfile
     image: agentbox/memory-mcp:local
     environment:
       MEMORY_BRIDGE_URL: "${MEMORY_BRIDGE_URL:-http://memory-bridge:8080}"

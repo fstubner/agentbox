@@ -1,7 +1,8 @@
 services:
   memory-bridge:
     build:
-      context: .
+      context: ../../..
+      dockerfile: services/compose/memory-bridge/Dockerfile
     image: agentbox/memory-bridge:local
     environment:
       MEMORY_BRIDGE_TOKEN: "${MEMORY_BRIDGE_TOKEN:-}"

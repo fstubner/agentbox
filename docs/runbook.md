@@ -61,6 +61,33 @@ any query parameter outside the allowlist in `bridge_base.LOGGED_QUERY_PARAMS`
 (free-text params such as a search string can carry personal data). Probe
 requests are suppressed; set `BRIDGE_LOG_PROBES=1` to include them.
 
+## Backup
+
+```
+cli/agentbox backup          # archive task + memory stores, keep 14
+cli/agentbox backup list
+```
+
+Archives the two stores that hold anything the assistant cannot regenerate:
+the Vikunja database (host bind mount) and durable memory (a docker volume,
+read out through a throwaway container). Roughly 3 MB together.
+
+The archive is verified with `tar -tzf` before old ones are pruned, so a broken
+run cannot delete the last good copy.
+
+Restore needs nothing but tar:
+
+```
+tar -xzf ~/.local/state/agentbox/backups/agentbox-<stamp>.tar.gz -C /tmp/restore
+```
+
+Then copy `vikunja/` back over `$AGENT_CONTROL_PLANE_STATE_DIR/vikunja` and
+`memory/memory.json` into the `memory-bridge_memory_data` volume, with both
+services stopped.
+
+Not yet scheduled — run it from cron or a systemd timer if you want it
+unattended.
+
 ## Scaffolding a new bridge
 
 ```

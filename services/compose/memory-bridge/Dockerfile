@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY app/*.py /app/
+COPY services/compose/memory-bridge/app/bridge.py /app/bridge.py
+COPY services/templates/bridge/app/bridge_base.py /app/bridge_base.py
 
 EXPOSE 8080
 CMD ["python", "/app/bridge.py"]

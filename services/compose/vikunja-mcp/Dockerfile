@@ -4,10 +4,10 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY app/server.py /app/server.py
-COPY app/mcp_base.py /app/mcp_base.py
-COPY app/policy_gate.py /app/policy_gate.py
-COPY app/approval-policy.yaml /app/approval-policy.yaml
+COPY services/compose/vikunja-mcp/app/server.py /app/server.py
+COPY services/templates/mcp/mcp_base.py /app/mcp_base.py
+COPY services/templates/mcp/policy_gate.py /app/policy_gate.py
+COPY policies/approval-policy.yaml /app/approval-policy.yaml
 
 USER 65532:65532
 

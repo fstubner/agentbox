@@ -1,0 +1,16 @@
+# The build context is the repo root so Dockerfiles can copy shared sources
+# from services/templates and policies/. Everything not needed in an image is
+# excluded here, or every build ships the whole repo.
+.git
+.github
+docs
+skills
+tests
+router
+gateway
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+**/README.md
+**/*.env.example
+**/*.op.env.example

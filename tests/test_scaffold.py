@@ -54,17 +54,25 @@ def test_scaffold_creates_a_complete_service(sandbox):
     result = run_scaffold(sandbox, "todoist")
     assert result.returncode == 0, result.stdout + result.stderr
     service = sandbox / "services" / "compose" / "todoist-bridge"
-    for expected in ("compose.yaml", "Dockerfile", "app/bridge.py", "app/bridge_base.py",
+    for expected in ("compose.yaml", "Dockerfile", "app/bridge.py",
                      "todoist-bridge.op.env.example", "README.md"):
         assert (service / expected).exists(), f"missing {expected}"
 
 
-def test_shared_base_is_copied_verbatim(sandbox):
-    """Drift would silently un-fix a security property in the new bridge."""
+def test_shared_base_is_not_vendored(sandbox):
+    """It is copied from the repo root at build time, so there is no second
+    copy that could drift."""
     run_scaffold(sandbox, "todoist")
-    template = (sandbox / "services/templates/bridge/app/bridge_base.py").read_bytes()
-    copied = (sandbox / "services/compose/todoist-bridge/app/bridge_base.py").read_bytes()
-    assert copied == template
+    assert not (sandbox / "services/compose/todoist-bridge/app/bridge_base.py").exists()
+    dockerfile = (sandbox / "services/compose/todoist-bridge/Dockerfile").read_text()
+    assert "services/templates/bridge/app/bridge_base.py" in dockerfile
+
+
+def test_generated_build_context_is_the_repo_root(sandbox):
+    run_scaffold(sandbox, "todoist")
+    compose = (sandbox / "services/compose/todoist-bridge/compose.yaml").read_text()
+    assert "context: ../../.." in compose
+    assert "dockerfile: services/compose/todoist-bridge/Dockerfile" in compose
 
 
 def test_generated_compose_keeps_the_platform_guardrails(sandbox):

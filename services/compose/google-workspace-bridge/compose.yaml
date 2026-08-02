@@ -1,7 +1,8 @@
 services:
   google-workspace-bridge:
     build:
-      context: .
+      context: ../../..
+      dockerfile: services/compose/google-workspace-bridge/Dockerfile
     image: agentbox/google-workspace-bridge:local
     environment:
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
