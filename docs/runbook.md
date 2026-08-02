@@ -40,6 +40,40 @@ any query parameter outside the allowlist in `bridge_base.LOGGED_QUERY_PARAMS`
 (free-text params such as a search string can carry personal data). Probe
 requests are suppressed; set `BRIDGE_LOG_PROBES=1` to include them.
 
+## Runtime policy grants
+
+Assistant tool calls are gated by `policies/runtime-actions.yaml`, enforced in
+every MCP at the single `tool_call` dispatch point. `allowed` tools run freely;
+`approval_required` tools are refused until an operator issues a grant; unknown
+tools default to `approval_required`, so a tool added without a tier fails
+closed.
+
+```
+cli/agentbox grant archive_gmail --ttl 15m   # single-use by default
+cli/agentbox grants list
+cli/agentbox grants revoke archive_gmail
+```
+
+Add `--repeatable` for a grant that survives repeated use until it expires.
+
+Two directories back this, and the split is the security property:
+
+- `~/.local/state/agentbox/policy` → mounted **read-only** at `/policy`. Holds
+  the grants. The assistant side must never be able to issue itself permission.
+- `~/.local/state/agentbox/policy-state` → mounted **writable** at
+  `/policy-state`. Holds spent-grant markers only. Writing here can only
+  *remove* permission, so it carries no authority.
+
+First-time setup: the MCP containers run as uid 65532, so the writable
+directory needs group access.
+
+```
+sudo chgrp 65532 ~/.local/state/agentbox/policy-state && sudo chmod 0775 ~/.local/state/agentbox/policy-state
+```
+
+If that is missed, single-use grants are refused with an explicit message
+rather than silently degrading to unlimited-until-expiry.
+
 ## Repo validation (CI-equivalent, run locally)
 ```
 cli/agentbox validate

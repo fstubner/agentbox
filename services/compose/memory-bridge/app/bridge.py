@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from bridge_base import BridgeError, BridgeHandler, clamp_limit, serve
+from bridge_base import BridgeError, BridgeHandler, resolve_limit, serve
 
 MEMORY_PATH = Path(os.environ.get("MEMORY_PATH", "/data/memory.json"))
 _LOCK = threading.Lock()
@@ -114,7 +114,7 @@ def get_schema(handler, body):
 
 
 def list_proposals(handler, body):
-    limit = clamp_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
+    limit = resolve_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
     with _LOCK:
         store = load_store()
     items = filter_items(store["proposals"], {})
@@ -153,7 +153,7 @@ def create_memory(handler, body):
 
 
 def list_memories(handler, body):
-    limit = clamp_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
+    limit = resolve_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
     with _LOCK:
         store = load_store()
     items = filter_items(store["memories"], {})

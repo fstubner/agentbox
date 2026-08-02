@@ -1,0 +1,159 @@
+"""Runtime policy enforcement for MCP tool calls.
+
+The architecture diagram has always drawn a policy engine, but nothing outside
+cli/agentbox read the policy — it was an operator/CI check, so at runtime the
+assistant's tool calls were ungated. This module is the missing half.
+
+Semantics match approval-policy.yaml: always_denied -> approval_required ->
+allowed, and an unknown tool defaults to approval_required. Deny-by-default is
+the point; a tool added without a tier is refused until someone tiers it.
+
+An approval_required tool needs an operator grant, issued out of band with
+`cli/agentbox grant <tool> --ttl 15m` and written to a grants file this module
+reads. Grants are time-boxed and single-use by default, so an approval cannot
+silently become a standing permission.
+
+Copy this file verbatim into a new MCP's app/ directory alongside
+runtime-actions.yaml; do not edit it per-service.
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+
+POLICY_PATH = Path(os.environ.get("AGENTBOX_RUNTIME_POLICY", "/app/runtime-actions.yaml"))
+GRANTS_PATH = Path(os.environ.get("AGENTBOX_POLICY_GRANTS", "/policy/grants.json"))
+# Writable, and deliberately NOT the grants file: recording a consumption can
+# only remove permission, so this path carries no authority.
+CONSUMED_PATH = Path(os.environ.get("AGENTBOX_POLICY_CONSUMED", "/policy-state/consumed.json"))
+
+ALLOWED = "allowed"
+APPROVAL_REQUIRED = "approval_required"
+ALWAYS_DENIED = "always_denied"
+
+
+class PolicyDenied(Exception):
+    """Raised when a tool call is refused. The message reaches the assistant."""
+
+
+def load_tiers(path: Path = POLICY_PATH) -> dict[str, list[str]]:
+    """Parse the runtime tier map. Flat two-level YAML, no external deps —
+    the MCP images are stdlib-only and a policy file is not worth a dependency.
+    """
+    tiers: dict[str, list[str]] = {}
+    current: str | None = None
+    in_tiers = False
+    if not path.exists():
+        return tiers
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.rstrip(":") == "tiers":
+            in_tiers = True
+            continue
+        if not in_tiers:
+            continue
+        if not line.startswith(" "):
+            break
+        stripped = line.strip()
+        if stripped.endswith(":") or stripped.endswith(": []"):
+            current = stripped.split(":", 1)[0].strip()
+            tiers.setdefault(current, [])
+            continue
+        if stripped.startswith("- ") and current:
+            tiers[current].append(stripped[2:].strip())
+    return tiers
+
+
+def tier_of(tool: str, tiers: dict[str, list[str]]) -> str:
+    """Resolve a tool's tier. Unknown tools are approval_required, not allowed."""
+    for tier in (ALWAYS_DENIED, APPROVAL_REQUIRED, ALLOWED):
+        if tool in tiers.get(tier, []):
+            return tier
+    return APPROVAL_REQUIRED
+
+
+def _load_consumed(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_grants(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # An unreadable grants file must not become an open door.
+        return []
+    return data.get("grants", []) if isinstance(data, dict) else []
+
+
+def _consumed_key(grant: dict) -> str:
+    return f"{grant.get('tool')}@{int(float(grant.get('granted_at', 0)))}"
+
+
+def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
+                  consumed_path: Path | None = None) -> bool:
+    """Return True if an unexpired, unconsumed grant covers `tool`.
+
+    Grants are mounted read-only so a compromised MCP cannot issue itself
+    permission. Consumption therefore cannot delete from the grants file, and is
+    recorded separately in a writable location instead. That split is the point:
+    writing a consumption record can only ever *remove* permission, so the
+    writable path carries no authority.
+
+    If the consumption record cannot be written, the call is refused rather than
+    allowed. An unenforceable single-use grant that silently behaves as
+    unlimited is worse than a failed call — this exact case shipped once, where
+    a read-only mount turned every single-use grant into a TTL-long window.
+    """
+    store = CONSUMED_PATH if consumed_path is None else consumed_path
+    stamp = time.time() if now is None else now
+    consumed = _load_consumed(store)
+    for grant in _load_grants(path):
+        if grant.get("tool") != tool or float(grant.get("expires_at", 0)) <= stamp:
+            continue
+        if not grant.get("single_use", True):
+            return True
+        key = _consumed_key(grant)
+        if key in consumed:
+            continue
+        try:
+            store.parent.mkdir(parents=True, exist_ok=True)
+            consumed[key] = int(stamp)
+            store.write_text(json.dumps(consumed), encoding="utf-8")
+        except OSError:
+            raise PolicyDenied(
+                f"'{tool}' has a single-use grant but the consumption record at "
+                f"{store} is not writable, so it cannot be enforced. Refusing "
+                f"rather than treating it as unlimited.")
+        return True
+    return False
+
+
+def check(tool: str, tiers: dict[str, list[str]] | None = None,
+          grants_path: Path = GRANTS_PATH,
+          consumed_path: Path | None = None) -> None:
+    """Raise PolicyDenied unless `tool` may run now."""
+    resolved = load_tiers() if tiers is None else tiers
+    tier = tier_of(tool, resolved)
+    if tier == ALLOWED:
+        return
+    if tier == ALWAYS_DENIED:
+        raise PolicyDenied(
+            f"'{tool}' is always denied by policy and cannot be approved at runtime. "
+            f"Only a human, outside the assistant, may do this.")
+    if consume_grant(tool, grants_path, consumed_path=consumed_path):
+        return
+    raise PolicyDenied(
+        f"'{tool}' requires operator approval and no grant is active. "
+        f"Ask the operator to run: agentbox grant {tool} --ttl 15m")

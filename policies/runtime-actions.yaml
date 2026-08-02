@@ -1,0 +1,70 @@
+# Runtime tier for every assistant-visible MCP tool.
+#
+# approval-policy.yaml describes operator/development actions (service
+# lifecycle, package installs, branches). None of its `allowed` entries name
+# anything the assistant does at runtime, so enforcing it directly against MCP
+# tools would send every tool to approval_required by deny-by-default and brick
+# the assistant. This file is the runtime half: tool name -> tier, with the same
+# semantics (always_denied -> approval_required -> allowed, unknown defaults to
+# approval_required).
+#
+# Tiering principle: prefer narrowing a capability over gating it. A constraint
+# holds even when the model is compromised; an approval only helps if a human
+# reads carefully before saying yes. Tools appear here only where the risk
+# could not be designed out at the bridge.
+version: 1
+tiers:
+  allowed:
+    # Task backend — the assistant's own workspace. Every write is reversible
+    # and nothing deletes; mark-for-cleanup is a comment, not a removal.
+    - list_projects
+    - find_or_create_project
+    - list_tasks
+    - find_or_create_task
+    - create_task
+    - update_task
+    - complete_task
+    - add_task_comment
+
+    # Memory — proposing is not storing. Durable writes are already behind the
+    # operator review token in memory-bridge, so the proposal path is inert.
+    - propose_memory
+    - list_memory_proposals
+    - search_memories
+
+    # Reads of mail and calendar. The assistant's job is the operator's mail and
+    # calendar; gating these makes it useless, and nothing here sends data
+    # outward. Note this means personal_data_access_beyond_task is not enforced
+    # as written — "beyond what this task needs" is a per-call judgement a tier
+    # cannot express, and pretending otherwise would be worse than saying so.
+    - search_gmail
+    - read_gmail
+    - clean_gmail
+    - list_gmail_labels
+    - list_calendars
+    - list_calendar_events
+    - calendar_freebusy
+
+    # Writes that were narrowed rather than gated:
+    #   create_gmail_label       forced into the agentbox/ namespace
+    #   add_gmail_labels         refuses labels outside that namespace
+    #   create_agent_calendar_event  attendees/conferenceData refused,
+    #                            sendUpdates=none, agent calendar only
+    #   create_gmail_draft       drafts are never sent
+    - create_gmail_label
+    - add_gmail_labels
+    - create_agent_calendar_event
+    - create_gmail_draft
+
+  approval_required:
+    # Both change what the operator will notice in their own inbox. The harm
+    # lands on human attention rather than on recoverable data, so it cannot be
+    # designed out at the bridge — a correctly-archived message and a wrongly
+    # archived one are the same API call.
+    - archive_gmail
+    - mark_gmail_read
+
+  always_denied: []
+  # Empty on purpose. Sending mail, deleting anything, and unsubscribing are not
+  # exposed by any bridge, so there is no tool to deny. A capability that does
+  # not exist beats a policy saying no to one that does.
