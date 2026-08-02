@@ -7,12 +7,13 @@ import hmac
 import json
 import os
 import threading
+import urllib.parse
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from bridge_base import BridgeError, BridgeHandler, serve
+from bridge_base import BridgeError, BridgeHandler, clamp_limit, serve
 
 MEMORY_PATH = Path(os.environ.get("MEMORY_PATH", "/data/memory.json"))
 _LOCK = threading.Lock()
@@ -39,6 +40,15 @@ def require_review(handler) -> None:
     provided = handler.headers.get(REVIEW_HEADER, "")
     if not hmac.compare_digest(provided, REVIEW_TOKEN):
         raise BridgeError(403, "memory approval requires the operator review token")
+
+
+def query_of(handler) -> dict[str, list[str]]:
+    return urllib.parse.parse_qs(urllib.parse.urlparse(handler.path).query)
+
+
+def first(query, key, default):
+    value = query.get(key, [default])
+    return value[0] if value else default
 
 
 def now() -> str:
@@ -104,15 +114,24 @@ def get_schema(handler, body):
 
 
 def list_proposals(handler, body):
+    limit = clamp_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
     with _LOCK:
         store = load_store()
-    return 200, {"proposals": filter_items(store["proposals"], {})}
+    items = filter_items(store["proposals"], {})
+    return 200, {"proposals": items[:limit], "total": len(items)}
 
 
 def create_proposal(handler, body):
     item = clean_memory(body or {}, "proposed")
     with _LOCK:
         store = load_store()
+        # Idempotent on the statement: a retried proposal must not queue the
+        # same fact twice for review. Nothing here identifies a proposal except
+        # what it says, so that is the key.
+        existing = next((x for x in store["proposals"]
+                         if x.get("statement", "").strip() == item["statement"]), None)
+        if existing:
+            return 200, existing
         store["proposals"].append(item)
         save_store(store)
     return 201, item
@@ -134,9 +153,11 @@ def create_memory(handler, body):
 
 
 def list_memories(handler, body):
+    limit = clamp_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
     with _LOCK:
         store = load_store()
-    return 200, {"memories": filter_items(store["memories"], {})}
+    items = filter_items(store["memories"], {})
+    return 200, {"memories": items[:limit], "total": len(items)}
 
 
 def approve_proposal(handler, proposal_id: str):

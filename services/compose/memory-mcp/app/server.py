@@ -62,14 +62,14 @@ MEMORY_FIELDS = {
 
 TOOLS = [
     {"name": "propose_memory", "description": "Create a memory proposal for user review.", "inputSchema": schema_object(MEMORY_FIELDS, ["statement"])},
-    {"name": "list_memory_proposals", "description": "List pending memory proposals.", "inputSchema": schema_object({})},
+    {"name": "list_memory_proposals", "description": "List pending memory proposals.", "inputSchema": schema_object({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}})},
     # approve_memory_proposal and write_memory are deliberately absent. Both are
     # operator actions behind the review token (see memory-bridge). Exposing
     # them here let the assistant approve its own proposals or skip the queue
     # entirely, which meant there was no review gate at all — only a prose
     # instruction not to use them, which is not enforcement.
     # Operators use: cli/agentbox memory approve|reject.
-    {"name": "search_memories", "description": "List stored memories for context retrieval.", "inputSchema": schema_object({})},
+    {"name": "search_memories", "description": "List stored memories for context retrieval.", "inputSchema": schema_object({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}})},
 ]
 
 
@@ -78,14 +78,14 @@ def tool_call(name, args):
     if name == "propose_memory":
         return bridge_request("POST", "/v1/proposals", args)
     if name == "list_memory_proposals":
-        return bridge_request("GET", "/v1/proposals")
+        return bridge_request("GET", f"/v1/proposals?limit={int(args.get('limit', 50))}")
     if name == "search_memories":
-        return bridge_request("GET", "/v1/memories")
+        return bridge_request("GET", f"/v1/memories?limit={int(args.get('limit', 50))}")
     raise ToolError(f"unknown tool: {name}")
 
 
 def tool_result(payload, is_error=False):
-    text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, sort_keys=True)
+    text = payload if isinstance(payload, str) else json.dumps(payload, sort_keys=True, separators=(',', ':'))
     return {"content": [{"type": "text", "text": text}], "structuredContent": payload if isinstance(payload, (dict, list)) else {"message": text}, "isError": bool(is_error)}
 
 

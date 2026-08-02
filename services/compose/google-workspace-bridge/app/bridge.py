@@ -8,7 +8,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from bridge_base import BridgeError, BridgeHandler, project_fields, resolve_view, serve
+from email.message import EmailMessage
+
+from bridge_base import (BridgeError, BridgeHandler, clamp_limit, project_fields,
+                         resolve_view, serve)
 
 
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -131,7 +134,7 @@ def compact_email_text(text):
     return text.strip()
 
 
-def grocer_item_candidates(text):
+def receipt_item_candidates(text):
     compact = compact_email_text(text)
     lines = [line.strip(" -•\t") for line in compact.splitlines()]
     candidates = []
@@ -192,7 +195,7 @@ def gmail_search(body):
     query = str(body.get("query", "")).strip()
     if not query:
         raise BridgeError(400, "query is required")
-    max_results = min(int(body.get("max_results", 10)), 25)
+    max_results = clamp_limit(body.get("limit", body.get("max_results")), default=10, maximum=25)
     params = urllib.parse.urlencode({"q": query, "maxResults": max_results})
     return google_json("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages?{params}") or {}
 
@@ -243,6 +246,12 @@ def gmail_create_label(body):
         raise BridgeError(400, "name is required")
     if not name.startswith(OWNED_LABEL_PREFIX):
         name = f"{OWNED_LABEL_PREFIX}{name}"
+    # Idempotent by nature: a label is identified by its name, so creating one
+    # that exists returns it rather than failing or duplicating. A retried call
+    # must not leave the account in a different state than a single call.
+    for label in (gmail_list_labels({}) or {}).get("labels", []):
+        if label.get("name") == name:
+            return label
     payload = {
         "name": name,
         "labelListVisibility": "labelShow",
@@ -296,36 +305,71 @@ def gmail_modify(body):
     return google_json("POST", f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{urllib.parse.quote(message_id)}/modify", payload) or {}
 
 
-def search_grocer_orders(body):
-    query = str(body.get("query", "")).strip() or '(from:(mail.grocer.com OR grocer.com OR grocer.ie) (receipt OR order OR delivery)) newer_than:60d'
-    max_results = min(int(body.get("max_results", 10)), 10)
-    found = gmail_search({"query": query, "max_results": max_results}).get("messages", []) or []
-    messages = []
-    for item in found:
-        try:
-            messages.append(gmail_read({"message_id": item["id"]}))
-        except Exception as exc:
-            messages.append({"id": item.get("id"), "error": str(exc)})
-    return {"query": query, "messages": messages}
 
+def extract_receipt_items(body):
+    """Pull item candidates out of receipt emails identified by message id.
 
-def extract_grocer_order(body):
-    query = str(body.get("query", "")).strip() or '(from:(mail.grocer.com OR grocer.com OR grocer.ie) (receipt OR order OR delivery)) newer_than:60d'
-    max_results = min(int(body.get("max_results", 3)), 5)
-    found = gmail_search({"query": query, "max_results": max_results}).get("messages", []) or []
-    orders = []
-    for item in found:
-        message = gmail_read({"message_id": item["id"]})
+    Takes explicit ids rather than running its own search, so it composes with
+    gmail/search instead of duplicating it. The previous version hardcoded a
+    Grocer query, which made a general capability look vendor-specific and hid
+    a second search implementation inside an extraction tool.
+
+    The parser's heuristics were developed against Grocer receipts and work best
+    on that layout; nothing in them is vendor-specific, but treat the output as
+    candidates, not a parsed order.
+    """
+    message_ids = body.get("message_ids")
+    if not isinstance(message_ids, list) or not message_ids:
+        raise BridgeError(400, "message_ids must be a non-empty list; "
+                               "use /v1/gmail/search to find them")
+    limit = clamp_limit(body.get("limit"), default=3, maximum=5)
+    receipts = []
+    for message_id in message_ids[:limit]:
+        message = gmail_read({"message_id": str(message_id)})
         text = message.get("text", "")
-        orders.append({
+        receipts.append({
             "id": message.get("id"),
             "threadId": message.get("threadId"),
             "headers": message.get("headers", {}),
             "snippet": message.get("snippet", ""),
-            "item_candidates": grocer_item_candidates(text),
+            "item_candidates": receipt_item_candidates(text),
             "text_excerpt": text[:4000],
         })
-    return {"query": query, "orders": orders}
+    return {"receipts": receipts}
+
+
+def gmail_create_draft(body):
+    """Compose a draft. Deliberately the only write toward sending.
+
+    Sending is irreversible and is never exposed; a draft leaves the
+    irreversible step with a human who can read it in Gmail first. This is the
+    same propose-then-approve shape as the memory review gate, and it needs no
+    approval plumbing because nothing leaves the account.
+    """
+    to = body.get("to") or []
+    if isinstance(to, str):
+        to = [to]
+    if not isinstance(to, list) or not all(isinstance(x, str) for x in to):
+        raise BridgeError(400, "to must be a string or list of strings")
+    subject = str(body.get("subject", "")).strip()
+    text = str(body.get("body", ""))
+    if not subject and not text:
+        raise BridgeError(400, "subject or body is required")
+    message = EmailMessage()
+    if to:
+        message["To"] = ", ".join(to)
+    for header, value in (("Cc", body.get("cc")), ("Bcc", body.get("bcc"))):
+        if value:
+            message[header] = ", ".join(value) if isinstance(value, list) else str(value)
+    message["Subject"] = subject
+    message.set_content(text)
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+    payload = {"message": {"raw": raw}}
+    if body.get("thread_id"):
+        payload["message"]["threadId"] = str(body["thread_id"])
+    created = google_json("POST", "https://gmail.googleapis.com/gmail/v1/users/me/drafts", payload) or {}
+    return {"id": created.get("id"), "message": created.get("message", {}),
+            "note": "draft created; it has NOT been sent"}
 
 
 def calendar_list(_body):
@@ -402,7 +446,7 @@ def calendar_create_event(body):
 
 SCHEMA = {"service": "google-workspace-bridge", "tools": [
     "POST /v1/gmail/search", "POST /v1/gmail/read", "POST /v1/gmail/clean",
-    "POST /v1/gmail/search_grocer_orders", "POST /v1/gmail/extract_grocer_order",
+    "POST /v1/gmail/extract_receipt_items", "POST /v1/gmail/drafts/create",
     "POST /v1/gmail/labels/list", "POST /v1/gmail/labels/create", "POST /v1/gmail/modify",
     "POST /v1/calendar/list", "POST /v1/calendar/events", "POST /v1/calendar/freebusy",
     "POST /v1/calendar/events/create",
@@ -413,8 +457,8 @@ _POST_ROUTES = {
     "/v1/gmail/search": gmail_search,
     "/v1/gmail/read": gmail_read,
     "/v1/gmail/clean": gmail_clean,
-    "/v1/gmail/search_grocer_orders": search_grocer_orders,
-    "/v1/gmail/extract_grocer_order": extract_grocer_order,
+    "/v1/gmail/extract_receipt_items": extract_receipt_items,
+    "/v1/gmail/drafts/create": gmail_create_draft,
     "/v1/gmail/labels/list": gmail_list_labels,
     "/v1/gmail/labels/create": gmail_create_label,
     "/v1/gmail/modify": gmail_modify,
