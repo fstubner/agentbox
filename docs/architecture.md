@@ -120,9 +120,19 @@ One file, `policies/approval-policy.yaml`, covering both actors. Semantics:
   exercises, so a tool call resolves to the same tier as the equivalent
   operator action.
 
-Enforced in two places against that one file: `cli/agentbox policy check` for
-operator actions, and `policy_gate.py` in every MCP at the single `tool_call`
-dispatch point for the assistant.
+Enforced in three places against that one file:
+
+- `cli/agentbox policy check` — operator actions.
+- **MCP**, at the single `tool_call` dispatch point. Checks *without consuming*
+  a single-use grant, so a denial is fast and names the tool.
+- **Bridge**, authoritatively. Each bridge declares the capability an incoming
+  request exercises and consumes the grant.
+
+Two gates, because the MCP holds the bridge's token: gate and credential in one
+process means compromising it defeats both. The bridge gate sits in the process
+the compromised one cannot bypass, so holding the credential is not sufficient
+to use it. The idea is borrowed from OpenShell, where egress enforcement lives
+outside the sandbox rather than inside the agent.
 
 This was briefly two files, and they contradicted each other within hours —
 `personal_data_access_beyond_task` and `gmail_label_management` were

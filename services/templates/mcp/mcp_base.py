@@ -134,7 +134,9 @@ class McpHandler(BaseHTTPRequestHandler):
         if method == "tools/call":
             name = params.get("name")
             try:
-                policy_gate.check(name)
+                # Non-consuming: deny early with a good message, but leave the
+                # single-use grant for the bridge, whose answer is authoritative.
+                policy_gate.check(name, consume=False)
                 return response(message_id, tool_result(self.dispatch(name, params.get("arguments") or {})))
             except policy_gate.PolicyDenied as exc:
                 return response(message_id, tool_result(str(exc), True))

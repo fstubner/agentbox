@@ -17,6 +17,11 @@ services:
       - "${LAN_BIND_IP:-127.0.0.1}:3471:8080"
     volumes:
       - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
+      # Grants read-only; spent markers writable. The bridge is the
+      # authoritative gate, so it needs both — but writing a marker can
+      # only remove permission, never create it.
+      - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
+      - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
       - memory_data:/data
     cpus: "0.50"
     mem_limit: 128m
