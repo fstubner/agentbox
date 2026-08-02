@@ -141,13 +141,15 @@ Verified by tests, not by inspection — see `services/templates/bridge/`:
 
 ## Known gaps
 
-- **MCP services have no readiness probe.** They use `server.py` rather than
-  `bridge_base`, so they did not inherit `/ready`. Same blind spot that hid the
-  Vikunja outage, one layer over.
-- **No traffic baseline yet.** The request log is new. Numbers above are from
-  synthetic calls, not a representative day.
+- **No traffic baseline yet.** The request log now persists across deploys, but
+  the numbers above are still from synthetic calls rather than a representative
+  day of use.
 - **The gateways are not probed** by `doctor`; they are system units owned by
   a different user.
+- **The role router and both role workers are unused by the assistant.** The
+  gateway talks directly to the main model and the MCPs. The router serves the
+  evaluator. `doctor` treats the workers as core and fails when they are down,
+  which is currently stricter than the assistant's actual dependencies.
 
 ## Restoring from cold
 
