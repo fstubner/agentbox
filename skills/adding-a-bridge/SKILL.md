@@ -13,18 +13,19 @@ empty token because auth was hand-rolled.
 
 ## Steps
 
-1. **Copy the template.**
-   `cp -r services/templates/bridge services/compose/<name>-bridge`
+1. **Scaffold it.** `cli/agentbox scaffold <name>` generates the service with
+   the guardrails already in place, runs `validate`, and commits to a branch.
+   It never deploys and never merges.
 
-2. **Do NOT edit `app/bridge_base.py`.** It provides auth, error handling,
-   body limits, health, readiness, request logging, and the server loop.
-   Editing it per-bridge is how divergence bugs start.
+2. **Do NOT edit `services/templates/bridge/app/bridge_base.py`.** It provides
+   auth, error handling, body limits, health, readiness, request logging,
+   policy enforcement, and the server loop.
 
-   The file is *vendored* — each bridge has its own copy, because the
-   Dockerfile only copies `app/*.py` and cannot reach outside the build
-   context. When the template legitimately changes, copy it into every bridge
-   in the same commit. `cli/agentbox validate` hashes the copies against the
-   template and fails on drift, so a partial sync cannot ship.
+   It is not copied into your service. The build context is the repo root, so
+   the Dockerfile copies the shared source directly — there is exactly one
+   bridge_base.py and nothing to keep in sync. Changing it changes every
+   bridge, which is the point; `source_sha` reads the Dockerfile's COPY lines,
+   so `doctor` marks every affected service stale.
 
 3. **Write `app/bridge.py`** — the only file you author:
    - Read two secrets from env: the upstream credential and `*_BRIDGE_TOKEN`.
@@ -47,7 +48,7 @@ empty token because auth was hand-rolled.
 
    Four surface rules, all learned from getting them wrong here:
 
-   - **Every list endpoint takes a bound.** Use `clamp_limit` from
+   - **Every list endpoint takes a bound.** Use `resolve_limit` from
      `bridge_base`. An unbounded list is a context problem before it is a
      performance one — the caller cannot know how much of its window a call
      will spend.
@@ -96,7 +97,7 @@ empty token because auth was hand-rolled.
 
 9. **Verify before deploy:**
    - `python3 -m pytest services/compose/<name>-bridge` (copy the base test).
-   - `cli/agentbox validate` (bindings, resource limits, non-root, base drift).
+   - `cli/agentbox validate` (bindings, resource limits, non-root, tool mapping).
    - `curl -s localhost:<port>/health` → 200; the same route without a token → 401.
    - `curl -s localhost:<port>/ready` → 200 with the upstream up.
    - **Run the outage drill if you implemented `upstream_status()`:** stop the
@@ -109,7 +110,7 @@ empty token because auth was hand-rolled.
 
 ## Checklist (all enforced by base/template/validate — confirm you didn't undo them)
 
-- [ ] `bridge_base.py` unchanged, and identical to the template in every bridge
+- [ ] `bridge_base.py` unchanged (there is only one; it is not vendored)
 - [ ] upstream credential and bridge token are distinct env vars
 - [ ] every mutating route validates its input and returns only allowlisted fields
 - [ ] host port bound to loopback/LAN, never `0.0.0.0` on the host
@@ -117,7 +118,7 @@ empty token because auth was hand-rolled.
 - [ ] `upstream_status()` implemented if the bridge fronts a service you run
 - [ ] `/health` does **not** touch the upstream
 - [ ] `capability_for()` returns a capability for every gated route
-- [ ] every list endpoint takes a bound via `clamp_limit`
+- [ ] every list endpoint takes a bound via `resolve_limit`
 - [ ] creates are idempotent, or a `find_or_create_*` variant exists
 - [ ] write constraints are symmetric between create and apply
 - [ ] no tool is another tool plus a fixed argument
