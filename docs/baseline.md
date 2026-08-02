@@ -19,10 +19,10 @@ records the numbers a probe cannot express.
 | Component | Endpoint | Severity if down |
 |---|---|---|
 | Production model — `ornith-35b-q6-mtp` | `:1234/v1/models` | fail |
-| Context worker — `fastcontext-worker` | `:1235/v1/models` | fail |
-| Reason worker — `vibethinker-worker` | `:1236/v1/models` | fail |
+| Context worker — `fastcontext-worker` | `:1235/v1/models` | warn |
+| Reason worker — `vibethinker-worker` | `:1236/v1/models` | warn |
 | Vision model — `local-qwen25-vl-3b` | `:1240/v1/models` | warn |
-| Role router | `:8765/health` | fail |
+| Role router | `:8765/health` | warn |
 | vikunja-bridge | `:3466/health`, `/ready` | fail |
 | google-workspace-bridge | `:3470/health`, `/ready` | fail |
 | memory-bridge | `:3471/health`, `/ready` | fail |
@@ -34,12 +34,17 @@ records the numbers a probe cannot express.
 | Control plane UI | `:4321/` | warn |
 | Assistant gateways | `hermes-gateway-agentbox`, `hermes-assistant-gateway` | not probed |
 
-**Why two severities.** The role workers are core: the router hands
-`/context/extract` and `/reason/check` to them, so a stopped worker is a broken
-capability. Vision and the control plane sit outside the assistant's request
-path, and the evaluator legitimately stops model servers while benchmarking.
-If those were failures, `doctor` would be red during normal work — and a check
-that is normally red is a check people stop reading.
+**Why two severities.** `fail` is reserved for what the assistant needs to
+serve a request: the main model, and the bridge/MCP chain. Everything it does
+not depend on warns.
+
+The role router and both role workers warn rather than fail. They were `fail`
+until 2026-08-02, on the assumption that the router carried
+`/context/extract`. It does not — the gateway talks straight to the main model
+and the MCPs, so those three are evaluator infrastructure. The evaluator's
+`quiesce_commands` stops both workers on every compare run, so `fail` meant
+`doctor` was red by design during every benchmark, and a check that is normally
+red is a check people stop reading.
 
 The gateways run as system units under a separate user and are not probed by
 `doctor`; check them with
@@ -148,8 +153,7 @@ Verified by tests, not by inspection — see `services/templates/bridge/`:
   a different user.
 - **The role router and both role workers are unused by the assistant.** The
   gateway talks directly to the main model and the MCPs. The router serves the
-  evaluator. `doctor` treats the workers as core and fails when they are down,
-  which is currently stricter than the assistant's actual dependencies.
+  evaluator, and `doctor` warns rather than fails on all three.
 
 ## Restoring from cold
 
