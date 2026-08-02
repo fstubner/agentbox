@@ -53,21 +53,26 @@ raw shell access or raw credentials — it gets narrow, policy-gated levers.
 
 ## Policy enforcement
 
-Two files, two audiences, same semantics (`always_denied` → `approval_required`
-→ `allowed`, unknown defaults to `approval_required`):
+One file, `policies/approval-policy.yaml`, covering both actors. Semantics:
+`always_denied` → `approval_required` → `allowed`, unknown defaults to
+`approval_required`.
 
-- `policies/approval-policy.yaml` — **operator and development** actions
-  (`service_lifecycle`, `host_package_install`, `merge_own_pr`). Enforced by
-  `cli/agentbox policy check`.
-- `policies/runtime-actions.yaml` — **assistant tool calls** (`list_tasks`,
-  `archive_gmail`). Enforced in every MCP by `policy_gate.py` at the single
-  `tool_call` dispatch point.
+- `tiers` names **capabilities** — what may be done, in language a human
+  reviews (`host_package_install`, `email_state_change`, `merge_own_pr`).
+- `tools` maps each assistant-visible MCP tool onto the capability it
+  exercises, so a tool call resolves to the same tier as the equivalent
+  operator action.
 
-They are separate because the vocabularies do not overlap: no tool name appears
-in the operator policy, so checking tools against it would send every one of
-them to `approval_required` by deny-by-default and stop the assistant doing
-anything. Merging them would also put "install a package on the host" and
-"list my tasks" in one list answering to one command.
+Enforced in two places against that one file: `cli/agentbox policy check` for
+operator actions, and `policy_gate.py` in every MCP at the single `tool_call`
+dispatch point for the assistant.
+
+This was briefly two files, and they contradicted each other within hours —
+`personal_data_access_beyond_task` and `gmail_label_management` were
+`approval_required` in one while `search_gmail` and `add_gmail_labels` were
+`allowed` in the other. A capability belongs in exactly one place; the tool map
+is an index into it, not a second policy. `validate` fails on an unmapped tool
+and on a drifted vendored copy.
 
 `approval_required` tools need an operator grant (`cli/agentbox grant`), which
 is time-boxed and single-use by default. See the runbook.

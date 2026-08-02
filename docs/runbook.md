@@ -57,11 +57,13 @@ It does not deploy and does not merge. Review it against
 
 ## Runtime policy grants
 
-Assistant tool calls are gated by `policies/runtime-actions.yaml`, enforced in
-every MCP at the single `tool_call` dispatch point. `allowed` tools run freely;
-`approval_required` tools are refused until an operator issues a grant; unknown
-tools default to `approval_required`, so a tool added without a tier fails
-closed.
+Assistant tool calls are gated by `policies/approval-policy.yaml` — the same
+file that governs operator actions — enforced in every MCP at the single
+`tool_call` dispatch point. Each tool maps to a capability, and the capability
+carries the tier. `allowed` tools run freely;
+`approval_required` tools are refused until an operator issues a grant; a tool
+with no capability mapping defaults to `approval_required`, so a tool added
+without being mapped fails closed.
 
 ```
 cli/agentbox grant archive_gmail --ttl 15m   # single-use by default

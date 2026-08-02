@@ -4,9 +4,12 @@ The architecture diagram has always drawn a policy engine, but nothing outside
 cli/agentbox read the policy — it was an operator/CI check, so at runtime the
 assistant's tool calls were ungated. This module is the missing half.
 
-Semantics match approval-policy.yaml: always_denied -> approval_required ->
-allowed, and an unknown tool defaults to approval_required. Deny-by-default is
-the point; a tool added without a tier is refused until someone tiers it.
+One policy governs both actors. policies/approval-policy.yaml lists
+capabilities under `tiers` and maps each assistant tool onto one under `tools`,
+so a tool call resolves to the same tier as the equivalent operator action.
+Semantics: always_denied -> approval_required -> allowed, and a tool that maps
+to no capability defaults to approval_required. Deny-by-default is the point;
+a tool added without being mapped is refused until someone maps it.
 
 An approval_required tool needs an operator grant, issued out of band with
 `cli/agentbox grant <tool> --ttl 15m` and written to a grants file this module
@@ -14,7 +17,8 @@ reads. Grants are time-boxed and single-use by default, so an approval cannot
 silently become a standing permission.
 
 Copy this file verbatim into a new MCP's app/ directory alongside
-runtime-actions.yaml; do not edit it per-service.
+approval-policy.yaml; do not edit it per-service. `cli/agentbox validate`
+fails on drift in either.
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ import os
 import time
 from pathlib import Path
 
-POLICY_PATH = Path(os.environ.get("AGENTBOX_RUNTIME_POLICY", "/app/runtime-actions.yaml"))
+POLICY_PATH = Path(os.environ.get("AGENTBOX_RUNTIME_POLICY", "/app/approval-policy.yaml"))
 GRANTS_PATH = Path(os.environ.get("AGENTBOX_POLICY_GRANTS", "/policy/grants.json"))
 # Writable, and deliberately NOT the grants file: recording a consumption can
 # only remove permission, so this path carries no authority.
@@ -68,10 +72,47 @@ def load_tiers(path: Path = POLICY_PATH) -> dict[str, list[str]]:
     return tiers
 
 
-def tier_of(tool: str, tiers: dict[str, list[str]]) -> str:
-    """Resolve a tool's tier. Unknown tools are approval_required, not allowed."""
+def load_tool_map(path: Path = POLICY_PATH) -> dict[str, str]:
+    """Parse the `tools:` section — assistant tool name -> capability."""
+    mapping: dict[str, str] = {}
+    if not path.exists():
+        return mapping
+    in_tools = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.rstrip(":") == "tools":
+            in_tools = True
+            continue
+        if not in_tools:
+            continue
+        if not line.startswith(" "):
+            break
+        if ":" in line:
+            tool, _, capability = line.strip().partition(":")
+            if capability.strip():
+                mapping[tool.strip()] = capability.strip()
+    return mapping
+
+
+def tier_of(tool: str, tiers: dict[str, list[str]],
+            tool_map: dict[str, str] | None = None) -> str:
+    """Resolve a tool's tier through the capability it exercises.
+
+    A tool is not itself a policy entry — it maps onto a capability, and the
+    capability carries the tier. That indirection is what lets one policy cover
+    both an operator running a command and the assistant calling a tool.
+
+    Unmapped tools resolve to no capability and therefore to approval_required,
+    so a tool added without being mapped fails closed rather than running.
+    """
+    mapping = load_tool_map() if tool_map is None else tool_map
+    capability = mapping.get(tool)
+    if capability is None:
+        return APPROVAL_REQUIRED
     for tier in (ALWAYS_DENIED, APPROVAL_REQUIRED, ALLOWED):
-        if tool in tiers.get(tier, []):
+        if capability in tiers.get(tier, []):
             return tier
     return APPROVAL_REQUIRED
 
@@ -142,10 +183,11 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
 
 def check(tool: str, tiers: dict[str, list[str]] | None = None,
           grants_path: Path = GRANTS_PATH,
-          consumed_path: Path | None = None) -> None:
+          consumed_path: Path | None = None,
+          tool_map: dict[str, str] | None = None) -> None:
     """Raise PolicyDenied unless `tool` may run now."""
     resolved = load_tiers() if tiers is None else tiers
-    tier = tier_of(tool, resolved)
+    tier = tier_of(tool, resolved, tool_map)
     if tier == ALLOWED:
         return
     if tier == ALWAYS_DENIED:
@@ -154,6 +196,8 @@ def check(tool: str, tiers: dict[str, list[str]] | None = None,
             f"Only a human, outside the assistant, may do this.")
     if consume_grant(tool, grants_path, consumed_path=consumed_path):
         return
+    mapping = load_tool_map() if tool_map is None else tool_map
+    capability = mapping.get(tool, "no mapped capability")
     raise PolicyDenied(
-        f"'{tool}' requires operator approval and no grant is active. "
-        f"Ask the operator to run: agentbox grant {tool} --ttl 15m")
+        f"'{tool}' ({capability}) requires operator approval and no grant is "
+        f"active. Ask the operator to run: agentbox grant {tool} --ttl 15m")

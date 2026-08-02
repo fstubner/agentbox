@@ -170,6 +170,34 @@ def validate() -> int:
     else:
         error("services/templates/bridge/app/bridge_base.py missing")
 
+    canonical_policy = REPO / "policies" / "approval-policy.yaml"
+    if canonical_policy.exists():
+        expected = hashlib.sha256(canonical_policy.read_bytes()).hexdigest()
+        for copy in sorted(REPO.glob("services/compose/*/app/approval-policy.yaml")):
+            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
+                error(f"approval-policy.yaml drifted from policies/: {copy.relative_to(REPO)}")
+
+    canonical_gate = REPO / "services" / "templates" / "mcp" / "policy_gate.py"
+    if canonical_gate.exists():
+        expected = hashlib.sha256(canonical_gate.read_bytes()).hexdigest()
+        for copy in sorted(REPO.glob("services/compose/*/app/policy_gate.py")):
+            if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
+                error(f"policy_gate.py drifted from template: {copy.relative_to(REPO)}")
+
+    # Every assistant-visible tool must map to a capability, or it fails closed
+    # at runtime — correct, but silently. Catch it here instead.
+    try:
+        mapped = set(load_tool_map())
+        for server in sorted(REPO.glob("services/compose/*-mcp*/app/server.py")):
+            block = server.read_text(encoding="utf-8").split("TOOLS = [", 1)
+            if len(block) < 2:
+                continue
+            for name in re.findall(r'"name":\s*"([a-z_]+)"', block[1].split("\ndef ", 1)[0]):
+                if name not in mapped:
+                    error(f"tool not mapped in approval-policy.yaml: {name} ({server.parent.parent.name})")
+    except OSError:
+        error("policies/approval-policy.yaml missing")
+
     report(OK if failures == 0 else FAIL, f"validate finished with {failures} error(s)")
     return 1 if failures else 0
 
@@ -475,8 +503,8 @@ def scaffold(name: str, port: int | None, upstream_env: str | None) -> int:
         f"2. Implement `upstream_status()` if this fronts a service you run.\n"
         f"3. Follow `skills/adding-a-bridge/SKILL.md` — bounded lists, idempotent\n"
         f"   creates, symmetric write constraints, no policy stated only in prose.\n"
-        f"4. Tier any new MCP tools in `policies/runtime-actions.yaml`; untiered\n"
-        f"   tools fail closed.\n"
+        f"4. Map any new MCP tools to a capability in `policies/approval-policy.yaml`;\n"
+        f"   unmapped tools fail closed and `validate` will flag them.\n"
         f"5. Create the 1Password item, then `cli/agentbox deploy {service}`.\n",
         encoding="utf-8")
 
@@ -536,8 +564,31 @@ GRANTS_PATH = Path(os.environ.get(
     str(Path("~/.local/state/agentbox/policy/grants.json").expanduser())))
 
 
+def load_tool_map() -> dict[str, str]:
+    """Assistant tool -> capability, from the single approval policy."""
+    path = REPO / "policies" / "approval-policy.yaml"
+    mapping: dict[str, str] = {}
+    in_tools = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.rstrip(":") == "tools":
+            in_tools = True
+            continue
+        if not in_tools:
+            continue
+        if not line.startswith(" "):
+            break
+        if ":" in line:
+            tool, _, capability = line.strip().partition(":")
+            if capability.strip():
+                mapping[tool.strip()] = capability.strip()
+    return mapping
+
+
 def load_runtime_tiers() -> dict[str, list[str]]:
-    path = REPO / "policies" / "runtime-actions.yaml"
+    path = REPO / "policies" / "approval-policy.yaml"
     tiers: dict[str, list[str]] = {}
     current = None
     in_tiers = False
@@ -570,15 +621,15 @@ def parse_ttl(value: str) -> int:
 
 def grant(tool: str, ttl: str, repeatable: bool) -> int:
     tiers = load_runtime_tiers()
-    if tool in tiers.get("always_denied", []):
-        report(FAIL, f"'{tool}' is always_denied and cannot be granted at runtime")
+    capability = load_tool_map().get(tool)
+    if capability is None:
+        report(WARN, f"'{tool}' maps to no capability; it defaults to approval_required")
+    elif capability in tiers.get("always_denied", []):
+        report(FAIL, f"'{tool}' ({capability}) is always_denied and cannot be granted")
         return 2
-    if tool in tiers.get("allowed", []):
-        report(WARN, f"'{tool}' is already allowed; no grant needed")
+    elif capability in tiers.get("allowed", []):
+        report(WARN, f"'{tool}' ({capability}) is already allowed; no grant needed")
         return 0
-    known = {t for entries in tiers.values() for t in entries}
-    if tool not in known:
-        report(WARN, f"'{tool}' is not tiered; it defaults to approval_required")
     seconds = parse_ttl(ttl)
     GRANTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = []
