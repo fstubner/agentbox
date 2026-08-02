@@ -288,17 +288,24 @@ def probe(url: str, timeout: float = 5) -> bool:
 # Every service in docs/architecture.md, so "is the platform up" is one command
 # rather than a set of remembered curls.
 #
-# Severity is deliberate. The role workers are core: the router hands
-# /context/extract and /reason/check to them, so a stopped worker is a broken
-# capability. Vision and the control plane are auxiliary — nothing in the
-# assistant's request path depends on them, and the evaluator legitimately
-# stops model servers while benchmarking. Marking those FAIL would make doctor
-# red during normal work, which trains people to ignore it.
+# Severity is deliberate, and was corrected on 2026-08-02.
+#
+# The role workers were FAIL on the assumption that the router hands
+# /context/extract and /reason/check to them. It does not: the live gateway
+# talks straight to the main model and the MCPs, so the router and both workers
+# are evaluator infrastructure, not assistant infrastructure. The evaluator's
+# quiesce_commands stops both on every compare run, so FAIL meant doctor was
+# red by design during every benchmark — and a check that is normally red is a
+# check people stop reading.
+#
+# FAIL is now reserved for what the assistant actually needs to serve a
+# request: the main model, and the bridge/MCP chain. Everything the assistant
+# does not depend on warns.
 ENDPOINTS = {
     "main model": (os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models", FAIL),
-    "router": ("http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health", FAIL),
-    "context worker": ("http://127.0.0.1:1235/v1/models", FAIL),
-    "reason worker": ("http://127.0.0.1:1236/v1/models", FAIL),
+    "router": ("http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health", WARN),
+    "context worker": ("http://127.0.0.1:1235/v1/models", WARN),
+    "reason worker": ("http://127.0.0.1:1236/v1/models", WARN),
     "vikunja-mcp": ("http://127.0.0.1:3467/health", FAIL),
     "memory-mcp": ("http://127.0.0.1:3472/health", FAIL),
     "google-workspace-mcp-lite": ("http://127.0.0.1:3473/health", FAIL),
