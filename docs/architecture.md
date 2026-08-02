@@ -4,37 +4,52 @@ Agentbox is a self-hosted personal AI assistant platform for a single
 operator on local hardware. The assistant (a Hermes-style gateway) never gets
 raw shell access or raw credentials — it gets narrow, policy-gated levers.
 
+```mermaid
+flowchart TD
+    discord[Discord] --> gw
+
+    subgraph assistant[Assistant request path]
+        gw["Hermes gateway<br/><small>isolated user · no shell</small>"]
+        gw --> models["Local models<br/><small>:1234 main · :1240 vision</small>"]
+        gw --> tmcp["tasks mcp :3467<br/><small>policy gate</small>"]
+        gw --> mmcp["memory mcp :3472<br/><small>policy gate</small>"]
+        gw --> gmcp["google mcp :3473<br/><small>policy gate</small>"]
+        tmcp --> tbr["tasks bridge :3466<br/><small>holds credential</small>"]
+        mmcp --> mbr["memory bridge :3471<br/><small>review gate</small>"]
+        gmcp --> gbr["google bridge :3470<br/><small>holds oauth token</small>"]
+    end
+
+    tbr --> vik[(Vikunja :3456)]
+    mbr --> mem[(memory store)]
+    gbr --> goog[Google APIs]
+
+    subgraph evaluator[Evaluator infrastructure — not in the assistant path]
+        router["role router :8765"] --> ctx["fastcontext :1235"]
+        router --> rsn["vibethinker :1236"]
+    end
+
+    subgraph operator[Operator plane — no assistant access]
+        cli["cli/agentbox<br/><small>validate · doctor · deploy</small>"]
+        pol["approval-policy.yaml<br/><small>capabilities + tool map</small>"]
+        grant["grants<br/><small>read-only to MCPs</small>"]
+    end
+
+    cli -.-> pol
+    cli -.-> grant
+    pol -.-> tmcp
+    pol -.-> mmcp
+    pol -.-> gmcp
+    grant -.-> gmcp
 ```
-                    ┌────────────────────────────┐
-   Chat client ───▶ │  Assistant gateway         │  runtime state: $AGENTBOX_HOME
-                    │  (isolated system user)    │  (private; never in this repo)
-                    └──────┬─────────────────────┘
-                           │ MCP levers only (no shell)
-      ┌────────────────────┼──────────────────────────┐
-      ▼                    ▼                          ▼
-  bridges (docker)     role router (:8765)       policy engine
-  google-workspace     /context/extract          policies/approval-policy.yaml
-  memory / vikunja     /reason/check             (deny-by-default;
-  (localhost-bound)    /decide/orchestrate        cli/agentbox policy check)
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-        main model     context      reasoning
-        llama-server   worker       worker
-        :1234          :1235        :1236
-```
 
-## Trust boundaries, and what the diagram overstates
+Solid edges are the live request path. Dotted edges are configuration the
+operator controls and the assistant cannot write. The role router and both
+worker models are drawn separately because the gateway does not call them —
+they serve the evaluator. Verified against the live gateway config and the
+router's access log, 2026-08-02.
 
-The diagram above shows the intended topology. Two things about the live
-deployment differ, and both matter more than the drawing.
 
-**The role router is not in the assistant's path.** The gateway config points
-at the main model (`:1234`), the vision model (`:1240`), and the three MCPs
-(`:3467`, `:3472`, `:3473`). It does not reference the router (`:8765`) or
-either role worker (`:1235`, `:1236`), and the router's access log shows only
-health probes. The router and its workers currently serve the evaluator, not
-the assistant.
+## Trust boundaries
 
 **Tool results are untrusted input.** Anything a bridge returns may contain
 text an outsider wrote — an email body is the obvious case. A small worker
@@ -71,7 +86,10 @@ human reads carefully first.
   bridge containers, injected at deploy time (1Password `op://` references or
   plain env files). The assistant and router never see them.
 - **Deterministic routing.** Which worker handles which role is code
-  (`router/agentbox_router.py`), not model judgment.
+  (`router/agentbox_router.py`), not model judgment. Used by the evaluator.
+- **Constrain rather than gate, where possible.** A constraint holds when the
+  model is compromised; an approval only helps if a human reads carefully
+  first. Several capabilities are `allowed` because the bridge contains them.
 - **Deny by default.** Actions resolve against `policies/approval-policy.yaml`
   in tier order `always_denied` → `approval_required` → `allowed`; unknown
   actions require approval.
@@ -83,11 +101,11 @@ human reads carefully first.
 
 | Dir | Role |
 |---|---|
-| `router/` | Stdlib-only role router + systemd user units for the two workers |
+| `router/` | Stdlib-only role router + systemd user units for the two workers. Evaluator infrastructure; not called by the gateway |
 | `gateway/` | Example gateway configuration (model aliases, MCP endpoints) |
 | `policies/` | Machine-readable approval policy + human-readable mirrors |
 | `services/compose/` | One directory per service: task backend (Vikunja) and bridge/MCP pairs for memory and Google Workspace |
-| `cli/` | Operator CLI: `deploy`, `validate`, `doctor`, `status`, `policy check` |
+| `cli/` | Operator CLI: `deploy`, `validate`, `doctor`, `status`, `policy check`, `grant`, `memory`, `scaffold` |
 | `docs/` | This document and the runbook |
 
 ## Policy enforcement
