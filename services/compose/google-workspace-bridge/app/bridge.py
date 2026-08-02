@@ -255,6 +255,27 @@ def gmail_list_labels(_body):
     return google_json("GET", "https://gmail.googleapis.com/gmail/v1/users/me/labels") or {}
 
 
+def require_owned_labels(label_ids):
+    """Only labels this assistant created may be applied to a message.
+
+    create_gmail_label forces the OWNED_LABEL_PREFIX namespace, but applying
+    labels took arbitrary IDs — so the assistant could attach any label in the
+    account, including ones the operator's filters act on. Create was
+    constrained and apply was not, which made the namespace decorative.
+
+    This matters more than it looks: label IDs can arrive from a model that has
+    just read untrusted email content, and a small worker model has been
+    measured obeying instructions embedded in tool data.
+    """
+    labels = (gmail_list_labels({}) or {}).get("labels", [])
+    owned = {label["id"] for label in labels
+             if str(label.get("name", "")).startswith(OWNED_LABEL_PREFIX)}
+    foreign = [lid for lid in label_ids if lid not in owned]
+    if foreign:
+        raise BridgeError(403, f"only {OWNED_LABEL_PREFIX}* labels may be applied; "
+                               f"refused {len(foreign)} label(s) outside that namespace")
+
+
 def gmail_modify(body):
     message_id = str(body.get("message_id", "")).strip()
     action = str(body.get("action", "")).strip()
@@ -268,6 +289,7 @@ def gmail_modify(body):
     elif action == "add_labels":
         if not isinstance(label_ids, list) or not label_ids:
             raise BridgeError(400, "label_ids must be a non-empty list")
+        require_owned_labels([str(x) for x in label_ids])
         payload = {"addLabelIds": [str(x) for x in label_ids]}
     else:
         raise BridgeError(400, "allowed actions: mark_read, archive, add_labels")
@@ -366,7 +388,16 @@ def calendar_create_event(body):
     event = body.get("event")
     if not isinstance(event, dict):
         raise BridgeError(400, "event object is required")
-    return google_json("POST", f"https://www.googleapis.com/calendar/v3/calendars/{urllib.parse.quote(calendar_id, safe='')}/events", event) or {}
+    # The event body went to Google unvalidated. Google emails an invitation to
+    # everyone in `attendees`, so a tool that looks purely local was an
+    # unbounded outbound-communication channel — and the policy puts
+    # send_external_communications behind approval. The calendar-id guard does
+    # not contain this: the event lives on the agent calendar either way.
+    for field in ("attendees", "conferenceData"):
+        if event.get(field):
+            raise BridgeError(403, f"'{field}' is not permitted: creating an event may not "
+                                   f"notify other people. Ask the operator to invite attendees.")
+    return google_json("POST", f"https://www.googleapis.com/calendar/v3/calendars/{urllib.parse.quote(calendar_id, safe='')}/events?sendUpdates=none", event) or {}
 
 
 SCHEMA = {"service": "google-workspace-bridge", "tools": [
