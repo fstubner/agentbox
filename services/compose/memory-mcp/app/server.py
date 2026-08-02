@@ -1,33 +1,37 @@
 #!/usr/bin/env python3
+"""Memory MCP: the assistant proposes and reads; it cannot approve or store.
+
+Approval and direct writes are operator actions behind a review token the
+assistant never holds — see memory-bridge. Exposing them here once meant the
+review gate did not exist, guarded only by a sentence in a tool description.
+"""
+from __future__ import annotations
+
 import json
 import os
-import sys
 import urllib.error
-import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import policy_gate
+from mcp_base import McpHandler, ToolError, schema_object, serve
 
-
-HOST = os.environ.get("MCP_HOST", "0.0.0.0")
-PORT = int(os.environ.get("MCP_PORT", "8080"))
 BRIDGE_URL = os.environ.get("MEMORY_BRIDGE_URL", "http://memory-bridge:8080").rstrip("/")
 BRIDGE_TOKEN = os.environ.get("MEMORY_BRIDGE_TOKEN", "")
-MCP_SHARED_TOKEN = os.environ.get("MEMORY_MCP_SHARED_TOKEN", "")
-PROTOCOL_VERSION = "2025-06-18"
-MAX_BODY_BYTES = 128 * 1024
 
+MEMORY_FIELDS = {
+    "type": {"type": "string", "description": "health_profile, food_preference, project_context, workflow_rule, household_preference, etc."},
+    "statement": {"type": "string"},
+    "source": {"type": "string"},
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "sensitivity": {"type": "string", "enum": ["low", "medium", "high"]},
+    "metadata": {"type": "object"},
+}
+LIMIT = {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}
 
-class McpError(Exception):
-    def __init__(self, code, message):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
-class ToolError(Exception):
-    pass
+TOOLS = [
+    {"name": "propose_memory", "description": "Create a memory proposal for user review.", "inputSchema": schema_object(MEMORY_FIELDS, ["statement"])},
+    {"name": "list_memory_proposals", "description": "List pending memory proposals.", "inputSchema": schema_object({"limit": LIMIT})},
+    {"name": "search_memories", "description": "List stored memories for context retrieval.", "inputSchema": schema_object({"limit": LIMIT})},
+]
 
 
 def bridge_request(method, path, payload=None):
@@ -48,38 +52,7 @@ def bridge_request(method, path, payload=None):
         raise ToolError(f"bridge connection failed: {exc.reason}")
 
 
-def schema_object(properties, required=None):
-    return {"type": "object", "properties": properties, "required": required or [], "additionalProperties": False}
-
-
-MEMORY_FIELDS = {
-    "type": {"type": "string", "description": "health_profile, food_preference, project_context, workflow_rule, household_preference, etc."},
-    "statement": {"type": "string"},
-    "source": {"type": "string"},
-    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
-    "sensitivity": {"type": "string", "enum": ["low", "medium", "high"]},
-    "metadata": {"type": "object"},
-}
-
-
-TOOLS = [
-    {"name": "propose_memory", "description": "Create a memory proposal for user review.", "inputSchema": schema_object(MEMORY_FIELDS, ["statement"])},
-    {"name": "list_memory_proposals", "description": "List pending memory proposals.", "inputSchema": schema_object({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}})},
-    # approve_memory_proposal and write_memory are deliberately absent. Both are
-    # operator actions behind the review token (see memory-bridge). Exposing
-    # them here let the assistant approve its own proposals or skip the queue
-    # entirely, which meant there was no review gate at all — only a prose
-    # instruction not to use them, which is not enforcement.
-    # Operators use: cli/agentbox memory approve|reject.
-    {"name": "search_memories", "description": "List stored memories for context retrieval.", "inputSchema": schema_object({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}})},
-]
-
-
-def tool_call(name, args):
-    # Deny-by-default gate. One choke point: every tool call passes
-    # through here, so a new tool cannot skip the policy by omission.
-    policy_gate.check(name)
-    args = args or {}
+def dispatch(name, args):
     if name == "propose_memory":
         return bridge_request("POST", "/v1/proposals", args)
     if name == "list_memory_proposals":
@@ -89,107 +62,15 @@ def tool_call(name, args):
     raise ToolError(f"unknown tool: {name}")
 
 
-def tool_result(payload, is_error=False):
-    text = payload if isinstance(payload, str) else json.dumps(payload, sort_keys=True, separators=(',', ':'))
-    return {"content": [{"type": "text", "text": text}], "structuredContent": payload if isinstance(payload, (dict, list)) else {"message": text}, "isError": bool(is_error)}
-
-
-def mcp_response(message_id, result=None, error=None):
-    payload = {"jsonrpc": "2.0", "id": message_id}
-    if error:
-        payload["error"] = error
-    else:
-        payload["result"] = result
-    return payload
-
-
-def handle_mcp(message):
-    method = message.get("method")
-    message_id = message.get("id")
-    params = message.get("params") or {}
-    if method == "initialize":
-        return mcp_response(message_id, {"protocolVersion": params.get("protocolVersion") or PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}}, "serverInfo": {"name": "memory-mcp", "version": "0.1.0"}, "instructions": "Use for reviewed personal memory. Propose sensitive memory; do not silently store health or high-stakes facts."})
-    if method == "notifications/initialized":
-        return None
-    if method == "ping":
-        return mcp_response(message_id, {})
-    if method == "tools/list":
-        return mcp_response(message_id, {"tools": TOOLS})
-    if method == "tools/call":
-        try:
-            return mcp_response(message_id, tool_result(tool_call(params.get("name"), params.get("arguments") or {})))
-        except Exception as exc:
-            return mcp_response(message_id, tool_result(str(exc), True))
-    if message_id is not None:
-        return mcp_response(message_id, error={"code": -32601, "message": f"method not found: {method}"})
-    return None
-
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "memory-mcp/0.1"
-
-    def log_message(self, fmt, *args):
-        print(f"{self.address_string()} {self.command} {self.path} {fmt % args}", file=sys.stderr, flush=True)
-
-    def send_json(self, status, payload):
-        data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def send_empty(self, status):
-        self.send_response(status)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def do_GET(self):
-        if self.path == "/health":
-            self.send_json(200, {"ok": True})
-            return
-        if self.path == "/ready":
-            # Readiness is transitive: this MCP is only useful if the bridge it
-            # fronts can reach its own upstream. /health stays liveness-only so
-            # a bridge outage cannot restart-loop a working MCP.
-            try:
-                with urllib.request.urlopen(f"{BRIDGE_URL}/ready", timeout=10) as resp:
-                    upstream = json.loads(resp.read())
-                self.send_json(200, {"ok": True, "bridge": upstream})
-            except urllib.error.HTTPError as exc:
-                detail = {}
-                try:
-                    detail = json.loads(exc.read())
-                except Exception:
-                    pass
-                self.send_json(503, {"ok": False, "bridge": detail or f"HTTP {exc.code}"})
-            except Exception as exc:
-                self.send_json(503, {"ok": False, "bridge": f"unreachable: {type(exc).__name__}"})
-            return
-        self.send_empty(405)
-
-    def do_POST(self):
-        if urllib.parse.urlparse(self.path).path != "/mcp":
-            self.send_empty(404)
-            return
-        try:
-            if MCP_SHARED_TOKEN and self.headers.get("Authorization", "") != f"Bearer {MCP_SHARED_TOKEN}":
-                raise McpError(-32001, "invalid MCP bearer token")
-            length = int(self.headers.get("Content-Length", "0"))
-            if length > MAX_BODY_BYTES:
-                self.send_json(413, {"error": "request too large"})
-                return
-            response = handle_mcp(json.loads(self.rfile.read(length).decode("utf-8")))
-            self.send_empty(202) if response is None else self.send_json(200, response)
-        except McpError as exc:
-            self.send_json(400, {"jsonrpc": "2.0", "error": {"code": exc.code, "message": exc.message}})
-        except json.JSONDecodeError:
-            self.send_json(400, {"jsonrpc": "2.0", "error": {"code": -32700, "message": "parse error"}})
-        except Exception as exc:
-            self.send_json(500, {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(exc)}})
+class MemoryMcp(McpHandler):
+    service_name = "memory-mcp"
+    instructions = ("Use for reviewed personal memory. Propose sensitive memory; "
+                    "storing it durably requires operator approval.")
+    tools = TOOLS
+    dispatch = staticmethod(dispatch)
+    bridge_url = BRIDGE_URL
+    shared_token = os.environ.get("MEMORY_MCP_SHARED_TOKEN", "")
 
 
 if __name__ == "__main__":
-    print(f"memory MCP listening on {HOST}:{PORT}; bridge={BRIDGE_URL}", file=sys.stderr, flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    serve(MemoryMcp)
