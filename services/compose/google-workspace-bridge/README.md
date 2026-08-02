@@ -13,7 +13,8 @@ credentials.
 - `GET /schema`
 - `POST /v1/gmail/search`
 - `POST /v1/gmail/read`
-- `POST /v1/gmail/search_grocer_orders`
+- `POST /v1/gmail/clean`
+- `POST /v1/gmail/drafts/create`
 - `POST /v1/gmail/labels/list`
 - `POST /v1/gmail/labels/create`
 - `POST /v1/gmail/modify`
@@ -23,8 +24,11 @@ credentials.
 - `POST /v1/calendar/events/create`
 
 Gmail modification is deliberately limited to marking read, archiving, and
-adding labels. Calendar writes are limited to the configured assistant-owned
-calendar.
+adding labels from the assistant's own `agentbox/` namespace — applying a
+label outside it is refused. Composing is limited to drafts; sending is not
+exposed. Calendar writes are limited to the configured assistant-owned calendar, and
+reject `attendees` and `conferenceData` with `sendUpdates=none`, so creating
+an event cannot notify anyone.
 
 ## Exposure
 

@@ -1,5 +1,22 @@
 # Thinking support & KV-cache persistence — empirically verified
 
+> **Update 2026-08-02.** The launch flags below were changed after this was
+> written. `agentbox-production-model.service` now runs
+> `--reasoning auto --reasoning-format deepseek --chat-template-kwargs --jinja`,
+> so the server is configured to route thinking into a separate
+> `reasoning_content` field rather than leaving `<think>` inline.
+>
+> Two things still suppress it in practice, verified live on 2026-08-02:
+>
+> 1. A plain completion returns `reasoning_content: absent` — the model reasons
+>    inline in `content` instead, so `enable_thinking` is not reaching the
+>    template.
+> 2. The gateway config sets `agent.reasoning_effort: none`.
+>
+> So thinking is off by configuration at two layers on a model that supports it.
+> Turning it on is a real trade — reasoning tokens cost latency and context on a
+> 35B model — and should be measured, not flipped blind.
+
 All findings below were tested on the live laptop (llama.cpp Vulkan build,
 2026-07), not taken from docs. Two independent questions; both resolved.
 
@@ -18,7 +35,7 @@ reasoning structure.
 
 | Model | Template has `<think>` structure? | Current launch | Result |
 |---|---|---|---|
-| **ornith 35B (production)** | **Yes** — full `<think></think>` handling + `enable_thinking` | `--reasoning off` | thinking is *disabled by our own flag*, not unsupported |
+| **ornith 35B (production)** | **Yes** — full `<think></think>` handling + `enable_thinking` | `--reasoning auto --reasoning-format deepseek` (changed since this was written) | server-side reasoning is now enabled; see the update below |
 | VibeThinker 3B (worker) | No reasoning markers at all | none | `<think>` leaks raw into content; budget can't be enforced (parser can't find the boundary) |
 
 ### Fixes
