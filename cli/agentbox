@@ -159,6 +159,19 @@ def validate() -> int:
         if "no-new-privileges:true" not in text:
             error(f"compose service should set no-new-privileges: {rel}")
 
+    # A service image that never drops root is one `docker exec` away from
+    # being root on a bind mount. Every service already did this except the two
+    # I added for the builder, which are the ones that write files — so the
+    # check exists because omitting it is easy and the omission is silent.
+    for dockerfile in sorted(REPO.glob("services/compose/*/Dockerfile")):
+        text = dockerfile.read_text(encoding="utf-8")
+        if not re.search(r"^USER\s+\S+", text, re.M):
+            error(f"Dockerfile must drop to a non-root USER: "
+                  f"{dockerfile.relative_to(REPO)}")
+        elif re.search(r"^USER\s+(0|root)\b", text, re.M):
+            error(f"Dockerfile must not run as root: "
+                  f"{dockerfile.relative_to(REPO)}")
+
     if shutil.which("docker"):
         for compose in compose_files:
             proc = subprocess.run(
@@ -298,6 +311,10 @@ ENDPOINTS = {
     "vikunja-mcp": ("http://127.0.0.1:3467/health", FAIL),
     "memory-mcp": ("http://127.0.0.1:3472/health", FAIL),
     "google-workspace-mcp-lite": ("http://127.0.0.1:3473/health", FAIL),
+    # The builder is not on the assistant's critical path — it proposes code,
+    # it does not serve a request. A warning, so an outage here never masks one
+    # that stops the assistant working.
+    "builder-mcp": ("http://127.0.0.1:3475/health", WARN),
     "vision model": ("http://127.0.0.1:1240/v1/models", WARN),
     "control plane api": ("http://127.0.0.1:8000/api/evals/health", WARN),
     "control plane ui": ("http://127.0.0.1:4321/", WARN),
@@ -317,6 +334,8 @@ BRIDGE_READY_PORTS = {
     "vikunja-mcp": 3467,
     "memory-mcp": 3472,
     "google-workspace-mcp-lite": 3473,
+    "builder-bridge": 3474,
+    "builder-mcp": 3475,
 }
 
 
@@ -349,7 +368,8 @@ def gateway_tool_visibility() -> int:
 
     live: dict[str, set[str]] = {}
     for service, port in (("vikunja-mcp", "3467"), ("memory-mcp", "3472"),
-                          ("google-workspace-mcp-lite", "3473")):
+                          ("google-workspace-mcp-lite", "3473"),
+                          ("builder-mcp", "3475")):
         server = REPO / "services" / "compose" / service / "app" / "server.py"
         if not server.exists():
             continue
@@ -572,6 +592,114 @@ def backup_list() -> int:
     for a in archives:
         print(f"{a.name}  {a.stat().st_size // 1024:6d} KB")
     print(f"\nrestore with: tar -xzf {archives[0]} -C <target>")
+    return 0
+
+
+# --- reviewing the assistant's proposals -------------------------------------
+#
+# The builder writes branches into its own clone and never pushes, so this is
+# how they reach the operator: fetch from the clone, read the diff, merge if
+# it's good. Pull rather than push means that container never needs write
+# access to this repository.
+
+BUILDER_REPO = Path(os.environ.get(
+    "AGENTBOX_BUILDER_REPO",
+    str(Path("~/.local/state/agentbox/builder-repo").expanduser())))
+PROPOSAL_REFSPEC = "refs/heads/proposal/*:refs/remotes/assistant/*"
+
+
+def builder_git(*args: str, capture: bool = True) -> subprocess.CompletedProcess:
+    """git in the operator's repo, reading proposals out of the builder clone.
+
+    The clone is owned by the operator with group 65532, setgid and
+    group-writable — the same shape as policy-state and logs, and for the same
+    reason. The obvious alternative, chowning it to the container uid, makes
+    git refuse to read it from here as "dubious ownership", and that cannot be
+    waived with `-c safe.directory`: git ignores that setting from the command
+    line on purpose, so an attacker-controlled argv cannot disable the check.
+    Fixing ownership is the fix; suppressing the warning was never available.
+    """
+    return subprocess.run(["git", *args], cwd=str(REPO), text=True,
+                          capture_output=capture, timeout=120)
+
+
+def proposals_fetch() -> bool:
+    if not (BUILDER_REPO / ".git").is_dir():
+        report(WARN, f"no builder clone at {BUILDER_REPO}; "
+                     "deploy builder-bridge first")
+        return False
+    result = builder_git("fetch", "--prune", str(BUILDER_REPO), PROPOSAL_REFSPEC)
+    if result.returncode != 0:
+        report(FAIL, f"could not fetch proposals: {result.stderr.strip()[:200]}")
+        return False
+    return True
+
+
+def proposals_list() -> int:
+    """What the assistant is waiting for you to look at."""
+    if not proposals_fetch():
+        return 1
+    result = builder_git(
+        "for-each-ref", "--sort=-committerdate",
+        "--format=%(refname:short)\t%(committerdate:relative)\t%(contents:subject)",
+        "refs/remotes/assistant/")
+    rows = [line for line in result.stdout.splitlines() if line.strip()]
+    if not rows:
+        print("no proposals")
+        return 0
+    for row in rows:
+        name, _, rest = row.partition("\t")
+        when, _, subject = rest.partition("\t")
+        print(f"{name.replace('assistant/', ''):<32} {when:<16} {subject}")
+    print(f"\n{len(rows)} proposal(s) — review with: "
+          f"cli/agentbox proposals show <name>")
+    return 0
+
+
+def proposals_show(name: str) -> int:
+    if not proposals_fetch():
+        return 1
+    ref = f"assistant/{name.removeprefix('proposal/')}"
+    verify = builder_git("rev-parse", "--verify", f"{ref}^{{commit}}")
+    if verify.returncode != 0:
+        report(FAIL, f"no such proposal: {name}")
+        return 1
+    # Straight to stdout so it pages and colours like any other git diff.
+    builder_git("log", "-1", "--stat", ref, capture=False)
+    print()
+    builder_git("diff", f"main...{ref}", capture=False)
+    print(f"\nmerge with: cli/agentbox proposals merge {name}")
+    return 0
+
+
+def proposals_merge(name: str) -> int:
+    """Merge a proposal onto a local branch — never onto main directly.
+
+    The assistant cannot merge (`merge_own_pr` is always_denied) and this does
+    not weaken that: it lands the work on a branch for you to test and push
+    yourself. Merging straight to main here would make the operator's approval
+    a single keystroke on an unread diff, which is the thing the whole review
+    gate exists to prevent.
+    """
+    if not proposals_fetch():
+        return 1
+    short = name.removeprefix("proposal/")
+    ref = f"assistant/{short}"
+    if builder_git("rev-parse", "--verify", f"{ref}^{{commit}}").returncode != 0:
+        report(FAIL, f"no such proposal: {name}")
+        return 1
+    dirty = builder_git("status", "--porcelain").stdout.strip()
+    if dirty:
+        report(FAIL, "working tree is not clean; commit or stash first")
+        return 1
+    branch = f"review/{short}"
+    created = builder_git("checkout", "-b", branch, ref)
+    if created.returncode != 0:
+        report(FAIL, created.stderr.strip()[:200])
+        return 1
+    report(OK, f"checked out {branch} from the assistant's proposal")
+    print("\nReview it, run `cli/agentbox validate` and the tests, then merge to\n"
+          "main yourself. Nothing has been deployed.")
     return 0
 
 
@@ -1050,11 +1178,13 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
 # Port and the env var each MCP reads its token from. The names are not
 # uniform — every service picked its own prefix — so this mapping is the only
 # place that knows, rather than each caller guessing.
-MCP_PORTS = {"vikunja-mcp": 3467, "memory-mcp": 3472, "google-workspace-mcp-lite": 3473}
+MCP_PORTS = {"vikunja-mcp": 3467, "memory-mcp": 3472,
+             "google-workspace-mcp-lite": 3473, "builder-mcp": 3475}
 MCP_TOKEN_VARS = {
     "vikunja-mcp": "VIKUNJA_MCP_SHARED_TOKEN",
     "memory-mcp": "MEMORY_MCP_SHARED_TOKEN",
     "google-workspace-mcp-lite": "GOOGLE_MCP_SHARED_TOKEN",
+    "builder-mcp": "BUILDER_MCP_SHARED_TOKEN",
 }
 
 
@@ -1229,6 +1359,31 @@ def smoke() -> int:
     else:
         report(WARN, "no proposal id returned; clean up with `agentbox memory list`")
 
+    print("\n-- builder (proposes code; must never ship it) --")
+    ok, listing = tool_call("builder-mcp", "list_repo_files",
+                            {"prefix": "docs/", "limit": 5}, tokens["builder-mcp"])
+    check("assistant can read the repo", ok,
+          f"{(listing or {}).get('total', 0)} files under docs/" if ok else str(listing)[:80])
+
+    # The containment, exercised rather than assumed. A pass here means the
+    # assistant cannot propose a change to the policy that governs it.
+    for guarded in ("policies/approval-policy.yaml",
+                    "services/templates/mcp/policy_gate.py",
+                    "cli/agentbox"):
+        ok, message = tool_call("builder-mcp", "propose_change", {
+            "branch": "smoke-must-be-refused", "message": "smoke test",
+            "files": [{"path": guarded, "content": "smoke\n"}]},
+            tokens["builder-mcp"])
+        check(f"refuses to edit {guarded}", not ok,
+              "PROPOSED A CHANGE TO ITS OWN GUARDRAILS" if ok else "refused")
+
+    ok, message = tool_call("builder-mcp", "propose_change", {
+        "branch": "smoke-escape", "message": "smoke test",
+        "files": [{"path": "../../etc/passwd", "content": "smoke\n"}]},
+        tokens["builder-mcp"])
+    check("refuses paths outside the repo", not ok,
+          "WROTE OUTSIDE THE REPO" if ok else "refused")
+
     print("\n-- self-reflection --")
     ok, window = tool_call("memory-mcp", "review_own_activity", {"days": 7},
                            tokens["memory-mcp"])
@@ -1276,6 +1431,13 @@ def main() -> None:
     dep.add_argument("--dry-run", action="store_true")
     sub.add_parser("doctor")
     sub.add_parser("smoke", help="drive real workflows end to end against the running system")
+    pr = sub.add_parser("proposals", help="review code changes the assistant has proposed")
+    pr_sub = pr.add_subparsers(dest="proposals_cmd", required=True)
+    pr_sub.add_parser("list")
+    prs = pr_sub.add_parser("show")
+    prs.add_argument("name")
+    prm = pr_sub.add_parser("merge", help="check the proposal out on a review/ branch")
+    prm.add_argument("name")
     sub.add_parser("status")
     pol = sub.add_parser("policy")
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
@@ -1322,6 +1484,12 @@ def main() -> None:
         sys.exit(doctor())
     if args.cmd == "smoke":
         sys.exit(smoke())
+    if args.cmd == "proposals":
+        if args.proposals_cmd == "list":
+            sys.exit(proposals_list())
+        if args.proposals_cmd == "show":
+            sys.exit(proposals_show(args.name))
+        sys.exit(proposals_merge(args.name))
     if args.cmd == "status":
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":

@@ -1,0 +1,57 @@
+services:
+  builder-bridge:
+    build:
+      context: ../../..
+      dockerfile: services/compose/builder-bridge/Dockerfile
+    image: agentbox/builder-bridge:local
+    environment:
+      BUILDER_BRIDGE_TOKEN: "${BUILDER_BRIDGE_TOKEN:-}"
+      BUILDER_REPO: "/repo"
+      # uid 65532 has no home directory; git wants a writable one
+      # for its config. /tmp is a tmpfs, so this stays ephemeral.
+      HOME: "/tmp"
+      BRIDGE_LOG_FILE: "/logs/builder-bridge.jsonl"
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:3474:8080"
+    networks:
+      builder:
+    volumes:
+      # The assistant's own clone — NOT the operator's working tree, so a bad
+      # proposal cannot dirty an in-progress edit or a stash. It pushes branches
+      # back to the real repo, which is where the operator reviews them.
+      - "${AGENTBOX_BUILDER_REPO:-${HOME}/.local/state/agentbox/builder-repo}:/repo"
+      # The operator's repository, READ-ONLY. The clone fetches from here to
+      # stay current; the read-only mount is what makes "pull, never push"
+      # a property of the filesystem rather than a promise in the code.
+      - "${AGENTBOX_REPO:-/home/alex/oss/agentbox}:/origin:ro"
+      - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
+      - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
+      - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
+    cpus: "1.00"
+    # Higher than the other bridges: `agentbox validate` walks the tree and
+    # shells out to `docker compose config` per service.
+    mem_limit: 512m
+    pids_limit: 256
+    # Not read_only: git needs to write the working tree and the index. The
+    # only writable mount is the clone, which contains nothing but a checkout.
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    labels:
+      agentbox.service: builder-bridge
+      agentbox.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
+
+networks:
+  builder:
+    name: builder_default

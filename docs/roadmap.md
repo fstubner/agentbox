@@ -72,28 +72,42 @@ Still to do: reflection reads outcomes but nothing yet records whether an
 *answer* was right — only whether a call succeeded. Operator corrections in
 conversation are still invisible.
 
-### 2. Building services on demand
+### 2-4. Building services, self-extension by PR, and a version trail — **built**
 
-Partly there. `agentbox scaffold` generates a complete bridge, validates it and
-commits it to a `scaffold/*` branch without deploying or merging — but only the
-operator can run it, and it only makes bridges. This is what the
-containerisation was for, and the container story is the part that works.
+One system, because all three reduce to "the assistant writes code, a human
+decides whether it ships". `services/compose/builder-{bridge,mcp}`, verified
+end to end on 2026-08-03.
 
-Needs: a tool that reaches it, and a generator that isn't bridge-shaped.
+Git is the trail: every proposal is a branch with a commit attributed to
+`agentbox-assistant`, so nothing it produces is untracked and reviewing it is
+`git diff`. Five tools — read the repo, run the validators, propose a change,
+list proposals — and `cli/agentbox proposals list|show|merge` on the operator
+side.
 
-### 3. Self-extension by pull request, never self-merge
+**Why this is the most dangerous service here.** Every other bridge holds a
+credential to somebody else's API. This one can write the source of the system
+that constrains it. If it could propose an edit to `approval-policy.yaml`, it
+could propose granting itself everything and then need one distracted approval
+to get it — a failure of review, not of policy.
 
-`merge_own_pr` is `always_denied` and `modify_upstream_agent_source` is
-`always_denied` — the guardrails exist. What is missing is the permitted half:
-no tool creates a branch, opens a PR, or proposes a diff. The assistant cannot
-currently propose a change to its own source at all, which is a stricter
-posture than was asked for, arrived at by omission rather than decision.
+So the containment is not "the operator will read carefully":
 
-### 4. Version control trail for generated services
+- **Protected paths are refused outright** — the policy, both gates, the
+  operator CLI, CI, and the builder's own source. A path check, not a tier
+  lookup, because a tier cannot express "may edit any file except the ones that
+  govern it". Path traversal is normalised before the check, and a protected
+  file anywhere in a proposal rejects the whole thing before any git runs.
+- **It never pushes.** Branches stay in its own clone and the operator fetches
+  them, so the container needs no write access to the real repository. The
+  operator's repo is mounted read-only, which makes "pull, never push" a
+  property of the filesystem rather than a promise in the code.
+- **No merge, no deploy.** The permitted git subcommands are asserted in tests.
+- **`run_repo_checks` runs a fixed command**, not a supplied one — `allowed` is
+  only safe for that capability while what runs cannot be chosen.
 
-Half done. Scaffold commits to a branch, so generated bridges have history.
-Nothing else the assistant produces does — memory proposals, plans and future
-generated services have no trail.
+Still to do: it writes whole files rather than patches, so editing a large file
+means round-tripping the whole thing. A diff-based proposal would be better and
+is harder to validate safely.
 
 ### 5. Voice — **partly built**
 

@@ -206,11 +206,21 @@ runs through `cli/agentbox-approvals`, which asks in Discord out of band.
 
 ## Extension points
 
-- **Builder sandbox** — implemented: `cli/agentbox scaffold <name>` generates a
-  complete bridge from `services/templates/bridge`, runs `validate`, and commits
-  it to a `scaffold/*` branch. It never deploys and never merges, because
-  `merge_own_pr` is `always_denied` and a generated service that deployed itself
-  would route around that.
+- **Builder sandbox** — implemented twice, for two actors. `cli/agentbox
+  scaffold <name>` generates a complete bridge for the *operator*.
+  `builder-bridge`/`builder-mcp` let the *assistant* read this repository and
+  propose changes as git branches — new services, fixes, and edits to its own
+  source. Neither deploys and neither merges, because `merge_own_pr` is
+  `always_denied` and a generated service that shipped itself would route
+  around that.
+
+  The builder is the one service that can write the source of the system
+  constraining it, so its containment is a path check rather than a tier: the
+  policy, both gates, the operator CLI and CI are refused outright. A tier
+  cannot express "may edit any file except the ones that govern it". It also
+  never pushes — proposals stay in its clone and the operator fetches them, and
+  this repository is mounted into it read-only, so pull-not-push is enforced by
+  the filesystem rather than by the code.
 - **Memory review gates** — implemented: the assistant proposes, an operator
   approves via `cli/agentbox memory` using a credential the assistant does not
   hold.

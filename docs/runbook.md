@@ -160,6 +160,50 @@ sudo install -o agentbox -g agentbox -m 0664 skills/<name>/SKILL.md /home/agentb
 Skills in this repo are the source; that directory is what the gateway loads.
 They are not synced automatically.
 
+## Reviewing the assistant's code proposals
+
+The assistant can read this repository and propose changes. It cannot merge and
+cannot deploy; proposals are branches in its own clone, which you fetch.
+
+```
+cli/agentbox proposals list
+cli/agentbox proposals show <name>
+cli/agentbox proposals merge <name>     # checks it out on review/<name>
+```
+
+`merge` deliberately lands the work on a `review/` branch rather than on main.
+Merging straight to main here would reduce approval to one keystroke on an
+unread diff, which is the thing the review gate exists to prevent. Test it, run
+`validate` and the tests, then merge to main yourself.
+
+### What it cannot touch
+
+Refused outright, whatever the proposal claims to be for: `policies/`, both
+policy gates, `cli/`, `.github/`, and the builder's own source. That is a path
+check rather than a policy tier, because a tier cannot express "may edit any
+file except the ones that govern it". `cli/agentbox smoke` exercises the
+refusals on every run.
+
+### First-time setup
+
+The clone is owned by you with group 65532 and setgid, the same shape as
+`policy-state` and `logs` — the container writes it by group.
+
+```
+git clone /home/alex/oss/agentbox ~/.local/state/agentbox/builder-repo
+sudo chown -R "$USER":65532 ~/.local/state/agentbox/builder-repo
+sudo find ~/.local/state/agentbox/builder-repo -type d -exec chmod 2775 {} +
+sudo find ~/.local/state/agentbox/builder-repo -type f -exec chmod 664 {} +
+git -C ~/.local/state/agentbox/builder-repo config core.sharedRepository group
+git -C ~/.local/state/agentbox/builder-repo remote set-url origin /origin
+```
+
+`origin` is `/origin` because that is where this repo is mounted **read-only**
+inside the container. Chowning the clone to the container uid instead looks
+simpler and then breaks: git refuses to read a repo it does not own, and that
+cannot be waived with `-c safe.directory` — git ignores that from the command
+line on purpose, so an attacker-controlled argv cannot disable the check.
+
 ## Backup
 
 ```

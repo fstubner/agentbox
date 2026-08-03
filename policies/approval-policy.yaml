@@ -90,6 +90,18 @@ tools:
   # rather than on recollection.
   review_own_activity: inspect_service_logs
 
+  # Builder: the assistant reads the repo and proposes changes as git branches.
+  # All `allowed` because none of them ships anything — a proposal is a branch a
+  # human must merge, and merge_own_pr stays always_denied. The containment that
+  # matters is not this tier list but the builder bridge's protected-path check,
+  # which refuses edits to the policy, both gates, the operator CLI and CI. A
+  # tier cannot express "may edit any file except the ones that govern it".
+  list_repo_files: read_repo_files
+  read_repo_file: read_repo_files
+  list_proposals: read_repo_files
+  run_repo_checks: run_validators_and_tests
+  propose_change: create_branches
+
   # google-workspace-mcp-lite — reads
   search_gmail: personal_data_read
   read_gmail: personal_data_read
