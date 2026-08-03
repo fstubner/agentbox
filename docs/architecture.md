@@ -172,6 +172,19 @@ Implemented from `2026-07-28`:
   per-operator.
 - The `-32020..-32099` error allocation.
 
+Header/body agreement is enforced on modern requests: `MCP-Protocol-Version`,
+`Mcp-Method`, and `Mcp-Name` must match the body, or the request is refused
+with `HeaderMismatch` (`-32020`). The transport mirrors those body fields into
+headers so intermediaries can route without parsing the body — and if a load
+balancer routes on the header while the server executes on the body, that
+disagreement is the vulnerability. Base64-sentinel values are decoded before
+comparison. Legacy requests carry none of these headers and are exempt, which
+is what dual-era means in practice.
+
+An unimplemented method returns `404` with `-32601`, and version errors return
+`400`, both as the revision requires — a client uses those bodies to tell a
+modern server from a legacy one.
+
 Transport requirements, both MUSTs, both previously missing:
 
 - The `Origin` header is validated and a present-but-unlisted origin gets 403,
