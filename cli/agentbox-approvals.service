@@ -1,0 +1,42 @@
+# Discord approval loop.
+#
+# Runs as the OPERATOR's systemd user instance, never as the agentbox user.
+# That is the security property, not an implementation detail: this process
+# writes grants, so the assistant must not be able to start, stop, signal or
+# share a uid with it.
+#
+# Install:
+#   cp cli/agentbox-approvals.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-approvals
+#   sudo loginctl enable-linger "$USER"      # survive logout; this is a daemon
+#
+# The channel id is the only required setting. The bot token and the operator
+# allowlist come from op://Agentbox/discord at start.
+
+[Unit]
+Description=Agentbox Discord approval loop
+After=network-online.target
+Wants=network-online.target
+
+# A restart loop against Discord's API earns a rate limit, so back off hard
+# rather than hammering it when the token is wrong.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=AGENTBOX_APPROVAL_CHANNEL_ID=100000000000000001
+ExecStart=%h/oss/agentbox/cli/agentbox-approvals
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# The one path it must write: grants and spent-grant markers.
+ReadWritePaths=%h/.local/state/agentbox
+
+[Install]
+WantedBy=default.target

@@ -189,6 +189,33 @@ class McpHandler(BaseHTTPRequestHandler):
         if origin not in ALLOWED_ORIGINS:
             raise McpError(ERR_FORBIDDEN_ORIGIN, f"origin not allowed: {origin[:80]}")
 
+    def _validate_arguments(self, name: str, arguments: dict) -> None:
+        """Enforce the tool's own declared `required` list before dispatch.
+
+        Every tool publishes an inputSchema saying which arguments are
+        required, and nothing checked it: a model that omitted one reached the
+        handler, hit `args["project_id"]`, and got back `internal error:
+        KeyError`. That is unactionable — it does not name the argument, and it
+        reads as a server fault rather than a malformed call, so the model's
+        reasonable next move is to retry the same broken call.
+
+        Driven by the schema rather than per-tool code so a new tool cannot
+        forget to do it.
+        """
+        for tool in self.tools:
+            if tool.get("name") != name:
+                continue
+            required = (tool.get("inputSchema") or {}).get("required") or []
+            missing = [key for key in required
+                       if key not in arguments
+                       or arguments[key] is None
+                       or arguments[key] == ""]
+            if missing:
+                raise ToolError(
+                    f"{name} is missing required argument(s): {', '.join(missing)}")
+            return
+        raise ToolError(f"unknown tool: {name}")
+
     def _validate_headers(self, message: dict) -> None:
         """Header/body agreement, required at 2026-07-28.
 
@@ -332,7 +359,9 @@ class McpHandler(BaseHTTPRequestHandler):
                 # Non-consuming: deny early with a good message, but leave the
                 # single-use grant for the bridge, whose answer is authoritative.
                 policy_gate.check(name, consume=False)
-                return self._reply(message_id, tool_result(self.dispatch(name, params.get("arguments") or {})))
+                arguments = params.get("arguments") or {}
+                self._validate_arguments(name, arguments)
+                return self._reply(message_id, tool_result(self.dispatch(name, arguments)))
             except policy_gate.PolicyDenied as exc:
                 return self._reply(message_id, tool_result(str(exc), True))
             except ToolError as exc:
