@@ -36,6 +36,7 @@ policy_gate.py and approval-policy.yaml; do not edit it per-service.
 """
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import os
@@ -103,10 +104,25 @@ ASSUMED_PROTOCOL_VERSION = "2025-03-26"
 
 
 class McpError(Exception):
-    def __init__(self, code: int, message: str) -> None:
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.data = data
+
+
+def decode_header_value(value: str) -> str:
+    """Undo the Base64 sentinel a client uses for values that are not header-safe.
+
+    Format is `=?base64?<b64>?=`. Servers MUST decode before comparing to the
+    body, or a name with a space in it looks like a mismatch.
+    """
+    if value.startswith("=?base64?") and value.endswith("?="):
+        try:
+            return base64.b64decode(value[9:-2]).decode("utf-8")
+        except Exception:  # noqa: BLE001 — malformed encoding is a mismatch
+            return value
+    return value
 
 
 class ToolError(Exception):
@@ -173,6 +189,56 @@ class McpHandler(BaseHTTPRequestHandler):
         if origin not in ALLOWED_ORIGINS:
             raise McpError(ERR_FORBIDDEN_ORIGIN, f"origin not allowed: {origin[:80]}")
 
+    def _validate_headers(self, message: dict) -> None:
+        """Header/body agreement, required at 2026-07-28.
+
+        The transport mirrors `method` and `params.name` into headers so
+        intermediaries can route without parsing the body. If a load balancer
+        routes on the header while we execute on the body, the two disagree and
+        that gap is the vulnerability. So: they must match, or -32020.
+
+        Only enforced for modern requests. A legacy client sends none of these
+        and is served by the handshake instead — that is what dual-era means.
+        """
+        method = message.get("method")
+        params = message.get("params") or {}
+        meta = params.get("_meta") or {}
+        body_version = meta.get(META_VERSION)
+        header_version = self.headers.get("MCP-Protocol-Version")
+
+        if body_version is None:
+            return  # legacy request; header rules below do not apply
+
+        if header_version is None:
+            raise McpError(ERR_HEADER_MISMATCH,
+                           "MCP-Protocol-Version header is required")
+        if header_version != body_version:
+            raise McpError(ERR_HEADER_MISMATCH,
+                           f"MCP-Protocol-Version header '{header_version}' does not "
+                           f"match body value '{body_version}'")
+
+        header_method = self.headers.get("Mcp-Method")
+        if header_method is None:
+            raise McpError(ERR_HEADER_MISMATCH, "Mcp-Method header is required")
+        if header_method != method:
+            raise McpError(ERR_HEADER_MISMATCH,
+                           f"Mcp-Method header '{header_method}' does not match "
+                           f"body method '{method}'")
+
+        # Mcp-Name is required for the methods that name a target.
+        name_source = {"tools/call": "name", "prompts/get": "name",
+                       "resources/read": "uri"}.get(str(method))
+        if name_source is None:
+            return
+        body_name = params.get(name_source)
+        header_name = self.headers.get("Mcp-Name")
+        if header_name is None:
+            raise McpError(ERR_HEADER_MISMATCH,
+                           f"Mcp-Name header is required for {method}")
+        if decode_header_value(header_name) != body_name:
+            raise McpError(ERR_HEADER_MISMATCH,
+                           f"Mcp-Name header does not match body value for {method}")
+
     def _require_protocol_version(self) -> None:
         """Reject an unsupported MCP-Protocol-Version header (spec MUST).
 
@@ -183,8 +249,9 @@ class McpHandler(BaseHTTPRequestHandler):
         if version is None:
             return
         if version not in SUPPORTED_PROTOCOL_VERSIONS and version != ASSUMED_PROTOCOL_VERSION:
-            raise McpError(ERR_UNSUPPORTED_VERSION,
-                           f"unsupported protocol version: {version[:32]}")
+            raise McpError(ERR_UNSUPPORTED_VERSION, "Unsupported protocol version",
+                           {"supported": list(SUPPORTED_PROTOCOL_VERSIONS),
+                            "requested": version[:32]})
 
     def _require_auth(self) -> None:
         """Fail closed. An unset token rejects everything rather than
@@ -213,12 +280,9 @@ class McpHandler(BaseHTTPRequestHandler):
         # a dialect the client did not ask for.
         requested = meta.get(META_VERSION)
         if requested is not None and requested not in SUPPORTED_PROTOCOL_VERSIONS:
-            return self._reply(message_id, error={
-                "code": ERR_UNSUPPORTED_VERSION,
-                "message": "Unsupported protocol version",
-                "data": {"supported": list(SUPPORTED_PROTOCOL_VERSIONS),
-                         "requested": requested},
-            })
+            raise McpError(ERR_UNSUPPORTED_VERSION, "Unsupported protocol version",
+                           {"supported": list(SUPPORTED_PROTOCOL_VERSIONS),
+                            "requested": requested})
 
         # MUST be implemented, and answerable by either era.
         if method == "server/discover":
@@ -277,8 +341,9 @@ class McpHandler(BaseHTTPRequestHandler):
                 return self._reply(message_id, tool_result(
                     f"internal error: {type(exc).__name__}", True))
         if message_id is not None:
-            return self._reply(message_id, error={"code": -32601,
-                                                  "message": f"method not found: {method}"})
+            # 404 for an unimplemented method at 2026-07-28, which is how a
+            # client tells a modern server apart from a legacy 404.
+            raise McpError(-32601, f"method not found: {method}")
         return None
 
     def send_json(self, status: int, payload: Any) -> None:
@@ -332,13 +397,18 @@ class McpHandler(BaseHTTPRequestHandler):
             if length > MAX_BODY_BYTES:
                 self.send_json(413, {"error": "request too large"})
                 return
-            result = self._handle(json.loads(self.rfile.read(length).decode("utf-8")))
+            message = json.loads(self.rfile.read(length).decode("utf-8"))
+            self._validate_headers(message)
+            result = self._handle(message)
             self.send_empty(202) if result is None else self.send_json(200, result)
         except McpError as exc:
             status = {ERR_UNAUTHORIZED: 401, ERR_FORBIDDEN_ORIGIN: 403,
-                      ERR_UNSUPPORTED_VERSION: 400}.get(exc.code, 400)
+                      ERR_UNSUPPORTED_VERSION: 400, ERR_HEADER_MISMATCH: 400,
+                      -32601: 404}.get(exc.code, 400)
             body: dict[str, Any] = {"code": exc.code, "message": exc.message}
-            if exc.code == ERR_UNSUPPORTED_VERSION:
+            if exc.data is not None:
+                body["data"] = exc.data
+            elif exc.code == ERR_UNSUPPORTED_VERSION:
                 body["data"] = {"supported": list(SUPPORTED_PROTOCOL_VERSIONS)}
             self.send_json(status, {"jsonrpc": "2.0", "error": body})
         except json.JSONDecodeError:

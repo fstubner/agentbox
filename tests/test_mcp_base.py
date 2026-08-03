@@ -53,12 +53,23 @@ def serve(cls):
     return server, f"http://127.0.0.1:{server.server_address[1]}"
 
 
-def rpc(base, method, params=None, token=None):
+def rpc(base, method, params=None, token=None, omit_headers=False):
+    """Behaves like a conforming client: a modern request mirrors method and
+    name into headers, because 2026-07-28 requires them to match the body."""
+    params = params or {}
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
-                       "params": params or {}}).encode()
+                       "params": params}).encode()
     headers = {"Content-Type": "application/json"}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
+    version = (params.get("_meta") or {}).get(mb.META_VERSION)
+    if version and not omit_headers:
+        headers["MCP-Protocol-Version"] = version
+        headers["Mcp-Method"] = method
+        if method in ("tools/call", "prompts/get"):
+            headers["Mcp-Name"] = params.get("name", "")
+        elif method == "resources/read":
+            headers["Mcp-Name"] = params.get("uri", "")
     req = urllib.request.Request(base + "/mcp", data=body, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read())
@@ -357,15 +368,18 @@ def test_modern_request_needs_no_handshake():
 
 
 def test_unsupported_version_in_meta_returns_the_modern_error():
-    """UnsupportedProtocolVersionError, listing what we do support, so the
-    client can retry rather than guess."""
+    """UnsupportedProtocolVersionError with HTTP 400, listing what we do
+    support, so the client can retry rather than guess."""
     server, base = serve(make("secret"))
     try:
-        payload = rpc(base, "tools/list",
-                      {"_meta": {mb.META_VERSION: "1900-01-01"}}, token="secret")
-        assert payload["error"]["code"] == mb.ERR_UNSUPPORTED_VERSION
-        assert "1900-01-01" == payload["error"]["data"]["requested"]
-        assert mb.MODERN_VERSION in payload["error"]["data"]["supported"]
+        rpc(base, "tools/list", {"_meta": {mb.META_VERSION: "1900-01-01"}}, token="secret")
+        raise AssertionError("expected 400")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+        error = json.loads(exc.read())["error"]
+        assert error["code"] == mb.ERR_UNSUPPORTED_VERSION
+        assert error["data"]["requested"] == "1900-01-01"
+        assert mb.MODERN_VERSION in error["data"]["supported"]
     finally:
         server.shutdown()
 
@@ -412,5 +426,109 @@ def test_tools_list_is_cacheable():
         result = rpc(base, "tools/list", token="secret")["result"]
         assert result["ttlMs"] > 0
         assert result["cacheScope"] == "private"
+    finally:
+        server.shutdown()
+
+
+# --- header/body agreement (2026-07-28 server validation) -------------------
+
+
+def test_missing_mcp_method_header_is_rejected():
+    """A load balancer routing on the header while we execute on the body is
+    the vulnerability this closes."""
+    server, base = serve(make("secret"))
+    try:
+        rpc(base, "tools/list", dict(MODERN_META), token="secret", omit_headers=True)
+        raise AssertionError("expected 400")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+        assert json.loads(exc.read())["error"]["code"] == mb.ERR_HEADER_MISMATCH
+    finally:
+        server.shutdown()
+
+
+def test_mcp_method_header_disagreeing_with_the_body_is_rejected():
+    server, base = serve(make("secret"))
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                           "params": dict(MODERN_META)}).encode()
+        req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
+            "Content-Type": "application/json", "Authorization": "Bearer secret",
+            "MCP-Protocol-Version": mb.MODERN_VERSION,
+            "Mcp-Method": "tools/call",
+        })
+        urllib.request.urlopen(req, timeout=5)
+        raise AssertionError("expected 400")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+        assert json.loads(exc.read())["error"]["code"] == mb.ERR_HEADER_MISMATCH
+    finally:
+        server.shutdown()
+
+
+def test_mcp_name_must_match_the_called_tool():
+    server, base = serve(make("secret"))
+    try:
+        params = dict(MODERN_META)
+        params["name"] = "list_tasks"
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": params}).encode()
+        req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
+            "Content-Type": "application/json", "Authorization": "Bearer secret",
+            "MCP-Protocol-Version": mb.MODERN_VERSION,
+            "Mcp-Method": "tools/call", "Mcp-Name": "some_other_tool",
+        })
+        urllib.request.urlopen(req, timeout=5)
+        raise AssertionError("expected 400")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+        assert json.loads(exc.read())["error"]["code"] == mb.ERR_HEADER_MISMATCH
+    finally:
+        server.shutdown()
+
+
+def test_base64_encoded_mcp_name_is_decoded_before_comparison():
+    """A name that is not header-safe travels Base64-encoded; comparing without
+    decoding would reject a conforming client."""
+    import base64 as b64
+    server, base = serve(make("secret"))
+    try:
+        params = dict(MODERN_META)
+        params["name"] = "list_tasks"
+        encoded = "=?base64?" + b64.b64encode(b"list_tasks").decode() + "?="
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": params}).encode()
+        req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
+            "Content-Type": "application/json", "Authorization": "Bearer secret",
+            "MCP-Protocol-Version": mb.MODERN_VERSION,
+            "Mcp-Method": "tools/call", "Mcp-Name": encoded,
+        })
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 200
+    finally:
+        server.shutdown()
+
+
+def test_legacy_request_needs_none_of_those_headers():
+    """Dual-era: Hermes sends no such headers and must keep working."""
+    server, base = serve(make("secret"))
+    try:
+        result = rpc(base, "initialize", {"protocolVersion": "2025-11-25"},
+                     token="secret")["result"]
+        assert result["protocolVersion"] == "2025-11-25"
+    finally:
+        server.shutdown()
+
+
+def test_unknown_method_is_404():
+    """2026-07-28: an unimplemented method returns 404 with -32601, which is how
+    a client distinguishes a modern server from a legacy 404."""
+    server, base = serve(make("secret"))
+    try:
+        rpc(base, "resources/list", dict(MODERN_META), token="secret")
+        raise AssertionError("expected 404")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 404
+        assert json.loads(exc.read())["error"]["code"] == -32601
     finally:
         server.shutdown()
