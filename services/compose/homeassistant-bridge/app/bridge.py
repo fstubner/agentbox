@@ -42,6 +42,12 @@ from typing import Any
 
 from bridge_base import (BridgeError, BridgeHandler, project_fields,
                          resolve_limit, resolve_view, serve)
+import automation
+
+# Every automation this service writes is named with this prefix, so the
+# operator can tell at a glance in the HA UI which ones the assistant authored
+# — and delete them all if they ever want to.
+AUTOMATION_ALIAS_PREFIX = os.environ.get("HA_AUTOMATION_PREFIX", "[agentbox] ")
 
 HA_URL = os.environ.get("HA_URL", "").rstrip("/")
 HA_TOKEN = os.environ.get("HA_TOKEN", "")
@@ -245,15 +251,72 @@ def set_climate(handler, body):
     return 200, {"entity_id": entity_id, "temperature": temperature}
 
 
+def list_automations(handler, body):
+    """Automations this service wrote, identified by the alias prefix."""
+    entities = ha_request("GET", "/api/states") or []
+    ours = [flatten(e) for e in entities
+            if isinstance(e, dict)
+            and domain_of(e.get("entity_id", "")) == "automation"
+            and str((e.get("attributes") or {}).get("friendly_name", ""))
+            .startswith(AUTOMATION_ALIAS_PREFIX)]
+    return 200, {"automations": project_fields(ours, LEAN_FIELDS),
+                 "total": len(ours), "prefix": AUTOMATION_ALIAS_PREFIX}
+
+
+def create_automation(handler, body):
+    """Write an automation, after proving it cannot reach anything forbidden.
+
+    The validation is not advisory. An automation is stored code Home Assistant
+    later runs with its own privileges, so `require_controllable` — which only
+    ever runs at call time — does nothing for it. Without automation.validate,
+    an assistant that may not unlock a door may schedule one.
+    """
+    body = body or {}
+    config = body.get("automation")
+    if not isinstance(config, dict):
+        raise BridgeError(400, "automation must be an object")
+
+    try:
+        summary = automation.validate(json.dumps(config), config, CONTROLLABLE)
+    except automation.AutomationRefused as exc:
+        raise BridgeError(403, str(exc))
+
+    alias = str(config.get("alias") or "").strip()
+    if not alias:
+        raise BridgeError(400, "automation needs an alias describing what it does")
+    if not alias.startswith(AUTOMATION_ALIAS_PREFIX):
+        alias = AUTOMATION_ALIAS_PREFIX + alias
+    config = {**config, "alias": alias}
+
+    # HA keys automations by an opaque id in the config API. Derived from the
+    # alias so re-proposing the same automation updates it rather than piling
+    # up duplicates every time somebody asks again.
+    import hashlib
+    automation_id = "agentbox_" + hashlib.sha256(
+        alias.encode("utf-8")).hexdigest()[:16]
+
+    ha_request("POST", f"/api/config/automation/config/{automation_id}", config)
+    return 201, {
+        "id": automation_id,
+        "alias": alias,
+        **summary,
+        "note": "Created and enabled in Home Assistant. Delete it there, or "
+                "ask the operator to.",
+    }
+
+
 def get_schema(handler, body):
     return 200, {
         "routes": ["GET /v1/entities", "GET /v1/entity",
-                   "POST /v1/light", "POST /v1/scene", "POST /v1/climate"],
+                   "POST /v1/light", "POST /v1/scene", "POST /v1/climate",
+                   "GET /v1/automations", "POST /v1/automations"],
         "views": {"lean": list(LEAN_FIELDS), "full": "adds attributes"},
         "controllable": sorted(CONTROLLABLE),
         "never_actuated": sorted(SECURITY_DOMAINS),
         "cannot": ["call arbitrary services", "actuate locks, alarms or covers",
-                   "control an entity outside the operator's allowlist"],
+                   "control an entity outside the operator's allowlist",
+                   "write an automation containing templates",
+                   "write an automation reaching anything it cannot call"],
     }
 
 
@@ -267,6 +330,8 @@ class HomeAssistantBridge(BridgeHandler):
         ("POST", "/v1/light"): set_light,
         ("POST", "/v1/scene"): activate_scene,
         ("POST", "/v1/climate"): set_climate,
+        ("GET", "/v1/automations"): list_automations,
+        ("POST", "/v1/automations"): create_automation,
     }
 
     def capability_for(self, method: str, path: str,
@@ -277,6 +342,13 @@ class HomeAssistantBridge(BridgeHandler):
             return "home_control_climate"
         if path.startswith("/v1/light") or path.startswith("/v1/scene"):
             return "home_control_comfort"
+        if path.startswith("/v1/automations"):
+            # Writing one is approval_required: static validation proves it
+            # cannot reach a lock, but it cannot tell whether an automation is
+            # a good idea, and stored code that runs unattended deserves a
+            # human reading it once.
+            return ("home_write_automation" if method == "POST"
+                    else "home_read_state")
         return None
 
     def upstream_status(self) -> dict[str, Any]:

@@ -22,6 +22,9 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "services" / "templates" / "bridge" / "app"))
 sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
+# bridge.py imports its sibling `automation` module, which the container gets
+# by both living in /app.
+sys.path.insert(0, str(REPO / "services" / "compose" / "homeassistant-bridge" / "app"))
 
 POLICY = REPO / "policies" / "approval-policy.yaml"
 

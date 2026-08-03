@@ -2,8 +2,14 @@
 """Home Assistant MCP — the assistant's view of the house.
 
 Fronts homeassistant-bridge, which holds the long-lived token and enforces what
-may be actuated. Five tools: two read, three act, and none of them is a general
-`call_service`.
+may be actuated. Seven tools, and none of them is a general `call_service`.
+
+Writing an automation is the interesting one. An automation is stored code that
+Home Assistant runs later with its own privileges, so every call-time refusal in
+the bridge is irrelevant to it — an assistant that may not unlock a door could
+otherwise schedule one for 3am. `automation.py` refuses templates outright so
+that what an automation will do is decidable, and then checks it against the
+same limits as a direct call.
 """
 from __future__ import annotations
 
@@ -71,6 +77,43 @@ TOOLS = [
          "temperature": {"type": "number", "minimum": 5, "maximum": 30,
                          "description": "Target in °C."}},
          ["entity_id", "temperature"])},
+
+    {"name": "list_home_automations", "title": "List automations you created",
+     "description": "Automations you have written, which are prefixed so they "
+                    "are distinguishable from the operator's own. Check here "
+                    "before writing one, so you update rather than duplicate.",
+     "inputSchema": schema_object({})},
+
+    {"name": "create_home_automation", "title": "Write an automation",
+     "description":
+         "Create a Home Assistant automation that runs unattended from now on. "
+         "Needs operator approval each time, because it is stored code that "
+         "will run when nobody is watching.\n\n"
+         "Hard constraints, refused rather than negotiated:\n"
+         "- **No templates.** No {{ }} or {% %} anywhere. Every service name "
+         "and entity id must be a literal, or the automation cannot be checked "
+         "and is rejected.\n"
+         "- It may only act on entities you could already control directly.\n"
+         "- It may never touch locks, alarms, covers, cameras, or call "
+         "shell_command, python_script, rest_command or homeassistant.turn_on.\n\n"
+         "Triggers may reference anything, including sensors you cannot "
+         "control — 'when the hall motion sensor fires' is the normal case. "
+         "Give it a clear alias saying what it does; that is what the operator "
+         "reads when deciding.",
+     "inputSchema": schema_object({
+         "automation": {
+             "type": "object",
+             "description": "The automation config: alias, trigger, optional "
+                            "condition, and action. Example: {\"alias\": "
+                            "\"Hall light on motion after sunset\", "
+                            "\"trigger\": {\"platform\": \"state\", "
+                            "\"entity_id\": \"binary_sensor.hall_motion\", "
+                            "\"to\": \"on\"}, \"condition\": "
+                            "{\"condition\": \"sun\", \"after\": "
+                            "\"sunset\"}, \"action\": {\"service\": "
+                            "\"light.turn_on\", \"entity_id\": "
+                            "\"light.hall\"}}"}},
+         ["automation"])},
 ]
 
 
@@ -118,6 +161,11 @@ def dispatch(name, args):
     if name == "activate_home_scene":
         return bridge_request("POST", "/v1/scene",
                               payload={"entity_id": args["entity_id"]})
+    if name == "list_home_automations":
+        return bridge_request("GET", "/v1/automations")
+    if name == "create_home_automation":
+        return bridge_request("POST", "/v1/automations",
+                              payload={"automation": args["automation"]})
     if name == "set_home_climate":
         return bridge_request("POST", "/v1/climate", payload={
             "entity_id": args["entity_id"], "temperature": args["temperature"]})

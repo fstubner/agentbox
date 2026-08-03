@@ -154,6 +154,21 @@ def validate() -> int:
         for line in text.splitlines():
             if PORT_MAPPING.match(line) and "127.0.0.1" not in line and "${" not in line:
                 error(f"unqualified port mapping (bind to localhost/LAN/tailscale explicitly): {rel}: {line.strip()}")
+        # Host networking sidesteps every check above: there is no ports
+        # section to inspect, so a service could reach the LAN while passing
+        # the "no 0.0.0.0, no unqualified port" rules without comment. Found
+        # while adding Home Assistant, which legitimately needs it — mDNS and
+        # SSDP are link-local multicast and do not cross a Docker bridge.
+        #
+        # Allowed, but only when the compose file says out loud that it is
+        # exposed, so `grep agentbox.exposure` answers "what can the network
+        # reach" truthfully rather than listing only the services that used a
+        # ports mapping.
+        if re.search(r"^\s*network_mode:\s*[\"']?host", text, re.M):
+            if not re.search(r"agentbox\.exposure:\s*(lan|public)", text):
+                error(f"network_mode: host reaches every interface; declare "
+                      f"`agentbox.exposure: lan` and say why: {rel}")
+
         if not re.search(r"^\s*(cpus|mem_limit|pids_limit):", text, re.M):
             error(f"compose service should define resource limits: {rel}")
         if "no-new-privileges:true" not in text:

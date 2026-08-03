@@ -1,0 +1,47 @@
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    # --- LAN EXPOSURE, DELIBERATE ---------------------------------------
+    #
+    # Host networking, which is the one service here that is not confined to
+    # localhost. It is required, not convenient: device discovery is mDNS and
+    # SSDP, both of which are link-local multicast and do not cross a Docker
+    # bridge. Without this, Home Assistant finds nothing on the network and the
+    # whole point of running it is lost.
+    #
+    # The consequence, stated plainly: Home Assistant listens on 192.0.2.10
+    # (and every other interface), so anyone on the LAN can reach its login
+    # page. That is normal for Home Assistant — you will want it from a phone —
+    # but it is a real change in posture for this platform, and the
+    # `agentbox.exposure: lan` label below is what `validate` requires before
+    # allowing host networking at all.
+    #
+    # It is NOT reachable from the internet unless you forward a port, which
+    # `expose_services_to_internet` puts in always_denied.
+    network_mode: host
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+    volumes:
+      - "${AGENTBOX_HA_CONFIG:-${HOME}/.local/state/agentbox/homeassistant}:/config"
+      - /etc/localtime:/etc/localtime:ro
+      # Bluetooth/USB dongles would be added here as explicit device mappings.
+      # None by default: this container should not see hardware nobody asked it
+      # to see.
+    cpus: "2.00"
+    mem_limit: 2048m
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8123/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    labels:
+      agentbox.service: homeassistant
+      # Read by `validate`: host networking is refused without it.
+      agentbox.exposure: lan
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"

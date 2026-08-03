@@ -49,6 +49,7 @@ tiers:
     - add_mcp_server
     - enable_skill_bundle_production
     - home_control_climate           # heating/cooling: costs money, affects a sleeping household
+    - home_write_automation          # stored code that runs unattended, later
     - modify_production_gateway_config
     - change_network_bindings_or_ports
     - spend_money                    # incl. grocery orders, paid APIs over limit
@@ -103,6 +104,11 @@ tools:
   set_home_light: home_control_comfort
   activate_home_scene: home_control_comfort
   set_home_climate: home_control_climate
+  list_home_automations: home_read_state
+  # Static validation proves an automation cannot reach a lock or a template;
+  # it cannot say whether the automation is a good idea. Code that runs
+  # unattended at 3am deserves a human reading it once.
+  create_home_automation: home_write_automation
 
   # Builder: the assistant reads the repo and proposes changes as git branches.
   # All `allowed` because none of them ships anything — a proposal is a branch a
