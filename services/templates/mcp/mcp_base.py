@@ -41,12 +41,14 @@ import hmac
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
+import outcome_log
 import policy_gate
 
 # Dual-era, as the specification names it: modern clients declare their version
@@ -355,18 +357,48 @@ class McpHandler(BaseHTTPRequestHandler):
             })
         if method == "tools/call":
             name = params.get("name")
+            arguments = params.get("arguments") or {}
+            started = time.monotonic()
+
+            def note(outcome: str, detail: str = "", payload: Any = None) -> None:
+                # Never the exception message: upstream errors quote their input.
+                outcome_log.record(
+                    self.service_name, str(name), outcome,
+                    capability=policy_gate.capability_of(name),
+                    arguments=arguments, ms=time.monotonic() - started,
+                    size=len(json.dumps(payload, default=str)) if payload is not None else 0,
+                    detail=detail)
+
             try:
                 # Non-consuming: deny early with a good message, but leave the
                 # single-use grant for the bridge, whose answer is authoritative.
                 policy_gate.check(name, consume=False)
-                arguments = params.get("arguments") or {}
                 self._validate_arguments(name, arguments)
-                return self._reply(message_id, tool_result(self.dispatch(name, arguments)))
+                payload = self.dispatch(name, arguments)
+                note(outcome_log.OK, payload=payload)
+                return self._reply(message_id, tool_result(payload))
             except policy_gate.PolicyDenied as exc:
+                # The most interesting record in the file: the assistant wanted
+                # something it could not have. Bridges never see these at all.
+                note(outcome_log.DENIED)
                 return self._reply(message_id, tool_result(str(exc), True))
             except ToolError as exc:
-                return self._reply(message_id, tool_result(str(exc), True))
+                # A fixed reason, not the exception class: every failure here is
+                # a ToolError, so `detail: "ToolError"` told a reflecting
+                # assistant only that something went wrong — which it already
+                # knew from the outcome. The reason is the actionable part, and
+                # these strings are fixed rather than derived from the message,
+                # which would quote the input.
+                text = str(exc)
+                if "missing required argument" in text:
+                    note(outcome_log.INVALID, detail="missing_required_argument")
+                elif "unknown tool" in text:
+                    note(outcome_log.INVALID, detail="unknown_tool")
+                else:
+                    note(outcome_log.ERROR, detail="upstream_rejected")
+                return self._reply(message_id, tool_result(text, True))
             except Exception as exc:  # noqa: BLE001 — never leak a traceback
+                note(outcome_log.ERROR, detail=type(exc).__name__)
                 return self._reply(message_id, tool_result(
                     f"internal error: {type(exc).__name__}", True))
         if message_id is not None:
