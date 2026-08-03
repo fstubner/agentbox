@@ -171,9 +171,11 @@ def test_negotiates_rather_than_echoing_the_requested_version():
 
 
 def test_accepts_a_version_we_actually_support():
+    """initialize negotiates within the legacy set only — the modern revision
+    has no handshake, so offering it here would be incoherent."""
     server, base = serve(make("secret"))
     try:
-        for version in mb.SUPPORTED_PROTOCOL_VERSIONS:
+        for version in mb.LEGACY_VERSIONS:
             agreed = rpc(base, "initialize", {"protocolVersion": version},
                          token="secret")["result"]["protocolVersion"]
             assert agreed == version
@@ -226,5 +228,189 @@ def test_tool_failures_are_tool_errors_not_protocol_errors(monkeypatch):
         assert "error" not in payload, "must not be a protocol-level error"
         assert payload["result"]["isError"] is True
         assert "message_id is required" in payload["result"]["content"][0]["text"]
+    finally:
+        server.shutdown()
+
+
+# --- Streamable HTTP transport MUSTs ----------------------------------------
+
+
+def test_request_without_origin_is_allowed():
+    """Non-browser clients send no Origin. Hermes is one."""
+    server, base = serve(make("secret"))
+    try:
+        assert rpc(base, "tools/list", token="secret")["result"]
+    finally:
+        server.shutdown()
+
+
+def test_unrecognised_origin_is_refused_with_403():
+    """Spec MUST: validate Origin to prevent DNS rebinding. A page that
+    resolves an attacker domain to 127.0.0.1 must not reach this server."""
+    server, base = serve(make("secret"))
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                           "params": {}}).encode()
+        req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
+            "Content-Type": "application/json", "Authorization": "Bearer secret",
+            "Origin": "https://evil.example",
+        })
+        urllib.request.urlopen(req, timeout=5)
+        raise AssertionError("expected rejection")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403
+    finally:
+        server.shutdown()
+
+
+def test_origin_is_checked_before_the_token():
+    """A rebinding attempt should be refused before it learns whether a
+    credential was valid."""
+    server, base = serve(make("secret"))
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                           "params": {}}).encode()
+        req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
+            "Content-Type": "application/json", "Origin": "https://evil.example",
+        })
+        urllib.request.urlopen(req, timeout=5)
+        raise AssertionError("expected rejection")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403, "403 for origin, not 401 for the missing token"
+    finally:
+        server.shutdown()
+
+
+def test_unsupported_protocol_version_header_is_400():
+    """Spec MUST: reject an unsupported MCP-Protocol-Version with 400."""
+    server, base = serve(make("secret"))
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                           "params": {}}).encode()
+        req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
+            "Content-Type": "application/json", "Authorization": "Bearer secret",
+            "MCP-Protocol-Version": "1999-01-01",
+        })
+        urllib.request.urlopen(req, timeout=5)
+        raise AssertionError("expected rejection")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+    finally:
+        server.shutdown()
+
+
+def test_supported_protocol_version_header_is_accepted():
+    server, base = serve(make("secret"))
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                           "params": {}}).encode()
+        req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
+            "Content-Type": "application/json", "Authorization": "Bearer secret",
+            "MCP-Protocol-Version": mb.PROTOCOL_VERSION,
+        })
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 200
+    finally:
+        server.shutdown()
+
+
+def test_get_on_the_mcp_endpoint_returns_405():
+    """We offer no SSE stream. The spec allows 405 to say so explicitly."""
+    server, base = serve(make("secret"))
+    try:
+        urllib.request.urlopen(base + "/mcp", timeout=5)
+        raise AssertionError("expected 405")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 405
+    finally:
+        server.shutdown()
+
+
+# --- dual-era: 2026-07-28 alongside the legacy handshake --------------------
+
+
+MODERN_META = {"_meta": {mb.META_VERSION: mb.MODERN_VERSION,
+                         mb.META_CLIENT_INFO: {"name": "test", "version": "1"}}}
+
+
+def test_server_discover_is_implemented():
+    """A MUST at 2026-07-28. Clients use it to learn versions up front."""
+    server, base = serve(make("secret"))
+    try:
+        result = rpc(base, "server/discover", dict(MODERN_META), token="secret")["result"]
+        assert mb.MODERN_VERSION in result["supportedVersions"]
+        assert "tools" in result["capabilities"]
+        assert result["resultType"] == "complete"
+        assert result["_meta"][mb.META_SERVER_INFO]["name"] == "test-mcp"
+    finally:
+        server.shutdown()
+
+
+def test_modern_request_needs_no_handshake():
+    """Stateless: a version in _meta is enough, no initialize first."""
+    server, base = serve(make("secret"))
+    try:
+        result = rpc(base, "tools/list", dict(MODERN_META), token="secret")["result"]
+        assert result["tools"][0]["name"] == "list_tasks"
+    finally:
+        server.shutdown()
+
+
+def test_unsupported_version_in_meta_returns_the_modern_error():
+    """UnsupportedProtocolVersionError, listing what we do support, so the
+    client can retry rather than guess."""
+    server, base = serve(make("secret"))
+    try:
+        payload = rpc(base, "tools/list",
+                      {"_meta": {mb.META_VERSION: "1900-01-01"}}, token="secret")
+        assert payload["error"]["code"] == mb.ERR_UNSUPPORTED_VERSION
+        assert "1900-01-01" == payload["error"]["data"]["requested"]
+        assert mb.MODERN_VERSION in payload["error"]["data"]["supported"]
+    finally:
+        server.shutdown()
+
+
+def test_legacy_initialize_still_works():
+    """The whole point of dual-era: Hermes tops out at 2025-11-25 today."""
+    server, base = serve(make("secret"))
+    try:
+        result = rpc(base, "initialize", {"protocolVersion": "2025-11-25"},
+                     token="secret")["result"]
+        assert result["protocolVersion"] == "2025-11-25"
+    finally:
+        server.shutdown()
+
+
+def test_initialize_never_answers_with_a_handshakeless_version():
+    """2026-07-28 has no handshake. Answering initialize with it would tell a
+    legacy client to speak a dialect whose semantics it just used wrongly."""
+    server, base = serve(make("secret"))
+    try:
+        result = rpc(base, "initialize", {"protocolVersion": "1999-01-01"},
+                     token="secret")["result"]
+        assert result["protocolVersion"] in mb.LEGACY_VERSIONS
+        assert result["protocolVersion"] != mb.MODERN_VERSION
+    finally:
+        server.shutdown()
+
+
+def test_every_result_carries_result_type():
+    server, base = serve(make("secret"))
+    try:
+        for method, params in (("tools/list", {}), ("ping", {}),
+                               ("server/discover", {})):
+            assert rpc(base, method, params, token="secret")["result"]["resultType"] == "complete"
+    finally:
+        server.shutdown()
+
+
+def test_tools_list_is_cacheable():
+    """CacheableResult: the tool block is the largest fixed part of the prompt,
+    and this lets a client hold it instead of refetching."""
+    server, base = serve(make("secret"))
+    try:
+        result = rpc(base, "tools/list", token="secret")["result"]
+        assert result["ttlMs"] > 0
+        assert result["cacheScope"] == "private"
     finally:
         server.shutdown()

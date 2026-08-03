@@ -48,18 +48,58 @@ from typing import Any, Callable
 
 import policy_gate
 
-# Versions we can speak, newest first. Hermes ships mcp 1.28.1, whose latest is
-# 2025-11-25; the current spec is 2026-07-28 but that revision removed the
-# initialize handshake entirely and no client here can negotiate it yet.
-# Targeting the client's ceiling rather than the spec's is the honest choice —
-# advertising a version nothing can talk to buys nothing.
-SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18")
-PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
+# Dual-era, as the specification names it: modern clients declare their version
+# in per-request `_meta` and need no handshake; legacy clients open with
+# `initialize` and get session semantics. A server MAY serve both on the same
+# endpoint, which is how we can be current without breaking the only client we
+# have — Hermes ships mcp 1.28.1, whose ceiling is 2025-11-25.
+MODERN_VERSION = "2026-07-28"
+LEGACY_VERSIONS = ("2025-11-25", "2025-06-18")
+SUPPORTED_PROTOCOL_VERSIONS = (MODERN_VERSION,) + LEGACY_VERSIONS
+# What we answer a legacy `initialize` with when the client asks for something
+# we do not know. A modern client never calls initialize.
+PROTOCOL_VERSION = LEGACY_VERSIONS[0]
+
+# _meta keys carrying per-request identity and version at 2026-07-28.
+META_VERSION = "io.modelcontextprotocol/protocolVersion"
+META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
+META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
+
+# Error codes from the 2026-07-28 allocation policy: -32020..-32099 is reserved
+# for the specification, and these three were renumbered into it.
+ERR_HEADER_MISMATCH = -32020
+ERR_MISSING_CAPABILITY = -32021
+ERR_UNSUPPORTED_VERSION = -32022
+ERR_UNAUTHORIZED = -32001
+ERR_FORBIDDEN_ORIGIN = -32003
+
+# tools/list is a CacheableResult at 2026-07-28: ttlMs is a freshness hint so a
+# client can cache the tool block instead of refetching it, and cacheScope says
+# whether a shared intermediary may hold it. Ours is per-operator, so private.
+TOOLS_TTL_MS = int(os.environ.get("MCP_TOOLS_TTL_MS", str(3_600_000)))
+CACHE_SCOPE = "private"
 
 # JSON Schema 2020-12 is the default dialect as of 2025-11-25 (SEP-1613).
 # Declared explicitly so a client need not infer it.
 SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 MAX_BODY_BYTES = int(os.environ.get("MCP_MAX_BODY_BYTES", str(128 * 1024)))
+
+# Streamable HTTP requires Origin validation: "Servers MUST validate the Origin
+# header on all incoming connections to prevent DNS rebinding attacks."
+#
+# The attack: a page in a browser on this host resolves an attacker domain to
+# 127.0.0.1 and then talks to a local MCP server as if it were same-origin.
+# Auth blunts it — the page has no bearer token — but the specification names
+# Origin as the control, and defence in depth is the point.
+#
+# A non-browser client sends no Origin at all, which is why absent is allowed
+# and present-but-unlisted is refused. Hermes sends none.
+ALLOWED_ORIGINS = frozenset(
+    o.strip() for o in os.environ.get("MCP_ALLOWED_ORIGINS", "").split(",") if o.strip())
+
+# Assumed when a client sends no MCP-Protocol-Version header, per the spec's
+# backwards-compatibility rule.
+ASSUMED_PROTOCOL_VERSION = "2025-03-26"
 
 
 class McpError(Exception):
@@ -85,12 +125,22 @@ def tool_result(payload: Any, is_error: bool = False) -> dict[str, Any]:
     }
 
 
-def response(message_id: Any, result: Any = None, error: Any = None) -> dict[str, Any]:
+def response(message_id: Any, result: Any = None, error: Any = None,
+             service_name: str = "") -> dict[str, Any]:
     payload: dict[str, Any] = {"jsonrpc": "2.0", "id": message_id}
     if error:
         payload["error"] = error
-    else:
-        payload["result"] = result
+        return payload
+    if isinstance(result, dict):
+        # Every result carries resultType at 2026-07-28; "complete" means this
+        # is the answer rather than a request for more input. Clients on earlier
+        # revisions must treat a missing field as "complete", so sending it
+        # always is safe and saves branching on era.
+        result.setdefault("resultType", "complete")
+        if service_name:
+            meta = result.setdefault("_meta", {})
+            meta.setdefault(META_SERVER_INFO, {"name": service_name, "version": "1.0.0"})
+    payload["result"] = result
     return payload
 
 
@@ -115,59 +165,120 @@ class McpHandler(BaseHTTPRequestHandler):
     shared_token: str = ""
 
     # --- internals -------------------------------------------------------
+    def _require_origin(self) -> None:
+        """403 on a present-but-unrecognised Origin (spec MUST)."""
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return
+        if origin not in ALLOWED_ORIGINS:
+            raise McpError(ERR_FORBIDDEN_ORIGIN, f"origin not allowed: {origin[:80]}")
+
+    def _require_protocol_version(self) -> None:
+        """Reject an unsupported MCP-Protocol-Version header (spec MUST).
+
+        Absent is not an error — the spec says assume 2025-03-26, which we can
+        still serve.
+        """
+        version = self.headers.get("MCP-Protocol-Version")
+        if version is None:
+            return
+        if version not in SUPPORTED_PROTOCOL_VERSIONS and version != ASSUMED_PROTOCOL_VERSION:
+            raise McpError(ERR_UNSUPPORTED_VERSION,
+                           f"unsupported protocol version: {version[:32]}")
+
     def _require_auth(self) -> None:
         """Fail closed. An unset token rejects everything rather than
         disabling the check — the defect this base class exists to prevent."""
         if not self.shared_token:
-            raise McpError(-32001, "MCP shared token is not configured; refusing all calls")
+            raise McpError(ERR_UNAUTHORIZED,
+                           "MCP shared token is not configured; refusing all calls")
         provided = self.headers.get("Authorization", "")
         if not hmac.compare_digest(provided, f"Bearer {self.shared_token}"):
-            raise McpError(-32001, "invalid MCP bearer token")
+            raise McpError(ERR_UNAUTHORIZED, "invalid MCP bearer token")
+
+    def _reply(self, message_id: Any, result: Any = None, error: Any = None) -> dict:
+        return response(message_id, result, error, service_name=self.service_name)
+
+    def _capabilities(self) -> dict:
+        return {"tools": {"listChanged": False}}
 
     def _handle(self, message: dict) -> dict | None:
         method = message.get("method")
         message_id = message.get("id")
         params = message.get("params") or {}
+        meta = params.get("_meta") or {}
+
+        # Modern era: the client declares its version per request and expects no
+        # handshake. Reject a version we cannot serve rather than answering in
+        # a dialect the client did not ask for.
+        requested = meta.get(META_VERSION)
+        if requested is not None and requested not in SUPPORTED_PROTOCOL_VERSIONS:
+            return self._reply(message_id, error={
+                "code": ERR_UNSUPPORTED_VERSION,
+                "message": "Unsupported protocol version",
+                "data": {"supported": list(SUPPORTED_PROTOCOL_VERSIONS),
+                         "requested": requested},
+            })
+
+        # MUST be implemented, and answerable by either era.
+        if method == "server/discover":
+            return self._reply(message_id, {
+                "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+                "capabilities": self._capabilities(),
+                "instructions": self.instructions,
+                "ttlMs": TOOLS_TTL_MS,
+                "cacheScope": CACHE_SCOPE,
+            })
+
         if method == "initialize":
             # Negotiate rather than echo. Echoing the client's version claims
             # support for anything it asks for, including revisions that changed
             # the wire format underneath us.
-            requested = params.get("protocolVersion")
-            agreed = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
-            return response(message_id, {
+            # Legacy only: a modern client never sends initialize. Negotiate
+            # within the legacy set so we never answer the handshake with a
+            # version whose semantics have no handshake.
+            asked = params.get("protocolVersion")
+            agreed = asked if asked in LEGACY_VERSIONS else PROTOCOL_VERSION
+            return self._reply(message_id, {
                 "protocolVersion": agreed,
-                "capabilities": {"tools": {"listChanged": False}},
+                "capabilities": self._capabilities(),
                 "serverInfo": {"name": self.service_name, "version": "1.0.0"},
                 "instructions": self.instructions,
             })
         if method == "notifications/initialized":
             return None
         if method == "ping":
-            return response(message_id, {})
+            # Removed at 2026-07-28, kept for legacy clients that still send it.
+            return self._reply(message_id, {})
         if method == "tools/list":
             # Deterministic order. 2026-07-28 makes this a SHOULD explicitly for
             # client-side caching and LLM prompt-cache hit rates; it is harmless
             # and beneficial at any version, and the tool schemas are the single
             # largest fixed cost in this system at ~2,250 tokens per turn.
-            return response(message_id, {
-                "tools": sorted(self.tools, key=lambda tool: tool["name"])})
+            return self._reply(message_id, {
+                "tools": sorted(self.tools, key=lambda tool: tool["name"]),
+                # CacheableResult: let the client hold the tool block rather
+                # than refetch it. Private because this list is per-operator.
+                "ttlMs": TOOLS_TTL_MS,
+                "cacheScope": CACHE_SCOPE,
+            })
         if method == "tools/call":
             name = params.get("name")
             try:
                 # Non-consuming: deny early with a good message, but leave the
                 # single-use grant for the bridge, whose answer is authoritative.
                 policy_gate.check(name, consume=False)
-                return response(message_id, tool_result(self.dispatch(name, params.get("arguments") or {})))
+                return self._reply(message_id, tool_result(self.dispatch(name, params.get("arguments") or {})))
             except policy_gate.PolicyDenied as exc:
-                return response(message_id, tool_result(str(exc), True))
+                return self._reply(message_id, tool_result(str(exc), True))
             except ToolError as exc:
-                return response(message_id, tool_result(str(exc), True))
+                return self._reply(message_id, tool_result(str(exc), True))
             except Exception as exc:  # noqa: BLE001 — never leak a traceback
-                return response(message_id, tool_result(
+                return self._reply(message_id, tool_result(
                     f"internal error: {type(exc).__name__}", True))
         if message_id is not None:
-            return response(message_id, error={"code": -32601,
-                                               "message": f"method not found: {method}"})
+            return self._reply(message_id, error={"code": -32601,
+                                                  "message": f"method not found: {method}"})
         return None
 
     def send_json(self, status: int, payload: Any) -> None:
@@ -212,6 +323,10 @@ class McpHandler(BaseHTTPRequestHandler):
             self.send_empty(404)
             return
         try:
+            # Origin first: a rebinding attempt should be refused before it can
+            # probe whether a token is valid.
+            self._require_origin()
+            self._require_protocol_version()
             self._require_auth()
             length = int(self.headers.get("Content-Length", "0"))
             if length > MAX_BODY_BYTES:
@@ -220,8 +335,12 @@ class McpHandler(BaseHTTPRequestHandler):
             result = self._handle(json.loads(self.rfile.read(length).decode("utf-8")))
             self.send_empty(202) if result is None else self.send_json(200, result)
         except McpError as exc:
-            self.send_json(401 if exc.code == -32001 else 400,
-                           {"jsonrpc": "2.0", "error": {"code": exc.code, "message": exc.message}})
+            status = {ERR_UNAUTHORIZED: 401, ERR_FORBIDDEN_ORIGIN: 403,
+                      ERR_UNSUPPORTED_VERSION: 400}.get(exc.code, 400)
+            body: dict[str, Any] = {"code": exc.code, "message": exc.message}
+            if exc.code == ERR_UNSUPPORTED_VERSION:
+                body["data"] = {"supported": list(SUPPORTED_PROTOCOL_VERSIONS)}
+            self.send_json(status, {"jsonrpc": "2.0", "error": body})
         except json.JSONDecodeError:
             self.send_json(400, {"jsonrpc": "2.0",
                                  "error": {"code": -32700, "message": "parse error"}})
