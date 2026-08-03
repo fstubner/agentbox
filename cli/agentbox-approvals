@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Discord approval loop for agentbox.
+
+When a tool is refused for want of approval, the MCP records it. This process
+posts that to Discord, waits for the operator to reply, and writes the grant.
+
+Why a separate process, and not the assistant asking:
+
+The assistant is in the same Discord. If it could ask for its own approval, an
+instruction embedded in an email could make it ask — and a plausible-looking
+request is exactly what a human clicks through. So the approval path must not
+pass through the model at any point. This process:
+
+- runs as the operator, not as the agentbox user;
+- reads the request from a file the assistant can only append to;
+- accepts replies **only** from configured Discord user ids, ignoring every
+  message authored by a bot — including the assistant's own;
+- writes the grant to a directory the assistant's containers mount read-only.
+
+MCP elicitation would put this in the conversation natively, but the server
+would need a streaming transport it does not have, and 2026-07-28 replaces
+elicitation with MRTR anyway. This is the same outcome without building
+machinery the specification is retiring.
+
+Stdlib only: Discord's REST API is enough for post-and-poll, and an approval
+loop does not need a gateway websocket.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+API = "https://discord.com/api/v10"
+POLL_SECONDS = int(os.environ.get("AGENTBOX_APPROVAL_POLL_SECONDS", "5"))
+DEFAULT_TTL = os.environ.get("AGENTBOX_APPROVAL_TTL", "15m")
+
+STATE = Path(os.environ.get("AGENTBOX_POLICY_STATE_DIR",
+                            str(Path("~/.local/state/agentbox/policy-state").expanduser())))
+PENDING = STATE / "pending"
+CURSOR = STATE / "approvals-cursor.json"
+REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.parent))
+
+
+def op_read(reference: str) -> str:
+    env = dict(os.environ)
+    if not env.get("OP_SERVICE_ACCOUNT_TOKEN"):
+        for candidate in ("~/.config/agentbox/1password.env",
+                          "~/.config/agent-control-plane/1password.env"):
+            path = Path(candidate).expanduser()
+            if path.is_file():
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        key, _, value = line.partition("=")
+                        env.setdefault(key.strip(), value.strip())
+                break
+    out = subprocess.run(["op", "read", reference], capture_output=True, text=True,
+                         timeout=30, env=env, stdin=subprocess.DEVNULL)
+    if out.returncode != 0:
+        sys.exit(f"could not read {reference}: {out.stderr.strip()}")
+    return out.stdout.strip()
+
+
+def discord(method: str, path: str, token: str, payload: dict | None = None):
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = urllib.request.Request(API + path, data=data, method=method, headers={
+        "Authorization": f"Bot {token}",
+        "Content-Type": "application/json",
+        "User-Agent": "agentbox-approvals/1.0",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read()
+            return json.loads(body) if body else None
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:200]
+        print(f"[warn] discord {method} {path} -> {exc.code}: {detail}", flush=True)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] discord unreachable: {type(exc).__name__}", flush=True)
+        return None
+
+
+def pending_requests() -> list[dict]:
+    if not PENDING.is_dir():
+        return []
+    out = []
+    for entry in sorted(PENDING.glob("*.json")):
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+            record["_path"] = str(entry)
+            out.append(record)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def load_cursor() -> dict:
+    try:
+        return json.loads(CURSOR.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cursor(state: dict) -> None:
+    try:
+        CURSOR.parent.mkdir(parents=True, exist_ok=True)
+        CURSOR.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def grant(tool: str, ttl: str, repeatable: bool = False) -> bool:
+    args = [str(REPO / "cli" / "agentbox"), "grant", tool, "--ttl", ttl]
+    if repeatable:
+        args.append("--repeatable")
+    result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    print(result.stdout.strip() or result.stderr.strip(), flush=True)
+    return result.returncode == 0
+
+
+def clear_pending(tool: str) -> None:
+    (PENDING / f"{tool}.json").unlink(missing_ok=True)
+
+
+def main() -> int:
+    token = os.environ.get("DISCORD_BOT_TOKEN") or op_read("op://Agentbox/discord/bot_token")
+    channel = os.environ.get("AGENTBOX_APPROVAL_CHANNEL_ID", "").strip()
+    if not channel:
+        sys.exit("set AGENTBOX_APPROVAL_CHANNEL_ID to the Discord channel to ask in")
+    raw_users = os.environ.get("AGENTBOX_APPROVAL_USER_IDS") or op_read(
+        "op://Agentbox/discord/allowed_users")
+    operators = {u.strip() for u in raw_users.replace(",", " ").split() if u.strip()}
+    if not operators:
+        sys.exit("no operator user ids configured; refusing to accept approvals from anyone")
+
+    print(f"agentbox-approvals: channel {channel}, {len(operators)} operator id(s), "
+          f"polling every {POLL_SECONDS}s", flush=True)
+    state = load_cursor()
+
+    while True:
+        for request in pending_requests():
+            tool = request.get("tool", "")
+            if state.get("announced", {}).get(tool):
+                continue
+            capability = request.get("capability") or "no mapped capability"
+            posted = discord("POST", f"/channels/{channel}/messages", token, {
+                "content": (f"**Approval needed**\n"
+                            f"`{tool}` — capability `{capability}`\n"
+                            f"Reply `approve {tool}` to allow it once "
+                            f"({DEFAULT_TTL}), or `deny {tool}` to clear it."),
+            })
+            if posted:
+                state.setdefault("announced", {})[tool] = int(time.time())
+                save_cursor(state)
+
+        params = f"?limit=25&after={state['last_id']}" if state.get("last_id") else "?limit=10"
+        messages = discord("GET", f"/channels/{channel}/messages{params}", token) or []
+        for message in reversed(messages):
+            state["last_id"] = message.get("id", state.get("last_id"))
+            author = message.get("author") or {}
+            # Bots are ignored outright, so the assistant cannot approve itself
+            # even if an injected instruction makes it type the words.
+            if author.get("bot"):
+                continue
+            if str(author.get("id")) not in operators:
+                continue
+            words = str(message.get("content", "")).strip().split()
+            if len(words) < 2 or words[0].lower() not in ("approve", "deny"):
+                continue
+            verb, tool = words[0].lower(), words[1].strip("`")
+            if not (PENDING / f"{tool}.json").exists():
+                discord("POST", f"/channels/{channel}/messages", token,
+                        {"content": f"nothing pending for `{tool}`"})
+                continue
+            if verb == "approve":
+                ok = grant(tool, DEFAULT_TTL)
+                discord("POST", f"/channels/{channel}/messages", token, {
+                    "content": (f"approved `{tool}` for {DEFAULT_TTL} — ask again and it "
+                                f"will go through" if ok else f"could not grant `{tool}`")})
+            else:
+                discord("POST", f"/channels/{channel}/messages", token,
+                        {"content": f"denied `{tool}`"})
+            clear_pending(tool)
+            state.get("announced", {}).pop(tool, None)
+        save_cursor(state)
+        time.sleep(POLL_SECONDS)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("stopped", flush=True)

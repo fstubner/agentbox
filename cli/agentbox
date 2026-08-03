@@ -749,6 +749,47 @@ def grant(tool: str, ttl: str, repeatable: bool) -> int:
     return 0
 
 
+PENDING_DIR = Path(os.environ.get(
+    "AGENTBOX_POLICY_PENDING",
+    str(Path("~/.local/state/agentbox/policy-state/pending").expanduser())))
+
+
+def approvals_list() -> int:
+    """What the assistant asked for and could not do."""
+    if not PENDING_DIR.is_dir():
+        print("nothing pending")
+        return 0
+    entries = sorted(PENDING_DIR.glob("*.json"))
+    if not entries:
+        print("nothing pending")
+        return 0
+    now = int(time.time())
+    for entry in entries:
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        age = now - int(record.get("requested_at", now))
+        print(f"{record.get('tool'):28} {record.get('capability') or '(unmapped)':28} "
+              f"{age // 60}m ago")
+    print(f"\napprove with: agentbox grant <tool> --ttl 15m")
+    return 0
+
+
+def approvals_clear(tool: str | None) -> int:
+    if not PENDING_DIR.is_dir():
+        print("nothing pending")
+        return 0
+    targets = [PENDING_DIR / f"{tool}.json"] if tool else list(PENDING_DIR.glob("*.json"))
+    cleared = 0
+    for target in targets:
+        if target.exists():
+            target.unlink()
+            cleared += 1
+    report(OK, f"cleared {cleared} pending request(s)")
+    return 0
+
+
 def grants_list() -> int:
     now = int(time.time())
     if not GRANTS_PATH.exists():
@@ -913,6 +954,11 @@ def main() -> None:
     gr.add_argument("--ttl", default="15m", help="e.g. 30s, 15m, 2h (default 15m)")
     gr.add_argument("--repeatable", action="store_true",
                     help="allow repeated use until expiry instead of single-use")
+    ap = sub.add_parser("approvals", help="what the assistant is waiting on")
+    ap_sub = ap.add_subparsers(dest="approvals_cmd", required=True)
+    ap_sub.add_parser("list")
+    apc = ap_sub.add_parser("clear")
+    apc.add_argument("tool", nargs="?")
     grs = sub.add_parser("grants", help="list or revoke runtime grants")
     grs_sub = grs.add_subparsers(dest="grants_cmd", required=True)
     grs_sub.add_parser("list")
@@ -944,6 +990,9 @@ def main() -> None:
         sys.exit(scaffold(args.name, args.port, args.upstream_env))
     if args.cmd == "grant":
         sys.exit(grant(args.tool, args.ttl, args.repeatable))
+    if args.cmd == "approvals":
+        sys.exit(approvals_list() if args.approvals_cmd == "list"
+                 else approvals_clear(args.tool))
     if args.cmd == "grants":
         sys.exit(grants_list() if args.grants_cmd == "list" else grants_revoke(args.tool))
     if args.cmd == "memory":

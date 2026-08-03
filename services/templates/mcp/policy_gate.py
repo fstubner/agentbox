@@ -32,6 +32,11 @@ GRANTS_PATH = Path(os.environ.get("AGENTBOX_POLICY_GRANTS", "/policy/grants.json
 # Writable, and deliberately NOT the grants file: recording a consumption can
 # only remove permission, so this path carries no authority.
 CONSUMED_PATH = Path(os.environ.get("AGENTBOX_POLICY_CONSUMED", "/policy-state/consumed.json"))
+# Denied calls are recorded here so the operator can be told something is
+# waiting, rather than discovering it when they next read the conversation.
+# Same writable path as consumption records: writing a request for permission
+# confers none, so this carries no authority either.
+PENDING_DIR = Path(os.environ.get("AGENTBOX_POLICY_PENDING", "/policy-state/pending"))
 
 ALLOWED = "allowed"
 APPROVAL_REQUIRED = "approval_required"
@@ -221,6 +226,28 @@ def check_capability(capability: str, tiers: dict[str, list[str]] | None = None,
         f"active. Ask the operator to run: agentbox grant {label} --ttl 15m")
 
 
+def record_pending(tool: str, capability: str | None, path: Path | None = None) -> None:
+    """Note that a call was refused for want of approval.
+
+    Best-effort and idempotent per tool: a model that retries should not queue
+    five identical requests. Never raises — a failure to record must not turn a
+    clean policy denial into an error the model has to interpret.
+    """
+    store = PENDING_DIR if path is None else path
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+        entry = store / f"{tool}.json"
+        if entry.exists():
+            return
+        entry.write_text(json.dumps({
+            "tool": tool,
+            "capability": capability,
+            "requested_at": int(time.time()),
+        }), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def check(tool: str, tiers: dict[str, list[str]] | None = None,
           grants_path: Path = GRANTS_PATH,
           consumed_path: Path | None = None,
@@ -239,7 +266,9 @@ def check(tool: str, tiers: dict[str, list[str]] | None = None,
                      consume=consume, tool_map=tool_map):
         return
     mapping = load_tool_map() if tool_map is None else tool_map
-    capability = mapping.get(tool, "no mapped capability")
+    capability = mapping.get(tool)
+    record_pending(tool, capability)
     raise PolicyDenied(
-        f"'{tool}' ({capability}) requires operator approval and no grant is "
-        f"active. Ask the operator to run: agentbox grant {tool} --ttl 15m")
+        f"'{tool}' ({capability or 'no mapped capability'}) requires operator "
+        f"approval. The operator has been notified and can approve it; ask them "
+        f"to check, then try again.")
