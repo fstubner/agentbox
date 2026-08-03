@@ -135,6 +135,21 @@ quotes the input that caused it. `review_own_activity` returns counts only.
 This is what makes a weekly reflection safe to run unattended against real
 accounts.
 
+### Never run the gateway by hand while the service is up
+
+The unit starts it with `gateway run --replace`, which means a second instance
+**takes over from the first**. Running it manually to see an error therefore
+stops the real gateway, and the service then fails with nothing but a banner
+and `status=1/FAILURE` — no message saying what happened or that you caused it.
+
+```bash
+sudo systemctl start hermes-gateway-agentbox    # the fix, once the manual one is gone
+```
+
+To see why it is failing, read the journal or check the wrapper's own
+preconditions (`op whoami` and three `op read` calls, any of which exits 1
+before Hermes starts). Do not reach for a manual `gateway run`.
+
 ### Adding a new skill
 
 ```
