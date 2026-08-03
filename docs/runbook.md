@@ -89,8 +89,16 @@ requests are suppressed; set `BRIDGE_LOG_PROBES=1` to include them.
 
 ## Self-reflection
 
-The assistant reviews its own outcome history weekly, works out what to do
-differently, and proposes durable lessons the operator approves or rejects.
+The assistant reviews its own outcome history every morning at 09:00, works
+out what to do differently, and proposes durable lessons the operator approves
+or rejects.
+
+Because it runs daily over a rolling seven-day window, it reads mostly the same
+activity each time. The skill therefore has it check `search_memories` and
+`list_memory_proposals` *before* looking at the evidence, and a normal day ends
+with no proposal at all. A queue filling with near-identical lessons means that
+step is being skipped — it is the failure mode to watch for, because a review
+queue nobody reads closes the assistant's only route to durable memory.
 
 ```
 cli/agentbox memory list          # what it concluded, pending your review

@@ -10,18 +10,30 @@ conversation is the weakest evidence available about your own behaviour: it is
 biased toward what went well, it does not survive a restart, and it cannot
 count. `review_own_activity` can.
 
-The point of this is not to produce a report. It is to end with **one or two
-concrete changes** to how you work, written down where they will still exist
-next week.
+The point of this is not to produce a report. It is to end with **at most one
+or two concrete changes** to how you work, written down where they will still
+exist next week — and on a quiet day, with none at all.
 
 ## How to do it
 
-1. **Get the evidence.** Call `review_own_activity` (default 7 days; use 30 for
-   a monthly look). You get counts per tool — calls, successes, errors,
-   refusals, malformed calls, median duration — plus what the operator approved
-   or rejected.
+1. **Check what you already know first.** Call `search_memories` and
+   `list_memory_proposals` before anything else.
 
-2. **Read it for these things specifically.** Each has a different response, so
+   This runs daily against a rolling seven-day window, so most of what you are
+   about to look at is the same activity you looked at yesterday. If you skip
+   this you will propose the same lesson every morning, and a review queue full
+   of duplicates is one the operator stops reading — which costs you the only
+   route you have to durable memory.
+
+   A lesson already stored, or already sitting in the queue, is **done**. Do not
+   restate it, sharpen it, or propose a near-identical variant.
+
+2. **Get the evidence.** Call `review_own_activity` (default 7 days; use 30 for
+   a monthly look). You get counts per tool — calls, successes, errors,
+   refusals, malformed calls, median duration, and each tool's policy tier —
+   plus what the operator approved or rejected.
+
+3. **Read it for these things specifically.** Each has a different response, so
    name which one you are looking at before you conclude anything.
 
    | What you see | What it usually means | What to do |
@@ -34,7 +46,7 @@ next week.
    | Operator `reject` on your memory proposals | You are proposing the wrong kind of thing | Look at what you proposed and narrow it |
    | Few calls, all successful | Nothing to learn yet | Say that. Do not manufacture a finding |
 
-3. **Write down what you conclude.** `propose_memory` with
+4. **Write down what you conclude.** `propose_memory` with
    `type: workflow_rule` is the only durable record you can create. A good one
    is specific enough to change a future decision:
 
@@ -42,10 +54,12 @@ next week.
      when the user names a project by title rather than id."
    - Useless: "be more careful with tool arguments."
 
-   One or two. A reflection that proposes eight rules has not prioritised, and
-   the operator has to read all of them.
+   One or two, and on most days **zero** — this runs daily over a rolling
+   window, so a new lesson is by definition something yesterday's run did not
+   already cover. A reflection that proposes eight rules has not prioritised,
+   and the operator has to read all of them.
 
-4. **Report briefly.** Say what you looked at, what you found, and what you
+5. **Report briefly.** Say what you looked at, what you found, and what you
    proposed. If nothing needed changing, say that instead — a clean window is
    a real result and inventing a finding to seem thorough is worse than
    silence.
@@ -79,7 +93,7 @@ So:
 - **Do** make the case to the operator if you think a tier is wrong — once,
   with the counts to back it. "archive_gmail was refused six times this week
   and approved every time you saw it" is a reasonable argument. Repeating it
-  weekly is nagging.
+  every morning is nagging.
 
 ## Honesty
 

@@ -49,8 +49,10 @@ Four parts:
   never journal lines.
 - **`skills/self-reflection/SKILL.md`** — what to look for and what to do about
   it, installed into the gateway's skills directory.
-- **A weekly cron job** in the gateway's own scheduler, with the skill attached
-  and results delivered to Discord.
+- **A daily cron job** (09:00) in the gateway's own scheduler, with the skill
+  attached and results delivered to Discord. Daily needs the deduplication step
+  above; verified by running it twice with a proposal already queued, and the
+  second run correctly proposed nothing.
 
 Operator decisions are recorded too, including denials — which used to vanish,
 since an approval went through `agentbox grant` and saying no just deleted a
