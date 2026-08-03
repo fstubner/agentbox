@@ -1,0 +1,24 @@
+# Nightly backup of the two stores the assistant cannot regenerate: the Vikunja
+# database and durable memory. Runs as the operator, because the archive is
+# written outside any container and restoring it is an operator action.
+#
+# Install:
+#   cp cli/agentbox-backup.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-backup.timer
+#   sudo loginctl enable-linger "$USER"   # or it only runs while logged in
+
+[Unit]
+Description=Agentbox backup (task + memory stores)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/oss/agentbox/cli/agentbox backup --keep 14
+
+# The archive is verified with `tar -tzf` before old ones are pruned, so a
+# failed run cannot delete the last good copy. A non-zero exit here means the
+# backup did not happen — which is worth seeing in `systemctl --user status`
+# rather than swallowing.
+NoNewPrivileges=true
+PrivateTmp=true

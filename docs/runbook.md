@@ -184,8 +184,17 @@ Then copy `vikunja/` back over `$AGENT_CONTROL_PLANE_STATE_DIR/vikunja` and
 `memory/memory.json` into the `memory-bridge_memory_data` volume, with both
 services stopped.
 
-Not yet scheduled — run it from cron or a systemd timer if you want it
-unattended.
+Scheduled nightly at 03:30 by `cli/agentbox-backup.timer` (a systemd *user*
+timer, so it runs as the operator). `Persistent=true` catches up after the
+machine has been off — without it a box that sleeps overnight silently never
+backs up.
+
+```
+systemctl --user list-timers agentbox-backup.timer
+```
+
+Needs `sudo loginctl enable-linger $USER`, or it only runs while you are logged
+in.
 
 ## Scaffolding a new bridge
 
