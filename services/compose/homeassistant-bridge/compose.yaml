@@ -12,9 +12,22 @@ services:
       # read the house and change nothing, which is the right default for a
       # service that acts on the physical world.
       HA_CONTROLLABLE_ENTITIES: "${HA_CONTROLLABLE_ENTITIES:-}"
+      # Cameras are opt-in one at a time, separately from control. Empty means
+      # it can never look at anything.
+      HA_VIEWABLE_CAMERAS: "${HA_VIEWABLE_CAMERAS:-}"
+      # Screens cleared for full detail. Everything else is treated as shared,
+      # which is the safe direction to fail.
+      HA_PRIVATE_SCREENS: "${HA_PRIVATE_SCREENS:-}"
+      # The local vision model. Frames are described here and discarded; no
+      # image reaches the assistant or leaves this machine.
+      VISION_BASE_URL: "${VISION_BASE_URL:-http://host.docker.internal:1240/v1}"
+      VISION_MODEL: "${VISION_MODEL:-local-qwen25-vl-3b}"
       BRIDGE_LOG_FILE: "/logs/homeassistant-bridge.jsonl"
     ports:
       - "${LAN_BIND_IP:-127.0.0.1}:3476:8080"
+    # The vision model listens on the host loopback.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       homeassistant:
     volumes:

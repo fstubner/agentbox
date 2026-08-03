@@ -232,6 +232,39 @@ Then add the five tools to the gateway's `mcp_servers` allowlist — see
 "Adding a new skill" above for the pattern, and remember `doctor` will tell you
 if a tool is invisible.
 
+### Presence, cameras and screens
+
+**Presence needs no configuration.** Reading `binary_sensor.*` is an ordinary
+read, so once occupancy sensors exist in Home Assistant the assistant can
+already tell which room someone is in, and route a response there. That is the
+better answer to "know where I am" than a camera: no video, nobody else's
+privacy, and no injection surface.
+
+**Cameras are opt-in one at a time** via `HA_VIEWABLE_CAMERAS`, and separately
+from control — `camera` stays in the never-actuate list, so nothing pans, tilts
+or records. A look fetches one frame, sends it to the local vision model, and
+discards it. The assistant receives a description, never the image, and the
+description is flagged untrusted.
+
+That flag is not decoration. Anything written where a lens can see it — a note
+on the fridge, a phone screen, the television — is about to be read out by a
+model, so a camera gives anyone with physical access to that room a way to put
+text into the assistant's context. Looking on request bounds that to moments
+somebody asked; watching continuously would not, which is why there is no
+continuous mode.
+
+**Screens have two levels**, like a phone lock screen:
+
+```
+HA_PRIVATE_SCREENS=media_player.office_monitor
+```
+
+A private screen gets the summary and the detail. Every other screen — including
+any you have not classified — gets the summary only, and the detail is dropped
+in the bridge rather than left to the assistant's judgement. A summary over 80
+characters is refused, because otherwise it quietly becomes a second detail
+field.
+
 ### What it will not do
 
 - **No arbitrary service calls.** There is no `call_service` tool. HA's REST

@@ -38,6 +38,7 @@ tiers:
     - propose_memory_for_review      # inert until an operator approves it
     - home_read_state                # sensor/entity state from Home Assistant
     - home_control_comfort           # lights, scenes, media — allowlisted entities only
+    - home_view_camera               # one frame, on request, from an allowlisted camera
     - email_label_own_namespace      # agentbox/* labels only, enforced in the bridge
     - compose_email_draft            # drafts are never sent
     - create_agent_calendar_event    # agent calendar only; attendees refused
@@ -109,6 +110,12 @@ tools:
   # it cannot say whether the automation is a good idea. Code that runs
   # unattended at 3am deserves a human reading it once.
   create_home_automation: home_write_automation
+  # Allowed, because the allowlist is the constraint and an approval on "look
+  # at the kitchen" would be granted unread. Every camera is opt-in one at a
+  # time, nothing is stored, and the frame never enters the assistant's
+  # context — the bridge asks the local vision model and returns text.
+  look_at_camera: home_view_camera
+  cast_to_screen: home_control_comfort
 
   # Builder: the assistant reads the repo and proposes changes as git branches.
   # All `allowed` because none of them ships anything — a proposal is a branch a
