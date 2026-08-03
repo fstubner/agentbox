@@ -1,0 +1,48 @@
+services:
+  homeassistant-bridge:
+    build:
+      context: ../../..
+      dockerfile: services/compose/homeassistant-bridge/Dockerfile
+    image: agentbox/homeassistant-bridge:local
+    environment:
+      HA_URL: "${HA_URL:-}"
+      HA_TOKEN: "${HA_TOKEN:-}"
+      HA_BRIDGE_TOKEN: "${HA_BRIDGE_TOKEN:-}"
+      # Comma-separated entity ids the assistant may act on. Empty means it can
+      # read the house and change nothing, which is the right default for a
+      # service that acts on the physical world.
+      HA_CONTROLLABLE_ENTITIES: "${HA_CONTROLLABLE_ENTITIES:-}"
+      BRIDGE_LOG_FILE: "/logs/homeassistant-bridge.jsonl"
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:3476:8080"
+    networks:
+      homeassistant:
+    volumes:
+      - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
+      - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
+      - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
+    cpus: "0.50"
+    mem_limit: 128m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    labels:
+      agentbox.service: homeassistant-bridge
+      agentbox.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
+
+networks:
+  homeassistant:
+    name: homeassistant_default

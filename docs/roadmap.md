@@ -144,19 +144,87 @@ Two things to settle before building:
 This merges with the next item; doing them separately would mean building the
 Home Assistant connection twice.
 
-### 6. Home Assistant integration
+### 6. Home Assistant — **built, awaiting an instance**
 
-Not started, and not previously recorded anywhere in this repo. A bridge is the
-right shape: it holds the long-lived HA token, exposes narrow endpoints, and
-the MCP in front of it maps tools onto capabilities. `agentbox scaffold
-homeassistant` generates most of it.
+`services/compose/homeassistant-{bridge,mcp}`. Five tools: two read, three act,
+and none of them is a general `call_service`.
 
-Tiering to decide before building, not after: reading sensor state is
-plausibly `allowed`; actuating anything physical (locks, heating) is not, and
-"constrain rather than gate" argues for exposing a fixed set of safe entities
-rather than a general `call_service` endpoint with an approval on it.
+The tiering was decided before building, as the previous version of this entry
+insisted:
 
-### 7. Harness dispatch — farming work out to other models
+| | |
+|---|---|
+| `home_read_state` | allowed — knowing the kitchen is 19°C is not worth gating, and a sensor allowlist would need editing every time a battery is changed |
+| `home_control_comfort` | allowed — lights, scenes, switches; the *allowlist* is the constraint, not an approval |
+| `home_control_climate` | approval_required — costs money, and a household may be asleep |
+| `home_control_security` | **always_denied**, and no tool maps to it at all |
+
+**Why there is no `call_service`.** HA's REST API is one endpoint from total
+control: `POST /api/services/<domain>/<service>` unlocks a door as readily as
+it turns on a lamp. Exposing it behind an approval would be the wrong shape —
+an approval asked every time someone wants a light is granted unread within a
+week, and by then it grants nothing. Constrain rather than gate.
+
+Two independent refusals, and the order matters: an entity in a security domain
+is refused **before** the allowlist is consulted and regardless of what it
+says, because the allowlist is the thing most likely to be wrong.
+`lock.front_door` and `light.front_door` differ by two characters and a human
+edits that list. Climate is bounded 5–30 °C whatever the grant says — an
+extreme is a burst pipe or a heat risk to someone asleep, and that should not
+depend on the model being sensible.
+
+Default `HA_CONTROLLABLE_ENTITIES` is empty: it can read the house and change
+nothing until the operator says otherwise.
+
+**Not deployed here — there is no Home Assistant on this network.** Deploying a
+service whose upstream does not exist would leave `doctor` permanently red,
+which is how a check stops being read; the readiness entries report "refused;
+is it deployed?" as a warning instead. 26 tests cover the refusals against the
+real module. The HA REST API is stable, but nothing has been exercised against
+a live instance — that is the one thing outstanding.
+
+### 7. Two accounts — household shared, personal private
+
+Decided 2026-08-03. **Order: after Home Assistant, before harness dispatch.**
+
+Today the system has no notion of who is asking — zero references to a
+requester anywhere in the MCP or bridge path, one `GOOGLE_REFRESH_TOKEN`, one
+flat memory store, and grants recorded as `{tool, expires_at, single_use}`. A
+second person does not get an error; they get **the first person's data,
+presented as their own**. A wrong answer that looks right is the worst
+available failure.
+
+The split already exists in the services, which is why this is tractable:
+Vikunja is genuinely shared and works for two people today; Google is genuinely
+personal and is the broken part; memory is ambiguous and currently wrong.
+
+**Decisions taken:**
+
+- **Household plane plus private planes.** Shared: tasks, shopping, joint
+  scheduling. Private: each person's mail, personal memory, calendar detail.
+  Two fully separate stacks were rejected — a household assistant that cannot
+  answer "when are we both free" gives up most of its value and doubles the
+  surface to run and patch.
+- **Approvals are own-account by default, with an explicit allowlist** for
+  named cross-account actions. Neither person can approve arbitrary actions on
+  the other's data; specific exceptions are configured, not assumed.
+
+**The design constraint that matters more than any of the above:** identity
+must be bound to the *session*, not passed per call. If the assistant chooses
+which account to act as, then an instruction embedded in an email can choose
+too — and one compromised context reaches both accounts instead of one.
+Injection blast radius doubling is the real cost of multi-user, and
+session-scoped credential selection is what prevents it. The bridge must
+receive an identity assertion it cannot be argued out of, derived from the
+gateway session rather than from tool arguments.
+
+Unknown identity fails closed: refuse, never guess.
+
+This touches every layer — bridges, MCPs, policy, grants, approvals, memory —
+and is larger than the builder. A half-implementation is worse than none here,
+because partial isolation reads as isolation.
+
+### 8. Harness dispatch — farming work out to other models
 
 Sound, and less new than it looks. `router/agentbox_router.py` already routes
 deterministically to a context worker (`:1235`) and a reasoning worker
@@ -172,11 +240,11 @@ reasoner for verification is fine. Dispatching **externally-authored content**
 to the extractor is the exact path that document warns against, and it is also
 the most obvious use for it. Answer that before wiring the summarise case.
 
-### 8. Cloud escalation
+### 9. Cloud escalation
 
 Explicitly deferred by the operator. Subsumed by item 6 if that lands first.
 
-### 9. MRTR (`resultType: "input_required"`)
+### 10. MRTR (`resultType: "input_required"`)
 
 Blocked upstream. Hermes ships `mcp` 1.28.1, ceiling `2025-11-25`, with no
 elicitation handling at all. Until then approval runs out of band through

@@ -69,6 +69,9 @@ than gating:
 
 - calendar events refuse `attendees` and send `sendUpdates=none`, so an
   injected instruction cannot make the assistant email anyone;
+- the house exposes no `call_service`, and locks, alarms and covers are refused
+  in the process holding the credential rather than by a policy tier, so an
+  injected "unlock the front door" has nothing to call;
 - Gmail labels can only be applied from the `agentbox/` namespace, so an
   injected label id is refused;
 - durable memory needs an operator token the assistant does not hold, so an

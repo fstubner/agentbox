@@ -204,6 +204,49 @@ simpler and then breaks: git refuses to read a repo it does not own, and that
 cannot be waived with `-c safe.directory` — git ignores that from the command
 line on purpose, so an attacker-controlled argv cannot disable the check.
 
+## Home Assistant
+
+Not deployed by default — it needs an HA instance. To bring it up:
+
+```
+cp services/compose/homeassistant-bridge/homeassistant-bridge.env.example ~/.config/agentbox/homeassistant-bridge.env
+```
+
+Fill in `HA_URL`, a long-lived access token from your HA profile page as
+`HA_TOKEN`, and a generated `HA_BRIDGE_TOKEN`. Then decide what the assistant
+may actually touch:
+
+```
+HA_CONTROLLABLE_ENTITIES=light.kitchen,light.hall,scene.evening
+```
+
+**Empty means it can read the house and change nothing**, which is the default
+and the right starting point. Add entities one at a time.
+
+```
+cli/agentbox deploy homeassistant-bridge
+cli/agentbox deploy homeassistant-mcp
+```
+
+Then add the five tools to the gateway's `mcp_servers` allowlist — see
+"Adding a new skill" above for the pattern, and remember `doctor` will tell you
+if a tool is invisible.
+
+### What it will not do
+
+- **No arbitrary service calls.** There is no `call_service` tool. HA's REST
+  API is one endpoint from total control of the house, and putting an approval
+  in front of that would be an approval asked so often it gets granted unread.
+- **Locks, alarms, covers, garage doors and cameras are never actuated**, even
+  if you put them in `HA_CONTROLLABLE_ENTITIES`. That check runs first and does
+  not consult the list — `lock.front_door` and `light.front_door` differ by two
+  characters, and the list is edited by a tired human.
+- **Climate is bounded 5–30 °C** regardless of any grant.
+
+Setting a temperature is `approval_required`, so it goes through the Discord
+approval loop. Lights and scenes are `allowed`, because the allowlist is
+already the constraint.
+
 ## Backup
 
 ```

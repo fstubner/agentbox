@@ -1,0 +1,251 @@
+"""Tests for the Home Assistant bridge.
+
+Home Assistant's REST API is one endpoint from total control of the house:
+`POST /api/services/<domain>/<service>` unlocks a door as readily as it turns on
+a lamp. This bridge does not expose it. What follows is mostly attempts to
+actuate something that should never be actuated.
+
+The two refusals are deliberately independent, and the ordering matters: the
+security-domain check runs first and never consults the allowlist, because the
+allowlist is the thing most likely to be wrong. `lock.front_door` and
+`light.front_door` differ by two characters, and it is edited by a human.
+"""
+from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "services" / "templates" / "bridge" / "app"))
+sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
+
+POLICY = REPO / "policies" / "approval-policy.yaml"
+
+
+def load_bridge(controllable: str = "", url: str = "http://ha.test:8123",
+                token: str = "t"):
+    os.environ["HA_CONTROLLABLE_ENTITIES"] = controllable
+    os.environ["HA_URL"] = url
+    os.environ["HA_TOKEN"] = token
+    spec = importlib.util.spec_from_file_location(
+        f"ha_bridge_{abs(hash(controllable))}",
+        REPO / "services" / "compose" / "homeassistant-bridge" / "app" / "bridge.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def ha():
+    return load_bridge(controllable="light.kitchen,scene.evening,climate.hall")
+
+
+# --- what must never be actuated ----------------------------------------------
+
+
+SECURITY_ENTITIES = [
+    "lock.front_door",
+    "alarm_control_panel.house",
+    "cover.garage",
+    "camera.hallway",
+]
+
+
+@pytest.mark.parametrize("entity", SECURITY_ENTITIES)
+def test_security_domains_are_refused(ha, entity):
+    with pytest.raises(ha.BridgeError) as exc:
+        ha.require_controllable(entity, ("light", "switch"))
+    assert exc.value.status == 403
+    assert "always_denied" in exc.value.message
+
+
+@pytest.mark.parametrize("entity", SECURITY_ENTITIES)
+def test_allowlisting_a_lock_does_not_make_it_actuatable(entity):
+    """The check that matters. An operator who pastes `lock.front_door` into
+    HA_CONTROLLABLE_ENTITIES — by accident, or because something suggested it —
+    must not thereby give the assistant a door key."""
+    ha = load_bridge(controllable=",".join(SECURITY_ENTITIES))
+    with pytest.raises(ha.BridgeError) as exc:
+        ha.require_controllable(entity, ("light", "switch"))
+    assert exc.value.status == 403
+    assert "never actuates" in exc.value.message
+
+
+def test_the_security_check_runs_before_the_allowlist_check(ha):
+    """A lock that is not allowlisted should still be refused *as a lock* — the
+    message the operator reads should say why it can never work, not merely
+    that it is missing from a list they might then edit."""
+    with pytest.raises(ha.BridgeError) as exc:
+        ha.require_controllable("lock.back_door", ("light", "switch"))
+    assert "never actuates" in exc.value.message
+    assert "allowlist" not in exc.value.message.lower()
+
+
+def test_there_is_no_general_call_service_route(ha):
+    """Exposing HA's service endpoint and gating it with an approval would be
+    the wrong shape: an approval asked for every light is granted unread."""
+    routes = {path for _, path in ha.HomeAssistantBridge.routes}
+    assert not any("service" in path for path in routes)
+    _, schema = ha.get_schema(None, None)
+    assert "call arbitrary services" in schema["cannot"]
+
+
+# --- the allowlist -------------------------------------------------------------
+
+
+def test_an_entity_outside_the_allowlist_is_refused(ha):
+    with pytest.raises(ha.BridgeError) as exc:
+        ha.require_controllable("light.bedroom", ("light", "switch"))
+    assert exc.value.status == 403
+    assert "controllable list" in exc.value.message
+
+
+def test_an_allowlisted_entity_passes(ha):
+    ha.require_controllable("light.kitchen", ("light", "switch"))
+    ha.require_controllable("scene.evening", ("scene", "script"))
+
+
+def test_an_empty_allowlist_controls_nothing():
+    """The default. A service that acts on the physical world should start
+    unable to."""
+    ha = load_bridge(controllable="")
+    with pytest.raises(ha.BridgeError):
+        ha.require_controllable("light.kitchen", ("light", "switch"))
+
+
+def test_a_tool_cannot_drive_the_wrong_domain(ha):
+    """set_home_light must not be a way to reach a thermostat."""
+    with pytest.raises(ha.BridgeError) as exc:
+        ha.require_controllable("climate.hall", ("light", "switch"))
+    assert exc.value.status == 400
+
+
+def test_a_malformed_entity_id_is_refused(ha):
+    for bad in ("", "kitchen", "light", None):
+        with pytest.raises(ha.BridgeError):
+            ha.require_controllable(bad or "", ("light", "switch"))
+
+
+# --- bounds --------------------------------------------------------------------
+
+
+def test_climate_is_bounded_regardless_of_approval(ha, monkeypatch):
+    """A grant authorises setting the temperature; it does not authorise
+    setting it to 60. An extreme is a burst pipe or a heat risk to someone
+    asleep, and neither should depend on the model being sensible."""
+    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    for bad in (-10, 4, 31, 100):
+        with pytest.raises(ha.BridgeError) as exc:
+            ha.set_climate(None, {"entity_id": "climate.hall", "temperature": bad})
+        assert exc.value.status == 400
+    status, payload = ha.set_climate(
+        None, {"entity_id": "climate.hall", "temperature": 19})
+    assert status == 200 and payload["temperature"] == 19
+
+
+def test_brightness_is_bounded(ha, monkeypatch):
+    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    for bad in (0, 101, -5):
+        with pytest.raises(ha.BridgeError):
+            ha.set_light(None, {"entity_id": "light.kitchen", "on": True,
+                                "brightness_pct": bad})
+
+
+def test_on_must_be_a_boolean(ha, monkeypatch):
+    """"on": "false" is a string and truthy; treating it as a value would turn
+    a light on when asked to turn it off."""
+    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    with pytest.raises(ha.BridgeError):
+        ha.set_light(None, {"entity_id": "light.kitchen", "on": "false"})
+
+
+# --- credential handling --------------------------------------------------------
+
+
+def test_an_auth_failure_does_not_echo_the_upstream_body(ha, monkeypatch):
+    """Home Assistant can quote the token back in an auth error."""
+    import urllib.error
+
+    def unauthorised(*a, **k):
+        raise urllib.error.HTTPError(
+            "u", 401, "Unauthorized", {},
+            __import__("io").BytesIO(b'{"message":"invalid token sekrit-abc123"}'))
+
+    monkeypatch.setattr(ha.urllib.request, "urlopen", unauthorised)
+    with pytest.raises(ha.BridgeError) as exc:
+        ha.ha_request("GET", "/api/")
+    assert "sekrit" not in exc.value.message
+
+
+def test_unconfigured_refuses_rather_than_calling_nothing():
+    ha = load_bridge(controllable="light.kitchen", url="", token="")
+    with pytest.raises(ha.BridgeError) as exc:
+        ha.ha_request("GET", "/api/")
+    assert exc.value.status == 503
+
+
+# --- policy wiring --------------------------------------------------------------
+
+
+def test_security_control_is_always_denied():
+    import policy_gate as pg
+    tiers = pg.load_tiers(POLICY)
+    assert "home_control_security" in tiers["always_denied"]
+    # And no tool maps to it: there must be no route at all, not merely a
+    # refused one.
+    assert "home_control_security" not in pg.load_tool_map(POLICY).values()
+
+
+def test_reads_are_allowed_and_climate_needs_approval():
+    import policy_gate as pg
+    tiers, mapping = pg.load_tiers(POLICY), pg.load_tool_map(POLICY)
+    assert pg.tier_of("list_home_entities", tiers, mapping) == "allowed"
+    assert pg.tier_of("get_home_entity", tiers, mapping) == "allowed"
+    # Comfort is allowed because the allowlist is the constraint; climate is
+    # gated because it costs money and affects a sleeping household.
+    assert pg.tier_of("set_home_light", tiers, mapping) == "allowed"
+    assert pg.tier_of("set_home_climate", tiers, mapping) == "approval_required"
+
+
+def test_every_ha_tool_is_mapped():
+    import re
+    import policy_gate as pg
+    mapping = pg.load_tool_map(POLICY)
+    src = (REPO / "services" / "compose" / "homeassistant-mcp" / "app"
+           / "server.py").read_text()
+    block = src.split("TOOLS = [", 1)[1].split("\ndef ", 1)[0]
+    for name in re.findall(r'"name":\s*"([a-z_]+)"', block):
+        assert name in mapping, name
+
+
+def test_the_bridge_declares_its_capabilities():
+    src = (REPO / "services" / "compose" / "homeassistant-bridge" / "app"
+           / "bridge.py").read_text()
+    assert "def capability_for" in src
+    for capability in ("home_read_state", "home_control_comfort",
+                       "home_control_climate"):
+        assert capability in src
+
+
+# --- projection -----------------------------------------------------------------
+
+
+def test_lean_is_the_default_for_a_house(ha):
+    """The opposite of the other bridges, on purpose: a modest house is several
+    hundred entities and the full payload with attributes is a context-economy
+    problem before it is anything else."""
+    src = (REPO / "services" / "compose" / "homeassistant-bridge" / "app"
+           / "bridge.py").read_text()
+    assert 'resolve_view(first(query, "view", "lean"))' in src
+
+
+def test_flatten_lifts_the_display_name(ha):
+    """HA nests friendly_name under attributes, so a lean projection of the raw
+    shape would drop the only human-readable field."""
+    flat = ha.flatten({"entity_id": "light.kitchen", "state": "on",
+                       "attributes": {"friendly_name": "Kitchen"}})
+    assert flat["friendly_name"] == "Kitchen"

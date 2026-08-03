@@ -36,6 +36,8 @@ tiers:
     - task_management                # the assistant's own workspace; reversible, nothing deletes
     - personal_data_read             # gmail/calendar reads — see the note below
     - propose_memory_for_review      # inert until an operator approves it
+    - home_read_state                # sensor/entity state from Home Assistant
+    - home_control_comfort           # lights, scenes, media — allowlisted entities only
     - email_label_own_namespace      # agentbox/* labels only, enforced in the bridge
     - compose_email_draft            # drafts are never sent
     - create_agent_calendar_event    # agent calendar only; attendees refused
@@ -46,6 +48,7 @@ tiers:
     - host_package_install
     - add_mcp_server
     - enable_skill_bundle_production
+    - home_control_climate           # heating/cooling: costs money, affects a sleeping household
     - modify_production_gateway_config
     - change_network_bindings_or_ports
     - spend_money                    # incl. grocery orders, paid APIs over limit
@@ -64,6 +67,7 @@ tiers:
     - delete_emails_files_repos_backups_prod_data
     - modify_upstream_agent_source
     - medical_diagnosis_or_medication_guidance
+    - home_control_security          # locks, alarms, garage doors, covers
 
 # Assistant tool -> capability. A tool absent from this map resolves to no
 # capability and therefore to approval_required, so a tool added without being
@@ -89,6 +93,16 @@ tools:
   # behaviour grants nothing and is the precondition for reflecting on evidence
   # rather than on recollection.
   review_own_activity: inspect_service_logs
+
+  # Home Assistant. Control is constrained rather than gated: the bridge
+  # refuses any entity outside an operator-configured allowlist, and refuses
+  # the security domains outright regardless of the allowlist. An approval on
+  # "turn on a light" would be asked so often it would be granted unread.
+  list_home_entities: home_read_state
+  get_home_entity: home_read_state
+  set_home_light: home_control_comfort
+  activate_home_scene: home_control_comfort
+  set_home_climate: home_control_climate
 
   # Builder: the assistant reads the repo and proposes changes as git branches.
   # All `allowed` because none of them ships anything — a proposal is a branch a

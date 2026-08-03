@@ -315,6 +315,10 @@ ENDPOINTS = {
     # it does not serve a request. A warning, so an outage here never masks one
     # that stops the assistant working.
     "builder-mcp": ("http://127.0.0.1:3475/health", WARN),
+    # Optional: not every deployment has a house attached. WARN so a box
+    # without Home Assistant is not permanently red, which is how a check
+    # stops being read.
+    "homeassistant-mcp": ("http://127.0.0.1:3477/health", WARN),
     "vision model": ("http://127.0.0.1:1240/v1/models", WARN),
     "control plane api": ("http://127.0.0.1:8000/api/evals/health", WARN),
     "control plane ui": ("http://127.0.0.1:4321/", WARN),
@@ -336,6 +340,10 @@ BRIDGE_READY_PORTS = {
     "google-workspace-mcp-lite": 3473,
     "builder-bridge": 3474,
     "builder-mcp": 3475,
+    # Undeployed reports "refused; is it deployed?" as a warning; deployed but
+    # unable to reach Home Assistant is a real failure.
+    "homeassistant-bridge": 3476,
+    "homeassistant-mcp": 3477,
 }
 
 
@@ -1179,12 +1187,14 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
 # uniform — every service picked its own prefix — so this mapping is the only
 # place that knows, rather than each caller guessing.
 MCP_PORTS = {"vikunja-mcp": 3467, "memory-mcp": 3472,
-             "google-workspace-mcp-lite": 3473, "builder-mcp": 3475}
+             "google-workspace-mcp-lite": 3473, "builder-mcp": 3475,
+             "homeassistant-mcp": 3477}
 MCP_TOKEN_VARS = {
     "vikunja-mcp": "VIKUNJA_MCP_SHARED_TOKEN",
     "memory-mcp": "MEMORY_MCP_SHARED_TOKEN",
     "google-workspace-mcp-lite": "GOOGLE_MCP_SHARED_TOKEN",
     "builder-mcp": "BUILDER_MCP_SHARED_TOKEN",
+    "homeassistant-mcp": "HA_MCP_SHARED_TOKEN",
 }
 
 
