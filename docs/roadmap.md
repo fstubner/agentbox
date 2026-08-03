@@ -95,7 +95,42 @@ Half done. Scaffold commits to a branch, so generated bridges have history.
 Nothing else the assistant produces does — memory proposals, plans and future
 generated services have no trail.
 
-### 5. Home Assistant integration
+### 5. Voice — **partly built**
+
+Local speech in and out works and is verified: faster-whisper for STT, Piper for
+TTS, libopus and ffmpeg for Discord audio. Nothing spoken leaves the box. See
+`docs/voice.md`.
+
+**Still to do: microphones and speakers around the house** — Raspberry Pis or
+ESP32 boards acting as satellites.
+
+Do not build an audio pipeline for this. The hard parts — wake-word detection,
+always-on streaming, echo cancellation, device discovery, and firmware for
+cheap microcontrollers — are exactly what Home Assistant's Assist stack already
+does, with ESPHome firmware for ESP32-S3 voice boards and Wyoming satellite for
+a Pi. Reimplementing it here would be months of work to arrive somewhere worse.
+
+The split that makes sense: **Home Assistant owns the audio, Agentbox owns the
+thinking.** A satellite wakes, streams to HA, HA transcribes, HA posts the text
+to a Hermes webhook, and the reply comes back to be spoken on that satellite.
+
+`hermes webhook subscribe` already provides the entry point, with HMAC secrets,
+prompt templates, skill attachment and per-target delivery — so the Agentbox
+side is a route and a policy decision rather than a new service.
+
+Two things to settle before building:
+
+- **Which room heard it.** The satellite id has to survive the round trip or
+  every reply comes back everywhere at once.
+- **What a voice request is allowed to do.** A spoken request has no operator
+  reading carefully before it lands, so the approval loop is a worse fit than
+  it is in Discord. Voice probably wants a narrower capability set rather than
+  the same one with approvals in front of it.
+
+This merges with the next item; doing them separately would mean building the
+Home Assistant connection twice.
+
+### 6. Home Assistant integration
 
 Not started, and not previously recorded anywhere in this repo. A bridge is the
 right shape: it holds the long-lived HA token, exposes narrow endpoints, and
@@ -107,7 +142,7 @@ plausibly `allowed`; actuating anything physical (locks, heating) is not, and
 "constrain rather than gate" argues for exposing a fixed set of safe entities
 rather than a general `call_service` endpoint with an approval on it.
 
-### 6. Harness dispatch — farming work out to other models
+### 7. Harness dispatch — farming work out to other models
 
 Sound, and less new than it looks. `router/agentbox_router.py` already routes
 deterministically to a context worker (`:1235`) and a reasoning worker
@@ -123,11 +158,11 @@ reasoner for verification is fine. Dispatching **externally-authored content**
 to the extractor is the exact path that document warns against, and it is also
 the most obvious use for it. Answer that before wiring the summarise case.
 
-### 7. Cloud escalation
+### 8. Cloud escalation
 
 Explicitly deferred by the operator. Subsumed by item 6 if that lands first.
 
-### 8. MRTR (`resultType: "input_required"`)
+### 9. MRTR (`resultType: "input_required"`)
 
 Blocked upstream. Hermes ships `mcp` 1.28.1, ceiling `2025-11-25`, with no
 elicitation handling at all. Until then approval runs out of band through
