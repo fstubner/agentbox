@@ -1236,6 +1236,13 @@ def mcp_rpc(service: str, method: str, params: dict | None = None,
             return json.loads(exc.read())
         except Exception:
             return {"error": {"code": exc.code, "message": exc.reason}}
+    except urllib.error.URLError as exc:
+        # Nothing listening. Optional services (Home Assistant) are simply not
+        # deployed on every box, and smoke should report that rather than
+        # crash — a suite that dies on an absent optional service is one people
+        # stop running.
+        return {"error": {"code": -1, "message": f"not reachable: {exc.reason}",
+                          "unreachable": True}}
 
 
 def tool_call(service: str, name: str, arguments: dict, token: str) -> tuple[bool, Any]:
@@ -1272,8 +1279,14 @@ def smoke() -> int:
             report(FAIL, f"{name}{(' — ' + detail) if detail else ''}")
 
     print("\n-- protocol --")
+    live = []
     for service in MCP_PORTS:
         envelope = mcp_rpc(service, "server/discover", token=tokens[service])
+        error = envelope.get("error") or {}
+        if isinstance(error, dict) and error.get("unreachable"):
+            report(WARN, f"{service} not deployed; skipping its checks")
+            continue
+        live.append(service)
         versions = (envelope.get("result") or {}).get("supportedVersions") or []
         check(f"{service} discovery", "2026-07-28" in versions,
               ", ".join(versions) if versions else str(envelope.get("error", "no response")))
@@ -1282,14 +1295,14 @@ def smoke() -> int:
     # used to be skipped entirely, and an unauthenticated curl from the host
     # returned real Gmail data. An MCP holds its bridge's credential, so
     # failing open here launders that credential to any local process.
-    for service in MCP_PORTS:
+    for service in live:
         envelope = mcp_rpc(service, "tools/list", token=None)
         check(f"{service} refuses unauthenticated calls", "error" in envelope,
               "ANSWERED WITHOUT A TOKEN" if "error" not in envelope else "")
 
     print("\n-- tools --")
     tool_map = load_tool_map()
-    for service in MCP_PORTS:
+    for service in live:
         envelope = mcp_rpc(service, "tools/list", token=tokens[service])
         tools = (envelope.get("result") or {}).get("tools") or []
         names = [t.get("name") for t in tools]
