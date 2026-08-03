@@ -84,6 +84,11 @@ tools:
   propose_memory: propose_memory_for_review
   list_memory_proposals: propose_memory_for_review
   search_memories: propose_memory_for_review
+  # Reading its own outcome journal. inspect_service_logs was already `allowed`
+  # and had no tool behind it; this is the tool. Reading counts about its own
+  # behaviour grants nothing and is the precondition for reflecting on evidence
+  # rather than on recollection.
+  review_own_activity: inspect_service_logs
 
   # google-workspace-mcp-lite — reads
   search_gmail: personal_data_read

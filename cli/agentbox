@@ -326,6 +326,75 @@ BRIDGE_READY_PORTS = {
 READY_TIMEOUT = 10
 
 
+# The gateway allowlists which MCP tools the assistant may see. A tool absent
+# from that list is invisible — not refused, not logged, not an error anywhere:
+# the assistant simply never knows it exists. That has already happened twice,
+# once leaving create_gmail_draft and find_or_create_task unreachable for days.
+#
+# Deliberately a warning, and deliberately quiet when unreadable. The gateway
+# runs as another user and the config holds its bearer tokens, so `doctor` run
+# as the operator usually cannot read it — which is correct, and not a fault to
+# report as one.
+GATEWAY_CONFIG = os.environ.get("AGENTBOX_GATEWAY_CONFIG",
+                                "/home/agentbox/agentbox/config.yaml")
+
+
+def gateway_tool_visibility() -> int:
+    try:
+        lines = Path(GATEWAY_CONFIG).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        report(WARN, f"gateway config not readable ({GATEWAY_CONFIG}); "
+                     "cannot check which tools the assistant can see")
+        return 0
+
+    live: dict[str, set[str]] = {}
+    for service, port in (("vikunja-mcp", "3467"), ("memory-mcp", "3472"),
+                          ("google-workspace-mcp-lite", "3473")):
+        server = REPO / "services" / "compose" / service / "app" / "server.py"
+        if not server.exists():
+            continue
+        block = server.read_text(encoding="utf-8").split("TOOLS = [", 1)
+        if len(block) < 2:
+            continue
+        live[port] = set(re.findall(r'"name":\s*"([a-z_]+)"',
+                                    block[1].split("\ndef ", 1)[0]))
+
+    allowed: dict[str, set[str]] = {}
+    port: str | None = None
+    in_servers = False
+    for line in lines:
+        if line.rstrip() == "mcp_servers:":
+            in_servers = True
+            continue
+        if in_servers and line and not line.startswith(" "):
+            break
+        if not in_servers:
+            continue
+        match = re.search(r"url: http://127\.0\.0\.1:(\d+)/mcp", line)
+        if match:
+            port = match.group(1)
+            allowed.setdefault(port, set())
+            continue
+        match = re.match(r"^      - ([a-z_]+)\s*$", line)
+        if match and port:
+            allowed[port].add(match.group(1))
+
+    problems = 0
+    for port, tools in sorted(live.items()):
+        listed = allowed.get(port, set())
+        invisible = sorted(tools - listed)
+        stale = sorted(listed - tools)
+        if invisible:
+            problems += 1
+            report(WARN, f"MCP :{port} — invisible to the assistant: {', '.join(invisible)}")
+        if stale:
+            problems += 1
+            report(WARN, f"MCP :{port} — allowlisted but no longer exists: {', '.join(stale)}")
+    if not problems:
+        report(OK, f"gateway tool allowlists match all {sum(len(t) for t in live.values())} live tools")
+    return 0
+
+
 def bridge_readiness() -> int:
     """Report bridges whose upstream is unreachable."""
     bad = 0
@@ -421,6 +490,7 @@ def doctor() -> int:
     report(OK if pct < 90 else WARN, f"disk usage {pct}%")
     bad += deploy_freshness()
     bad += bridge_readiness()
+    bad += gateway_tool_visibility()
     bad += validate()
     return 1 if bad else 0
 
@@ -719,6 +789,35 @@ def parse_ttl(value: str) -> int:
     return int(value)
 
 
+OUTCOME_DIR = Path(os.environ.get(
+    "AGENTBOX_LOG_DIR", str(Path("~/.local/state/agentbox/logs").expanduser())))
+
+
+def record_decision(actor: str, action: str, subject: str, detail: str = "") -> None:
+    """Append an operator decision to the outcome journal.
+
+    These are the only records in the journal containing a human judgement, and
+    they are what makes a tier argument possible: "you approved this nine times
+    out of nine" is evidence, and nothing else in the system remembers it.
+
+    Written to the same directory the MCPs write to, so `review_own_activity`
+    reads both halves — what the assistant tried, and what the operator said
+    about it.
+    """
+    path = OUTCOME_DIR / "operator-outcomes.jsonl"
+    entry = {"ts": int(time.time()), "actor": actor,
+             "action": action, "subject": subject}
+    if detail:
+        entry["detail"] = detail
+    try:
+        OUTCOME_DIR.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        # Never fail the decision because we could not record it.
+        report(WARN, f"could not record decision: {exc}")
+
+
 def grant(tool: str, ttl: str, repeatable: bool) -> int:
     tiers = load_runtime_tiers()
     capability = load_tool_map().get(tool)
@@ -745,6 +844,7 @@ def grant(tool: str, ttl: str, repeatable: bool) -> int:
     GRANTS_PATH.write_text(json.dumps({"grants": existing}, indent=2), encoding="utf-8")
     GRANTS_PATH.chmod(0o644)
     scope = "repeatable" if repeatable else "single-use"
+    record_decision("operator", "approve", tool, scope)
     report(OK, f"granted {tool} for {seconds}s ({scope})")
     return 0
 
@@ -924,6 +1024,9 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
     payload = memory_request("POST", f"/v1/proposals/{urllib.parse.quote(proposal_id)}/{action}", body)
     if payload is None:
         return 1
+    # A rejected memory proposal is a correction — the clearest "no, not that"
+    # the system ever gets, and worth strictly more than an approval.
+    record_decision("operator", action, "memory_proposal", reason)
     report(OK, f"{payload.get('status', action)}: {payload.get('statement', proposal_id)}")
     return 0
 
@@ -1125,6 +1228,22 @@ def smoke() -> int:
         check("operator can reject the proposal", rejected)
     else:
         report(WARN, "no proposal id returned; clean up with `agentbox memory list`")
+
+    print("\n-- self-reflection --")
+    ok, window = tool_call("memory-mcp", "review_own_activity", {"days": 7},
+                           tokens["memory-mcp"])
+    check("assistant can read its own activity", ok, "" if ok else str(window))
+    if ok and isinstance(window, dict):
+        tools_seen = window.get("tools") or {}
+        # This very run generated the calls above, so an empty window means the
+        # journal is not being written — a silently broken reflection loop.
+        check("journal has this run's calls in it", bool(tools_seen),
+              f"{window.get('total_calls', 0)} calls in {window.get('window_days')}d")
+        # The privacy property, checked against live data rather than a fixture.
+        serialised = json.dumps(window)
+        leaked = [word for word in ("statement", "@", "subject:") if word in serialised]
+        check("no call content in the summary", not leaked,
+              f"found: {leaked}" if leaked else "counts only")
 
     print("\n-- google (read-only) --")
     ok, labels = tool_call("google-workspace-mcp-lite", "list_gmail_labels", {},

@@ -214,6 +214,17 @@ runs through `cli/agentbox-approvals`, which asks in Discord out of band.
 - **Memory review gates** — implemented: the assistant proposes, an operator
   approves via `cli/agentbox memory` using a credential the assistant does not
   hold.
+- **Self-reflection** — implemented: the MCPs write an outcome journal,
+  `review_own_activity` aggregates it under the `inspect_service_logs`
+  capability, and a weekly job has the assistant read it and propose lessons
+  through the same review gate. It reflects on evidence rather than on
+  recollection, and it cannot act on its conclusions unaided.
+
+  The journal lives at the MCP layer deliberately. The bridge request log sits
+  below it, so it records `GET /v1/tasks` and never learns the tool was
+  `list_tasks` — and a call the policy gate refuses never reaches a bridge at
+  all, which made the assistant's *denied* attempts, the most interesting
+  events, invisible in the only record that existed.
 - **Cloud escalation** (not implemented): the intended pattern is
   escalate-on-failure (try the local model, escalate when validation fails),
   gated by the approval policy — not an LLM-based tier classifier. Likely

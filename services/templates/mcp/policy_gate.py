@@ -101,6 +101,17 @@ def load_tool_map(path: Path = POLICY_PATH) -> dict[str, str]:
     return mapping
 
 
+def capability_of(tool: str, tool_map: dict[str, str] | None = None) -> str:
+    """The capability a tool exercises, or "" if it maps to none.
+
+    For labelling an outcome record. Deliberately does not fall back to a tier:
+    an unmapped tool is a real condition worth seeing in the log rather than
+    something to paper over with a default.
+    """
+    mapping = load_tool_map() if tool_map is None else tool_map
+    return mapping.get(tool or "", "")
+
+
 def tier_of(tool: str, tiers: dict[str, list[str]],
             tool_map: dict[str, str] | None = None) -> str:
     """Resolve a tool's tier through the capability it exercises.

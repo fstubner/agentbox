@@ -87,6 +87,56 @@ any query parameter outside the allowlist in `bridge_base.LOGGED_QUERY_PARAMS`
 (free-text params such as a search string can carry personal data). Probe
 requests are suppressed; set `BRIDGE_LOG_PROBES=1` to include them.
 
+## Self-reflection
+
+The assistant reviews its own outcome history weekly, works out what to do
+differently, and proposes durable lessons the operator approves or rejects.
+
+```
+cli/agentbox memory list          # what it concluded, pending your review
+cli/agentbox memory approve <id>
+cli/agentbox memory reject <id> --reason "..."
+```
+
+The loop is: MCPs write an outcome journal → `review_own_activity` aggregates
+it → the assistant reflects using `skills/self-reflection` → it proposes with
+`propose_memory` → you approve. It cannot approve its own conclusions; that
+needs a credential no container holds.
+
+The schedule lives in the gateway's own scheduler, not cron(8). It runs as the
+`agentbox` user under that gateway's profile — **the `HERMES_HOME` matters**, a
+job created without it lands in a different profile and never fires:
+
+```
+sudo -u agentbox env HERMES_HOME=/home/agentbox/agentbox HOME=/home/agentbox \
+  /home/agentbox/hermes-agent-test/.venv/bin/python -m hermes_cli.main cron list
+```
+
+The scheduler enumerates jobs at startup, so **restart the gateway after adding
+one** (`sudo systemctl restart hermes-gateway-agentbox`). `cron list` prints
+"Gateway is not running" even when it is; check `.tick.lock` in
+`/home/agentbox/agentbox/cron/` for the real answer.
+
+### What it can and cannot see
+
+The journal records tool names, outcomes, timings, argument *names*, and an
+allowlist of shape values (`view`, `limit`, …). It never records argument
+values, result content, or exception messages — an upstream error routinely
+quotes the input that caused it. `review_own_activity` returns counts only.
+
+This is what makes a weekly reflection safe to run unattended against real
+accounts.
+
+### Adding a new skill
+
+```
+sudo install -d -o agentbox -g agentbox -m 0775 /home/agentbox/agent-control-plane/hermes/skills/<name>
+sudo install -o agentbox -g agentbox -m 0664 skills/<name>/SKILL.md /home/agentbox/agent-control-plane/hermes/skills/<name>/SKILL.md
+```
+
+Skills in this repo are the source; that directory is what the gateway loads.
+They are not synced automatically.
+
 ## Backup
 
 ```

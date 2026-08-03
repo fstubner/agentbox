@@ -132,6 +132,28 @@ def clear_pending(tool: str) -> None:
     (PENDING / f"{tool}.json").unlink(missing_ok=True)
 
 
+OUTCOME_DIR = Path(os.environ.get(
+    "AGENTBOX_LOG_DIR", str(Path("~/.local/state/agentbox/logs").expanduser())))
+
+
+def record_denial(tool: str, user_id: str) -> None:
+    """A denial is the strongest signal the system gets and used to vanish.
+
+    An approval goes through `agentbox grant`, which records it. Saying no just
+    deleted the pending file, so the record showed tools that were approved and
+    nothing about the ones that were not — which would make any tier argument
+    read from this journal systematically wrong in one direction.
+    """
+    try:
+        OUTCOME_DIR.mkdir(parents=True, exist_ok=True)
+        with (OUTCOME_DIR / "operator-outcomes.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"ts": int(time.time()), "actor": "operator",
+                                     "action": "deny", "subject": tool,
+                                     "detail": f"discord:{user_id}"}) + "\n")
+    except OSError as exc:
+        log(f"could not record denial of {tool}: {exc}")
+
+
 def main() -> int:
     token = os.environ.get("DISCORD_BOT_TOKEN") or op_read("op://Agentbox/discord/bot_token")
     channel = os.environ.get("AGENTBOX_APPROVAL_CHANNEL_ID", "").strip()
@@ -192,6 +214,7 @@ def main() -> int:
                     "content": (f"approved `{tool}` for {DEFAULT_TTL} — ask again and it "
                                 f"will go through" if ok else f"could not grant `{tool}`")})
             else:
+                record_denial(tool, str(author.get("id")))
                 discord("POST", f"/channels/{channel}/messages", token,
                         {"content": f"denied `{tool}`"})
             log(f"{verb} {tool} from discord user {author.get('id')}")

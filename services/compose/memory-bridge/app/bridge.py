@@ -15,6 +15,11 @@ from typing import Any
 
 from bridge_base import BridgeError, BridgeHandler, resolve_limit, serve
 
+try:
+    import policy_gate
+except ImportError:  # no policy mounted: the summary omits tiers rather than fails
+    policy_gate = None  # type: ignore[assignment]
+
 MEMORY_PATH = Path(os.environ.get("MEMORY_PATH", "/data/memory.json"))
 _LOCK = threading.Lock()
 
@@ -194,6 +199,129 @@ def reject_proposal(handler, proposal_id: str, body):
     return 200, proposal
 
 
+# --- self-reflection --------------------------------------------------------
+#
+# The assistant can propose memories but had no way to know how it had been
+# doing — so any "reflection" was the model recalling a conversation, which is
+# the least reliable evidence available and does not survive a restart.
+#
+# This reads the outcome journals the MCPs write and returns an aggregate. It
+# lives in the bridge, not the MCP, for the usual reason: the MCP is a gate,
+# the bridge does the work and enforces the capability authoritatively.
+#
+# It returns *counts and rates*, never journal lines. The journal already omits
+# argument values, but an aggregate is also the useful shape: "archive_gmail
+# was refused six times" is actionable, and a replay of six refusals is not.
+
+LOG_DIR = Path(os.environ.get("BRIDGE_LOG_DIR", "/logs"))
+
+
+def read_outcomes(since_days: int) -> list[dict[str, Any]]:
+    cutoff = time.time() - since_days * 86400
+    records: list[dict[str, Any]] = []
+    if not LOG_DIR.is_dir():
+        return records
+    for path in sorted(LOG_DIR.glob("*-outcomes.jsonl")):
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue  # a torn final line is normal for an append log
+                if record.get("ts", 0) >= cutoff:
+                    records.append(record)
+        except OSError:
+            continue
+    return records
+
+
+def activity(handler, body):
+    """Aggregate what the assistant has tried, and how it went."""
+    query = query_of(handler)
+    try:
+        days = max(1, min(90, int(first(query, "days", "7"))))
+    except ValueError:
+        raise BridgeError(400, "days must be an integer")
+
+    records = read_outcomes(days)
+    calls = [r for r in records if r.get("tool")]
+    decisions = [r for r in records if r.get("action")]
+
+    tools: dict[str, dict[str, Any]] = {}
+    for record in calls:
+        name = record["tool"]
+        entry = tools.setdefault(name, {"calls": 0, "ok": 0, "error": 0,
+                                        "denied": 0, "invalid": 0, "ms": []})
+        entry["calls"] += 1
+        outcome = record.get("outcome", "")
+        if outcome in entry:
+            entry[outcome] += 1
+        if isinstance(record.get("ms"), (int, float)):
+            entry["ms"].append(record["ms"])
+
+    # Tier per tool, because "denied" alone is ambiguous in a way that produced
+    # a wrong conclusion on the first real run: the assistant saw archive_gmail
+    # refused, recorded "do not retry archive_gmail", and was mistaken —
+    # archive_gmail is approval_required and available with a grant, not
+    # always_denied. Without the tier there is no way to tell "ask for this"
+    # from "never do this", and the safe-looking reading is the wrong one.
+    tiers = {}
+    if policy_gate is not None:
+        try:
+            loaded = policy_gate.load_tiers()
+            tool_map = policy_gate.load_tool_map()
+            for name in tools:
+                capability = tool_map.get(name)
+                for tier in ("always_denied", "approval_required", "allowed"):
+                    if capability in loaded.get(tier, []):
+                        tiers[name] = tier
+                        break
+                else:
+                    tiers[name] = "approval_required"  # unmapped fails closed
+        except Exception:  # noqa: BLE001 — a summary must not fail on policy
+            tiers = {}
+
+    summary = {}
+    for name, entry in sorted(tools.items()):
+        durations = sorted(entry.pop("ms"))
+        if durations:
+            entry["median_ms"] = durations[len(durations) // 2]
+        if name in tiers:
+            entry["tier"] = tiers[name]
+            if tiers[name] == "approval_required":
+                entry["note"] = "refused without a grant; the operator can approve it"
+            elif tiers[name] == "always_denied":
+                entry["note"] = "never permitted; do not ask"
+        summary[name] = entry
+
+    # Error classes, not messages: an upstream message quotes its input.
+    problems: dict[str, int] = {}
+    for record in calls:
+        if record.get("outcome") in ("error", "invalid") and record.get("detail"):
+            key = f"{record['tool']}: {record['detail']}"
+            problems[key] = problems.get(key, 0) + 1
+
+    verdicts: dict[str, dict[str, int]] = {}
+    for record in decisions:
+        subject = record.get("subject", "")
+        entry = verdicts.setdefault(subject, {})
+        action = record.get("action", "")
+        entry[action] = entry.get(action, 0) + 1
+
+    return 200, {
+        "window_days": days,
+        "total_calls": len(calls),
+        "tools": summary,
+        "problems": dict(sorted(problems.items(), key=lambda kv: -kv[1])[:20]),
+        "operator_decisions": verdicts,
+        # Said plainly because a model reading this will otherwise treat an
+        # empty window as evidence of good behaviour rather than of no data.
+        "note": ("No activity recorded in this window."
+                 if not calls else
+                 "Counts only. Journal lines are never returned."),
+    }
+
+
 class MemoryBridge(BridgeHandler):
     server_version = "memory-bridge/1.0"
     bridge_token = os.environ.get("MEMORY_BRIDGE_TOKEN", "")
@@ -203,7 +331,16 @@ class MemoryBridge(BridgeHandler):
         ("POST", "/v1/proposals"): create_proposal,
         ("GET", "/v1/memories"): list_memories,
         ("POST", "/v1/memories"): create_memory,
+        ("GET", "/v1/activity"): activity,
     }
+
+    def capability_for(self, method: str, path: str,
+                       body: dict[str, Any] | None) -> str | None:
+        # Reading its own activity is what inspect_service_logs was always for:
+        # already `allowed` in the policy, never reachable until now.
+        if path.startswith("/v1/activity"):
+            return "inspect_service_logs"
+        return None
 
     def route_fallback(self, method: str, path: str, body):
         prefix = "/v1/proposals/"

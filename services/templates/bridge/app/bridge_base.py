@@ -50,7 +50,9 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import sys
 import time
+import traceback
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -278,6 +280,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.send_json(status, {"error": exc.message})
         except Exception as exc:  # noqa: BLE001 — never leak a traceback
             status = 500
+            # To the client: the class name only, because an exception message
+            # routinely quotes the input that caused it.
+            #
+            # To the operator's container log: the whole traceback. Without
+            # this a 500 produced `internal error: TypeError` and absolutely
+            # nothing else, anywhere — the response withheld it by design and
+            # the log never had it. Debugging meant adding prints and
+            # redeploying. stderr goes to `docker logs`, which the assistant
+            # cannot read.
+            traceback.print_exc(file=sys.stderr)
             self.send_json(status, {"error": f"internal error: {type(exc).__name__}"})
         finally:
             self._log_request(method, path, status, time.monotonic() - started)

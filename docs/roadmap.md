@@ -30,21 +30,45 @@ fails closed and looks broken rather than absent.
 
 ## Outstanding
 
-### 1. Self-reflection and memory reconciliation
+### 1. Self-reflection and memory reconciliation — **built**
 
-Asked for repeatedly. Not started. No capability, no tool, no store.
+Verified end to end on 2026-08-03: the assistant read its own history, drew a
+correct conclusion from it, and proposed a durable lesson the operator can
+approve.
 
-The permission shape is already settled and correct: the assistant proposes,
-the operator disposes (`propose_memory_for_review` is allowed,
-`store_sensitive_memory` needs approval, `modify_upstream_agent_source` is
-denied outright). Reflection does not need new authority — it needs an
-**outcome signal**, which nothing currently records. The request log knows what
-was called and how many bytes came back. It does not know whether the answer
-was right, whether it was corrected, or whether the same question was asked
-twice because the first attempt was useless.
+Four parts:
 
-So the ordering is: record outcomes → reflect over them → propose → operator
-approves. Skipping to the reflection step gives a loop with nothing to read.
+- **The outcome journal** (`services/templates/mcp/outcome_log.py`). One record
+  per tool call at the MCP layer, where tool names and policy decisions exist.
+  The bridge request log could not do this job: it sits below the MCP, so it
+  sees `GET /v1/tasks` and never learns the tool was `list_tasks` — and a call
+  refused by the gate never reaches a bridge at all, so the most interesting
+  events were invisible in it.
+- **`review_own_activity`** — the tool, gated by `inspect_service_logs`, which
+  was already `allowed` and had no tool behind it. Returns counts and rates,
+  never journal lines.
+- **`skills/self-reflection/SKILL.md`** — what to look for and what to do about
+  it, installed into the gateway's skills directory.
+- **A weekly cron job** in the gateway's own scheduler, with the skill attached
+  and results delivered to Discord.
+
+Operator decisions are recorded too, including denials — which used to vanish,
+since an approval went through `agentbox grant` and saying no just deleted a
+file. A journal that remembers every yes and no no would make any tier argument
+read from it wrong in one direction.
+
+**What the first real run taught us.** It proposed two lessons. One was right.
+The other said "do not retry archive_gmail" — wrong, because `archive_gmail` is
+`approval_required` and available with a grant, not `always_denied`. The
+summary gave it no way to tell "ask for this" from "never do this", and the
+safe-looking reading is the one that silently discards a capability. Each tool
+now carries its tier and a note; on the re-run it proposed only the correct
+lesson. Worth recording because it is the failure mode to watch for: reflection
+that quietly narrows what the assistant will attempt.
+
+Still to do: reflection reads outcomes but nothing yet records whether an
+*answer* was right — only whether a call succeeded. Operator corrections in
+conversation are still invisible.
 
 ### 2. Building services on demand
 
