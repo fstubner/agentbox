@@ -163,7 +163,13 @@ directory needs group access.
 
 ```
 sudo chgrp 65532 ~/.local/state/agentbox/policy-state && sudo chmod 0775 ~/.local/state/agentbox/policy-state
+sudo install -d -o "$USER" -g 65532 -m 2775 ~/.local/state/agentbox/policy-state/pending
 ```
+
+The `pending` directory needs creating explicitly, with setgid. If the container
+creates it first it is owned by uid 65532, and the operator then cannot remove
+requests from it — deleting a file needs write on the containing directory, not
+the file. Setgid keeps the group on anything written later.
 
 If that is missed, single-use grants are refused with an explicit message
 rather than silently degrading to unlimited-until-expiry.
