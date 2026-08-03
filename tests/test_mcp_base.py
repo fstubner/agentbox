@@ -532,3 +532,114 @@ def test_unknown_method_is_404():
         assert json.loads(exc.read())["error"]["code"] == -32601
     finally:
         server.shutdown()
+
+
+# --- required-argument validation -------------------------------------------
+#
+# Found by `cli/agentbox smoke`, not by any unit test: every tool published an
+# inputSchema with a `required` list and nothing enforced it, so omitting an
+# argument reached the handler and surfaced as `internal error: KeyError`. That
+# names neither the tool nor the argument, and reads as a server fault, so a
+# model's reasonable next move is to retry the identical broken call.
+
+
+def with_required(dispatch=None):
+    return type("H", (mb.McpHandler,), {
+        "service_name": "test-mcp",
+        "tools": [{"name": "list_tasks", "description": "x",
+                   "inputSchema": {"type": "object",
+                                   "properties": {"project_id": {"type": "integer"},
+                                                  "title": {"type": "string"}},
+                                   "required": ["project_id", "title"]}}],
+        "dispatch": staticmethod(dispatch or (lambda name, args: {"ok": name})),
+        "shared_token": "secret",
+    })
+
+
+def test_missing_required_argument_names_the_argument(monkeypatch):
+    monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
+    server, base = serve(with_required())
+    try:
+        result = rpc(base, "tools/call",
+                     {"name": "list_tasks", "arguments": {"title": "x"}},
+                     token="secret")["result"]
+        assert result["isError"] is True
+        text = result["content"][0]["text"]
+        assert "project_id" in text and "list_tasks" in text
+        assert "KeyError" not in text
+    finally:
+        server.shutdown()
+
+
+def test_all_missing_required_arguments_are_reported_at_once(monkeypatch):
+    """One round trip per missing argument is a bad conversation."""
+    monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
+    server, base = serve(with_required())
+    try:
+        result = rpc(base, "tools/call",
+                     {"name": "list_tasks", "arguments": {}}, token="secret")["result"]
+        text = result["content"][0]["text"]
+        assert "project_id" in text and "title" in text
+    finally:
+        server.shutdown()
+
+
+def test_empty_and_null_do_not_satisfy_a_required_argument(monkeypatch):
+    """`{"title": ""}` is a missing title wearing a disguise, and a model that
+    fills a slot it does not know is a normal failure mode."""
+    monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
+    server, base = serve(with_required())
+    try:
+        for absent in ("", None):
+            result = rpc(base, "tools/call",
+                         {"name": "list_tasks",
+                          "arguments": {"project_id": 1, "title": absent}},
+                         token="secret")["result"]
+            assert result["isError"] is True
+            assert "title" in result["content"][0]["text"]
+    finally:
+        server.shutdown()
+
+
+def test_whitespace_is_accepted_and_this_is_deliberate(monkeypatch):
+    """Only empty and null are treated as absent. Trimming would be guessing
+    at each tool's semantics from the base class, and a bridge that cares can
+    reject it with a message about its own domain."""
+    monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
+    server, base = serve(with_required())
+    try:
+        result = rpc(base, "tools/call",
+                     {"name": "list_tasks",
+                      "arguments": {"project_id": 1, "title": "  "}},
+                     token="secret")["result"]
+        assert result["isError"] is False
+    finally:
+        server.shutdown()
+
+
+def test_valid_arguments_still_dispatch(monkeypatch):
+    monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
+    server, base = serve(with_required())
+    try:
+        result = rpc(base, "tools/call",
+                     {"name": "list_tasks",
+                      "arguments": {"project_id": 1, "title": "x"}},
+                     token="secret")["result"]
+        assert result["isError"] is False
+    finally:
+        server.shutdown()
+
+
+def test_unknown_tool_is_refused_before_dispatch(monkeypatch):
+    """Dispatch must never see a name the server does not publish."""
+    def boom(name, args):
+        raise AssertionError("dispatch reached for an unpublished tool")
+
+    monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
+    server, base = serve(with_required(dispatch=boom))
+    try:
+        result = rpc(base, "tools/call",
+                     {"name": "no_such_tool", "arguments": {}}, token="secret")["result"]
+        assert result["isError"] is True
+    finally:
+        server.shutdown()

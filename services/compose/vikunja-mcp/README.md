@@ -38,7 +38,11 @@ VIKUNJA_BRIDGE_TOKEN=op://Agentbox/vikunja-bridge/bridge_token
 LAN_BIND_IP=127.0.0.1
 ```
 
-`VIKUNJA_MCP_SHARED_TOKEN` is optional while bound to localhost. Add it later if another local client besides Hermes will access this MCP endpoint.
+`VIKUNJA_MCP_SHARED_TOKEN` is **required**. This once said it was optional
+while bound to localhost, which was wrong in a way that mattered: the MCP holds
+the bridge's credential, so an unauthenticated endpoint launders that
+credential to every process on the host. Leaving it unset now refuses all
+calls rather than allowing them — see `services/templates/mcp/mcp_base.py`.
 
 ## Hermes Config
 

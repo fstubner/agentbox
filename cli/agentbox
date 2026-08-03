@@ -928,6 +928,226 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
     return 0
 
 
+# --- smoke: end-to-end workflows against the running system -----------------
+#
+# `doctor` answers "is everything up". This answers "does anything work", which
+# is a different question and the one that was never asked: every test in
+# tests/ runs against fixtures, so the whole MCP -> bridge -> upstream path had
+# no coverage at all. A service can pass every readiness probe and still refuse
+# every call, and until this existed that would have looked healthy.
+#
+# Rules, because this runs against live accounts:
+#   - Vikunja is test data, so task workflows create and clean up.
+#   - Google is real data, so only reads run here. Nothing drafts, labels or
+#     archives.
+#   - Memory proposals are inert by design, so proposing is safe; the proposal
+#     is left for the operator to reject, since deleting it needs the operator
+#     token this process should not be holding.
+
+# Port and the env var each MCP reads its token from. The names are not
+# uniform — every service picked its own prefix — so this mapping is the only
+# place that knows, rather than each caller guessing.
+MCP_PORTS = {"vikunja-mcp": 3467, "memory-mcp": 3472, "google-workspace-mcp-lite": 3473}
+MCP_TOKEN_VARS = {
+    "vikunja-mcp": "VIKUNJA_MCP_SHARED_TOKEN",
+    "memory-mcp": "MEMORY_MCP_SHARED_TOKEN",
+    "google-workspace-mcp-lite": "GOOGLE_MCP_SHARED_TOKEN",
+}
+
+
+def mcp_token(service: str) -> str:
+    var = MCP_TOKEN_VARS[service]
+    return service_env_values(service, (var,)).get(var, "")
+
+
+def mcp_rpc(service: str, method: str, params: dict | None = None,
+            token: str | None = None, timeout: float = 30) -> dict:
+    """One JSON-RPC call to a live MCP. Returns the parsed envelope."""
+    port = MCP_PORTS[service]
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
+                       "params": params or {}}).encode()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/mcp", data=body,
+        headers={"Content-Type": "application/json",
+                 **({"Authorization": f"Bearer {token}"} if token else {})})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read())
+        except Exception:
+            return {"error": {"code": exc.code, "message": exc.reason}}
+
+
+def tool_call(service: str, name: str, arguments: dict, token: str) -> tuple[bool, Any]:
+    """Call a tool. Returns (ok, payload) where payload is the decoded result."""
+    envelope = mcp_rpc(service, "tools/call",
+                       {"name": name, "arguments": arguments}, token)
+    if "error" in envelope:
+        return False, envelope["error"].get("message", envelope["error"])
+    result = envelope.get("result", {})
+    if result.get("isError"):
+        content = result.get("content") or [{}]
+        return False, content[0].get("text", "tool reported an error")
+    if "structuredContent" in result:
+        return True, result["structuredContent"]
+    content = result.get("content") or [{}]
+    text = content[0].get("text", "")
+    try:
+        return True, json.loads(text)
+    except Exception:
+        return True, text
+
+
+def smoke() -> int:
+    """Drive the assistant's real workflows and report what actually works."""
+    failures = 0
+    tokens = {service: mcp_token(service) for service in MCP_PORTS}
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        nonlocal failures
+        if ok:
+            report(OK, f"{name}{(' — ' + detail) if detail else ''}")
+        else:
+            failures += 1
+            report(FAIL, f"{name}{(' — ' + detail) if detail else ''}")
+
+    print("\n-- protocol --")
+    for service in MCP_PORTS:
+        envelope = mcp_rpc(service, "server/discover", token=tokens[service])
+        versions = (envelope.get("result") or {}).get("supportedVersions") or []
+        check(f"{service} discovery", "2026-07-28" in versions,
+              ", ".join(versions) if versions else str(envelope.get("error", "no response")))
+
+    # The regression that mattered most: with no token configured the check
+    # used to be skipped entirely, and an unauthenticated curl from the host
+    # returned real Gmail data. An MCP holds its bridge's credential, so
+    # failing open here launders that credential to any local process.
+    for service in MCP_PORTS:
+        envelope = mcp_rpc(service, "tools/list", token=None)
+        check(f"{service} refuses unauthenticated calls", "error" in envelope,
+              "ANSWERED WITHOUT A TOKEN" if "error" not in envelope else "")
+
+    print("\n-- tools --")
+    tool_map = load_tool_map()
+    for service in MCP_PORTS:
+        envelope = mcp_rpc(service, "tools/list", token=tokens[service])
+        tools = (envelope.get("result") or {}).get("tools") or []
+        names = [t.get("name") for t in tools]
+        check(f"{service} lists tools", bool(names), f"{len(names)} tools")
+        unmapped = [n for n in names if n not in tool_map]
+        # `not unmapped` is vacuously true for an empty list, so an MCP that
+        # returned nothing used to report its tools were all tiered.
+        check(f"{service} tools all tiered", bool(names) and not unmapped,
+              f"unmapped: {', '.join(unmapped)}" if unmapped else
+              ("" if names else "no tools to check"))
+
+    print("\n-- task workflow (test data, cleans up) --")
+    ok, projects = tool_call("vikunja-mcp", "list_projects", {}, tokens["vikunja-mcp"])
+    check("list projects", ok, "" if ok else str(projects))
+    project_id = None
+    if ok and isinstance(projects, list) and projects:
+        project_id = projects[0].get("id")
+
+    # A tool that declares an argument required must say so when it is absent,
+    # rather than failing somewhere inside the handler.
+    ok, message = tool_call("vikunja-mcp", "find_or_create_task",
+                            {"title": "missing project_id"}, tokens["vikunja-mcp"])
+    check("missing required argument is named", not ok and "project_id" in str(message),
+          str(message)[:80])
+
+    stamp = time.strftime("%H%M%S")
+    title = f"agentbox smoke {stamp}"
+    created = None
+    if project_id:
+        ok, created = tool_call("vikunja-mcp", "find_or_create_task",
+                                {"project_id": project_id, "title": title},
+                                tokens["vikunja-mcp"])
+        check("create task", ok, "" if ok else str(created))
+    else:
+        check("create task", False, "no project available to create in")
+    task_id = (created or {}).get("id") if isinstance(created, dict) else None
+
+    if task_id:
+        ok, found = tool_call("vikunja-mcp", "list_tasks", {"view": "lean"},
+                              tokens["vikunja-mcp"])
+        titles = [t.get("title") for t in (found or [])] if isinstance(found, list) else []
+        check("created task is listed", title in titles,
+              "" if title in titles else "not found in list_tasks")
+
+        ok, done = tool_call("vikunja-mcp", "complete_task", {"task_id": task_id},
+                             tokens["vikunja-mcp"])
+        check("complete task (cleanup)", ok, "" if ok else str(done))
+
+    print("\n-- projection --")
+    ok, lean = tool_call("vikunja-mcp", "list_tasks", {"view": "lean"}, tokens["vikunja-mcp"])
+    ok2, full = tool_call("vikunja-mcp", "list_tasks", {"view": "full"}, tokens["vikunja-mcp"])
+    if ok and ok2:
+        lean_bytes, full_bytes = len(json.dumps(lean)), len(json.dumps(full))
+        check("lean is smaller than full", lean_bytes < full_bytes,
+              f"{full_bytes} B -> {lean_bytes} B")
+    else:
+        check("lean is smaller than full", False, "could not fetch both views")
+
+    print("\n-- policy gate --")
+    # Gated by capability email_state_change. Refusal is the pass condition;
+    # this is the one place a *successful* call is the bug.
+    ok, message = tool_call("google-workspace-mcp-lite", "archive_gmail",
+                            {"message_id": "agentbox-smoke-nonexistent"},
+                            tokens["google-workspace-mcp-lite"])
+    check("gated tool is refused without a grant", not ok,
+          "ARCHIVED WITHOUT APPROVAL" if ok else "recorded for approval")
+    pending = Path(policy_state_dir()) / "pending" / "archive_gmail.json"
+    check("refusal is recorded for the operator", pending.exists())
+    if pending.exists():
+        try:
+            pending.unlink()
+        except OSError as exc:
+            report(WARN, f"could not clear smoke approval request: {exc}")
+
+    print("\n-- memory (proposals stay inert) --")
+    ok, created_proposal = tool_call("memory-mcp", "propose_memory",
+                                     {"statement": f"agentbox smoke test {stamp}"},
+                                     tokens["memory-mcp"])
+    check("propose memory", ok, "" if ok else str(created_proposal))
+    ok, proposals = tool_call("memory-mcp", "list_memory_proposals", {},
+                              tokens["memory-mcp"])
+    check("proposal is queued for review", ok and bool(proposals),
+          "" if ok else str(proposals))
+
+    # Reject it again as the operator, which both cleans up and exercises the
+    # half of the review gate the assistant is not allowed to reach: rejection
+    # needs a token that lives here and not in any container.
+    proposal_id = (created_proposal or {}).get("id") if isinstance(created_proposal, dict) else None
+    if proposal_id:
+        rejected = memory_decide("reject", proposal_id, "agentbox smoke") == 0
+        check("operator can reject the proposal", rejected)
+    else:
+        report(WARN, "no proposal id returned; clean up with `agentbox memory list`")
+
+    print("\n-- google (read-only) --")
+    ok, labels = tool_call("google-workspace-mcp-lite", "list_gmail_labels", {},
+                           tokens["google-workspace-mcp-lite"])
+    check("list gmail labels", ok, f"{len(labels)} labels" if ok and isinstance(labels, list) else str(labels)[:80])
+    ok, events = tool_call("google-workspace-mcp-lite", "list_calendar_events",
+                           {"view": "lean"}, tokens["google-workspace-mcp-lite"])
+    check("list calendar events", ok,
+          f"{len(events)} events" if ok and isinstance(events, list) else str(events)[:80])
+
+    print()
+    if failures:
+        report(FAIL, f"smoke: {failures} workflow(s) failed")
+        return 1
+    report(OK, "smoke: all workflows passed")
+    return 0
+
+
+def policy_state_dir() -> str:
+    return os.environ.get("AGENTBOX_POLICY_STATE_DIR",
+                          str(Path("~/.local/state/agentbox/policy-state").expanduser()))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="agentbox")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -936,6 +1156,7 @@ def main() -> None:
     dep.add_argument("service")
     dep.add_argument("--dry-run", action="store_true")
     sub.add_parser("doctor")
+    sub.add_parser("smoke", help="drive real workflows end to end against the running system")
     sub.add_parser("status")
     pol = sub.add_parser("policy")
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
@@ -980,6 +1201,8 @@ def main() -> None:
         sys.exit(deploy(args.service, args.dry_run))
     if args.cmd == "doctor":
         sys.exit(doctor())
+    if args.cmd == "smoke":
+        sys.exit(smoke())
     if args.cmd == "status":
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":

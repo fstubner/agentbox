@@ -216,7 +216,17 @@ runs through `cli/agentbox-approvals`, which asks in Discord out of band.
   hold.
 - **Cloud escalation** (not implemented): the intended pattern is
   escalate-on-failure (try the local model, escalate when validation fails),
-  gated by the approval policy — not an LLM-based tier classifier.
+  gated by the approval policy — not an LLM-based tier classifier. Likely
+  subsumed by harness dispatch, which generalises it.
+
+**This document records what exists. `docs/roadmap.md` records what was asked
+for and does not.** Keeping both here was a mistake: an architecture document
+has no natural place to describe something absent, so requested capabilities
+quietly stopped being tracked — self-reflection, Home Assistant, on-demand
+service building, self-extension by PR, and harness dispatch were all lost that
+way. The tell was in `policies/approval-policy.yaml`, which tiers seven
+capabilities (`draft_plans_issues_prs_skills`, `scaffold_service_for_review`
+and others) that no tool implements.
 
 ## Reference deployment
 

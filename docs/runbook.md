@@ -1,5 +1,31 @@
 # Runbook
 
+## Smoke test
+
+```
+cli/agentbox smoke
+```
+
+`doctor` answers "is everything up". This answers "does anything work" — it
+drives real workflows through the MCPs, the same path the assistant uses, and
+was worth writing immediately: it found on its first run that every tool
+published a `required` argument list that nothing enforced, so an omitted
+argument came back as `internal error: KeyError`.
+
+Safe to run against live accounts, deliberately:
+
+- **Vikunja** is test data, so it creates a task and completes it.
+- **Google** is real data, so it only reads. Nothing drafts, labels or archives.
+- **Memory** proposals are inert, so it proposes one and then rejects it as the
+  operator — which also exercises the half of the review gate the assistant
+  cannot reach.
+- The **policy gate** check passes when the call is *refused*. A success there
+  is the bug.
+
+Run it after any deploy. Every other test in `tests/` runs against fixtures, so
+this is the only thing that would notice a service that starts cleanly, passes
+readiness, and refuses every call.
+
 ## Health check
 ```
 cli/agentbox doctor

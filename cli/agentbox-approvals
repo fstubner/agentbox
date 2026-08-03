@@ -86,6 +86,10 @@ def discord(method: str, path: str, token: str, payload: dict | None = None):
         return None
 
 
+def log(message: str) -> None:
+    print(f"agentbox-approvals: {message}", flush=True)
+
+
 def pending_requests() -> list[dict]:
     if not PENDING.is_dir():
         return []
@@ -158,6 +162,10 @@ def main() -> int:
             if posted:
                 state.setdefault("announced", {})[tool] = int(time.time())
                 save_cursor(state)
+                log(f"asked about {tool} ({capability})")
+            else:
+                # Silence here once looked exactly like "the loop is broken".
+                log(f"could not post approval request for {tool}")
 
         params = f"?limit=25&after={state['last_id']}" if state.get("last_id") else "?limit=10"
         messages = discord("GET", f"/channels/{channel}/messages{params}", token) or []
@@ -186,6 +194,7 @@ def main() -> int:
             else:
                 discord("POST", f"/channels/{channel}/messages", token,
                         {"content": f"denied `{tool}`"})
+            log(f"{verb} {tool} from discord user {author.get('id')}")
             clear_pending(tool)
             state.get("announced", {}).pop(tool, None)
         save_cursor(state)
