@@ -121,6 +121,35 @@ cli/agentbox grants revoke archive_gmail
 
 Add `--repeatable` for a grant that survives repeated use until it expires.
 
+### Approving from Discord
+
+A refused call is recorded, so you are told rather than having to notice:
+
+```
+cli/agentbox approvals list      # what the assistant is waiting on
+cli/agentbox approvals clear     # drop requests you are not going to grant
+```
+
+`cli/agentbox-approvals` posts those requests to Discord and writes the grant
+when you reply `approve <tool>`. Run it as yourself, not as the agentbox user:
+
+```
+AGENTBOX_APPROVAL_CHANNEL_ID=<channel> cli/agentbox-approvals
+```
+
+It reads the bot token and the operator allowlist from
+`op://Agentbox/discord`, and needs `~/.config/agent-control-plane/1password.env`
+sourced or `OP_SERVICE_ACCOUNT_TOKEN` set.
+
+**Why a separate process rather than the assistant asking.** The assistant is in
+the same Discord, and an instruction embedded in an email can make it say
+anything — including a convincing request for its own approval. So the loop
+ignores every message a bot authored and every user outside the allowlist, and
+it never writes grants itself; it shells out to `agentbox grant`, which the
+assistant cannot run. MCP elicitation would do this natively, but the server
+would need a streaming transport it does not have, and `2026-07-28` replaces
+elicitation with MRTR anyway.
+
 Two directories back this, and the split is the security property:
 
 - `~/.local/state/agentbox/policy` → mounted **read-only** at `/policy`. Holds

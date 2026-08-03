@@ -203,11 +203,17 @@ def test_schemas_declare_the_json_schema_dialect():
     assert schema["$schema"] == mb.SCHEMA_DIALECT
 
 
-def test_tool_failures_are_tool_errors_not_protocol_errors():
+def test_tool_failures_are_tool_errors_not_protocol_errors(monkeypatch):
     """2025-11-25 (SEP-1303): input validation failures must come back as tool
     execution errors so the model can self-correct, not as JSON-RPC errors."""
     def bad(name, args):
         raise mb.ToolError("message_id is required")
+
+    # This test is about the shape of a tool failure, not the gate. policy_gate
+    # binds its paths as default arguments at import, so which policy file it
+    # sees depends on test module import order — pin the gate open here and let
+    # test_policy_gate own that behaviour.
+    monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
 
     cls = type("H", (mb.McpHandler,), {
         "service_name": "test-mcp", "shared_token": "secret",

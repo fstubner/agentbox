@@ -88,7 +88,12 @@ def test_unknown_tool_defaults_to_approval_required(tiers, grants, consumed, too
 def test_approval_required_denied_without_grant(tiers, grants, consumed, tool_map):
     with pytest.raises(pg.PolicyDenied) as exc:
         pg.check("archive_gmail", tiers, grants, consumed, tool_map)
-    assert "agentbox grant archive_gmail" in str(exc.value)
+    message = str(exc.value)
+    assert "requires operator approval" in message
+    # The message no longer tells the model a command to suggest. The operator
+    # is notified out of band; naming the command here invited the assistant to
+    # relay an instruction it should not be composing.
+    assert "agentbox grant" not in message
 
 
 def test_approval_required_passes_with_grant(tiers, grants, consumed, tool_map):
