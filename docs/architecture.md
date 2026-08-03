@@ -146,33 +146,50 @@ is time-boxed and single-use by default. See the runbook.
 
 ## MCP protocol version
 
-The MCP servers speak `2025-11-25`, negotiating down to `2025-06-18` if a client
-asks for it. The current specification is `2026-07-28`; we deliberately do not
-target it.
+The MCP servers are **dual-era**, the term the specification uses for a server
+that serves both revisions on one endpoint:
 
-`2026-07-28` removed the `initialize` handshake and made MCP stateless — every
-request carries its version and capabilities in `_meta` — and added a mandatory
-`server/discover` RPC. The gateway ships `mcp` 1.28.1, whose newest supported
-revision is `2025-11-25`. Advertising a version no client here can negotiate
-would break the only consumer we have.
+- **Modern (`2026-07-28`)** — the client declares its version in per-request
+  `_meta` under `io.modelcontextprotocol/protocolVersion`. No handshake. An
+  unsupported version returns `UnsupportedProtocolVersionError` (`-32022`)
+  listing what we do support, so the client can retry rather than guess.
+- **Legacy (`2025-11-25`, `2025-06-18`)** — the `initialize` handshake, which
+  is what the gateway uses today. It ships `mcp` 1.28.1, whose ceiling is
+  `2025-11-25`.
 
-Two things worth revisiting when the client moves:
+`initialize` negotiates only within the legacy set. Answering the handshake
+with `2026-07-28` would tell a client to speak a revision that has no
+handshake, which it has just demonstrated it expects.
 
-- **Multi Round-Trip Requests** (`resultType: "input_required"`). A server
-  returns the inputs it needs and the client retries with the answers. That is
-  the native form of runtime approval — `archive_gmail` could ask in the
-  conversation instead of directing the operator to a terminal. Elicitation is
-  the `2025-11-25` equivalent, but the gateway does not implement an
-  elicitation callback, so neither path is reachable today.
-- **`CacheableResult`** (`ttlMs`, `cacheScope` on `tools/list`). Tool schemas
-  are the largest fixed cost in this system at roughly 2,250 tokens per turn,
-  and this is the protocol's own answer to it. Only available at `2026-07-28`.
+Implemented from `2026-07-28`:
 
-Already adopted from `2025-11-25`: JSON Schema 2020-12 declared explicitly on
-tool schemas, and input-validation failures returned as tool execution errors
-rather than protocol errors so the model can self-correct. Tools are returned in
-deterministic order — a `2026-07-28` SHOULD, harmless at any version, and it
-helps prompt-cache hit rates on the largest fixed cost we have.
+- `server/discover` (a MUST) — supported versions, capabilities and identity in
+  one request, without a handshake.
+- `resultType` on every result, and `io.modelcontextprotocol/serverInfo` in
+  result `_meta`.
+- `ttlMs` and `cacheScope` on `tools/list` (`CacheableResult`), so a client can
+  hold the tool block rather than refetch it. Private scope: the list is
+  per-operator.
+- The `-32020..-32099` error allocation.
+
+Transport requirements, both MUSTs, both previously missing:
+
+- The `Origin` header is validated and a present-but-unlisted origin gets 403,
+  before authentication is even considered. This is the DNS-rebinding control
+  the specification names: a page in a browser on this host could otherwise
+  resolve an attacker domain to `127.0.0.1` and reach a local MCP server.
+- An unsupported `MCP-Protocol-Version` header is rejected. Absent is fine —
+  the spec says assume `2025-03-26`.
+
+`GET /mcp` returns 405, which the specification allows as the explicit way to
+say no SSE stream is offered here.
+
+Not implemented, and why: **MRTR** (`resultType: "input_required"`), which is
+how runtime approval is meant to work — the server returns the inputs it needs
+and the client retries with the answers. That would put approval in the
+conversation. It requires client support that does not exist yet; Hermes wires
+a sampling callback and has no elicitation handling at all. Until then approval
+runs through `cli/agentbox-approvals`, which asks in Discord out of band.
 
 ## Extension points
 
