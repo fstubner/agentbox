@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Google Workspace MCP: Gmail and Calendar over the google-workspace bridge.
 
 Sending is not exposed. Composing stops at a draft, which leaves the
@@ -6,15 +5,13 @@ irreversible step with a human who reads it in Gmail first.
 """
 from __future__ import annotations
 
-import json
-import os
-import urllib.error
-import urllib.request
+from mcp_base import ToolError, schema_object
+from integrations._client import bridge_client
 
-from mcp_base import McpHandler, ToolError, schema_object, serve
+_post_client = bridge_client("GOOGLE", "google-workspace-bridge", timeout=30)
 
-BRIDGE_URL = os.environ.get("GOOGLE_BRIDGE_URL", "http://google-workspace-bridge:8080").rstrip("/")
-BRIDGE_TOKEN = os.environ.get("GOOGLE_BRIDGE_TOKEN", "")
+def bridge_post(path, payload=None):
+    return _post_client("POST", path, payload=payload or {})
 
 VIEW = {"type": "string", "enum": ["full", "lean"], "default": "full",
         "description": "Use 'lean' for scheduling questions — returns only id, summary, "
@@ -51,24 +48,6 @@ ROUTES = {
 
 MODIFY = {"mark_gmail_read": "mark_read", "archive_gmail": "archive", "add_gmail_labels": "add_labels"}
 
-
-def bridge_post(path, payload=None):
-    if not BRIDGE_TOKEN:
-        raise ToolError("GOOGLE_BRIDGE_TOKEN is not configured")
-    data = json.dumps(payload or {}).encode("utf-8")
-    headers = {"Authorization": f"Bearer {BRIDGE_TOKEN}", "Accept": "application/json",
-               "Content-Type": "application/json"}
-    req = urllib.request.Request(f"{BRIDGE_URL}{path}", data=data, method="POST", headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return json.loads(raw.decode("utf-8")) if raw else None
-    except urllib.error.HTTPError as exc:
-        raise ToolError(f"bridge HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')[:500]}")
-    except urllib.error.URLError as exc:
-        raise ToolError(f"bridge connection failed: {exc.reason}")
-
-
 def dispatch(name, args):
     if name in ("list_gmail_labels", "list_calendars"):
         return bridge_post("/v1/gmail/labels/list" if name == "list_gmail_labels" else "/v1/calendar/list", {})
@@ -80,17 +59,3 @@ def dispatch(name, args):
     if name in ROUTES:
         return bridge_post(ROUTES[name], args)
     raise ToolError(f"unknown tool: {name}")
-
-
-class GoogleWorkspaceMcp(McpHandler):
-    service_name = "google-workspace-mcp-lite"
-    instructions = ("Use for Gmail triage and calendar reads. You cannot send mail or "
-                    "delete anything; compose drafts instead.")
-    tools = TOOLS
-    dispatch = staticmethod(dispatch)
-    bridge_url = BRIDGE_URL
-    shared_token = os.environ.get("GOOGLE_MCP_SHARED_TOKEN", "")
-
-
-if __name__ == "__main__":
-    serve(GoogleWorkspaceMcp)

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Home Assistant MCP — the assistant's view of the house.
 
 Fronts homeassistant-bridge, which holds the long-lived token and enforces what
@@ -13,16 +12,10 @@ same limits as a direct call.
 """
 from __future__ import annotations
 
-import json
-import os
-import urllib.error
-import urllib.parse
-import urllib.request
+from mcp_base import ToolError, schema_object
+from integrations._client import bridge_client
 
-from mcp_base import McpHandler, ToolError, schema_object, serve
-
-BRIDGE_URL = os.environ.get("HA_BRIDGE_URL", "http://homeassistant-bridge:8080")
-BRIDGE_TOKEN = os.environ.get("HA_BRIDGE_TOKEN", "")
+bridge_request = bridge_client("HA", "homeassistant-bridge", timeout=30)
 
 ENTITY_ID = {"type": "string",
              "description": "Home Assistant entity id, e.g. light.kitchen."}
@@ -160,34 +153,6 @@ TOOLS = [
          ["entity_id", "summary"])},
 ]
 
-
-def bridge_request(method, path, payload=None, query=None):
-    if not BRIDGE_TOKEN:
-        raise ToolError("HA_BRIDGE_TOKEN is not configured")
-    url = f"{BRIDGE_URL}{path}"
-    if query:
-        url += "?" + urllib.parse.urlencode({k: v for k, v in query.items()
-                                             if v not in (None, "")})
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    headers = {"Authorization": f"Bearer {BRIDGE_TOKEN}", "Accept": "application/json"}
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read()
-            return json.loads(raw.decode("utf-8")) if raw else None
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:400]
-        try:
-            detail = json.loads(detail).get("error", detail)
-        except ValueError:
-            pass
-        raise ToolError(detail)
-    except urllib.error.URLError as exc:
-        raise ToolError(f"home assistant bridge unreachable: {exc.reason}")
-
-
 def dispatch(name, args):
     if name == "list_home_entities":
         return bridge_request("GET", "/v1/entities", query={
@@ -222,18 +187,3 @@ def dispatch(name, args):
         return bridge_request("POST", "/v1/climate", payload={
             "entity_id": args["entity_id"], "temperature": args["temperature"]})
     raise ToolError(f"unknown tool: {name}")
-
-
-class HomeAssistantMcp(McpHandler):
-    service_name = "homeassistant-mcp"
-    instructions = ("Read and control the house through Home Assistant. "
-                    "Control is limited to entities the operator has "
-                    "allowlisted; locks, alarms and covers are never actuated.")
-    tools = TOOLS
-    dispatch = staticmethod(dispatch)
-    bridge_url = BRIDGE_URL
-    shared_token = os.environ.get("HA_MCP_SHARED_TOKEN", "")
-
-
-if __name__ == "__main__":
-    serve(HomeAssistantMcp)

@@ -26,7 +26,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 BASE_APP = REPO / "services" / "templates" / "bridge" / "app"
 BRIDGE = REPO / "services" / "compose" / "memory-bridge" / "app" / "bridge.py"
-MCP = REPO / "services" / "compose" / "memory-mcp" / "app" / "server.py"
+MCP = REPO / "services" / "compose" / "agentbox-mcp" / "app" / "integrations" / "memory.py"
 
 sys.path.insert(0, str(BASE_APP))
 

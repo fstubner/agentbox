@@ -231,8 +231,8 @@ def test_the_bridge_declares_its_capabilities():
 def test_tool_descriptions_say_proposals_do_not_ship():
     """A model that believes it has shipped will tell the operator the work is
     done, and the operator will believe it."""
-    src = (REPO / "services" / "compose" / "builder-mcp" / "app"
-           / "server.py").read_text()
+    src = (REPO / "services" / "compose" / "agentbox-mcp" / "app"
+           / "integrations" / "builder.py").read_text()
     assert "does NOT merge" in src and "does NOT deploy" in src
 
 

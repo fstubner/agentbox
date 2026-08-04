@@ -66,7 +66,7 @@ def _write(record: dict) -> None:
 
 def record(service: str, tool: str, outcome: str, *, capability: str = "",
            arguments: dict | None = None, ms: float = 0.0, size: int = 0,
-           detail: str = "") -> None:
+           detail: str = "", identity: str = "") -> None:
     """Append one tool-call outcome.
 
     `detail` must be a class name or a short fixed reason, never an upstream
@@ -82,6 +82,11 @@ def record(service: str, tool: str, outcome: str, *, capability: str = "",
     }
     if capability:
         entry["capability"] = capability
+    if identity:
+        # Who acted. An identity name, never a token; with several people on
+        # one gateway, a journal that cannot say whose call it was cannot
+        # support a per-person reflection or a per-person tier argument.
+        entry["identity"] = identity
     if size:
         entry["bytes"] = size
     if detail:

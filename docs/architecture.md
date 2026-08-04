@@ -11,17 +11,19 @@ flowchart TD
     subgraph assistant[Assistant request path]
         gw["Hermes gateway<br/><small>isolated user · no shell</small>"]
         gw --> models["Local models<br/><small>:1234 main · :1240 vision</small>"]
-        gw --> tmcp["tasks mcp :3467<br/><small>policy gate</small>"]
-        gw --> mmcp["memory mcp :3472<br/><small>policy gate</small>"]
-        gw --> gmcp["google mcp :3473<br/><small>policy gate</small>"]
-        tmcp --> tbr["tasks bridge :3466<br/><small>holds credential</small>"]
-        mmcp --> mbr["memory bridge :3471<br/><small>review gate</small>"]
-        gmcp --> gbr["google bridge :3470<br/><small>holds oauth token</small>"]
+        gw --> amcp["agentbox-mcp :3465<br/><small>one gate · identity-aware<br/>bridge tokens only</small>"]
+        amcp --> tbr["tasks bridge :3466<br/><small>holds credential</small>"]
+        amcp --> mbr["memory bridge :3471<br/><small>review gate</small>"]
+        amcp --> gbr["google bridge :3470<br/><small>holds oauth token</small>"]
+        amcp --> bbr["builder bridge :3474<br/><small>holds a repo clone</small>"]
+        amcp --> hbr["home bridge :3476<br/><small>holds ha token</small>"]
     end
 
     tbr --> vik[(Vikunja :3456)]
     mbr --> mem[(memory store)]
     gbr --> goog[Google APIs]
+    bbr --> clone[(builder clone)]
+    hbr --> ha[(Home Assistant :8123)]
 
     subgraph evaluator[Evaluator infrastructure — not in the assistant path]
         router["role router :8765"] --> ctx["fastcontext :1235"]
@@ -36,10 +38,8 @@ flowchart TD
 
     cli -.-> pol
     cli -.-> grant
-    pol -.-> tmcp
-    pol -.-> mmcp
-    pol -.-> gmcp
-    grant -.-> gmcp
+    pol -.-> amcp
+    grant -.-> amcp
 ```
 
 Solid edges are the live request path. Dotted edges are configuration the
@@ -136,13 +136,19 @@ One file, `policies/approval-policy.yaml`, covering both actors. Semantics:
 Enforced in three places against that one file:
 
 - `cli/agentbox policy check` — operator actions.
-- **MCP**, at the single `tool_call` dispatch point. Checks *without consuming*
-  a single-use grant, so a denial is fast and names the tool.
+- **The MCP gateway**, at the single `tool_call` dispatch point. Checks
+  *without consuming* a single-use grant, so a denial is fast and names the
+  tool. One process for every integration: policy replicated per-service is the
+  opposite of a policy enforcement point, and five copies is how the fail-open
+  auth bug shipped in the first place.
 - **Bridge**, authoritatively. Each bridge declares the capability an incoming
   request exercises and consumes the grant.
 
-Two gates, because the MCP holds the bridge's token: gate and credential in one
-process means compromising it defeats both. The bridge gate sits in the process
+Two gates, because the gateway holds bridge tokens: gate and credential in one
+process means compromising it defeats both. The gateway never holds an upstream
+credential — a leak there costs a scoped, local, revocable bridge token rather
+than a permanent handle on somebody's mail, which is why consolidating the MCPs
+is safe while consolidating the *bridges* would not be. The bridge gate sits in the process
 the compromised one cannot bypass, so holding the credential is not sufficient
 to use it. The idea is borrowed from OpenShell, where egress enforcement lives
 outside the sandbox rather than inside the agent.
@@ -269,3 +275,33 @@ memory) running Ubuntu Server with llama.cpp (Vulkan) serving a ~35B MoE
 model at up to 200K context, plus two small worker models. Any machine that
 can serve an OpenAI-compatible endpoint works; the router and CLI are
 stdlib-only Python.
+
+## Identity
+
+The gateway serves one or more identities, configured as
+`AGENTBOX_IDENTITIES=alex:tokenA,sarah:tokenB`. **Which identity is calling is
+decided by which bearer token was presented** — resolved before any tool runs,
+and never read from a tool argument.
+
+That is the whole property. If the assistant could name the identity it wanted
+to act as, an instruction embedded in an email could name one too, and a single
+compromised context would reach both people's accounts. Because identity *is*
+the credential, a process holding one person's token cannot act as anyone else:
+the other credential is not there to present. Identity is bound to the session,
+not to a parameter, and `tests/test_gateway_identity.py` asserts that no
+argument — `identity`, `as`, or anything else — can change it.
+
+Downstream, identity does three things:
+
+- **routes** the call, via `GOOGLE_BRIDGE_URL_<NAME>` / `_TOKEN_<NAME>`, so each
+  person's mail credential lives in a separate bridge container. Unset falls
+  back to the shared bridge, which is correct for genuinely shared services like
+  tasks;
+- **travels** to the bridge as `X-Agentbox-Identity`, where the authoritative
+  gate matches identity-scoped grants (`agentbox grant <tool> --for alex`).
+  Unscoped grants cover anyone, which is how every pre-identity grant behaves;
+- **is recorded** in the outcome journal, so reflection and any future tier
+  argument can tell whose calls they are reading.
+
+With no identities configured the gateway falls back to one shared token and no
+identity — exactly the single-operator behaviour that predates this.

@@ -160,10 +160,12 @@ def test_unexpected_error_does_not_leak_a_traceback():
         server.shutdown()
 
 
-def test_every_mcp_reads_its_token_from_env_not_hardcoded():
-    for mcp in ("vikunja-mcp", "memory-mcp", "google-workspace-mcp-lite"):
-        src = (REPO / "services" / "compose" / mcp / "app" / "server.py").read_text()
-        assert "shared_token = os.environ.get(" in src, mcp
+def test_the_gateway_reads_its_tokens_from_env_not_hardcoded():
+    """One gateway now, but the property is unchanged: no credential literal in
+    source. Identity tokens come from the environment too."""
+    src = (REPO / "services" / "compose" / "agentbox-mcp" / "app" / "server.py").read_text()
+    assert "shared_token = os.environ.get(" in src
+    assert 'os.environ.get("AGENTBOX_IDENTITIES"' in src
 
 
 # --- protocol conformance ---------------------------------------------------

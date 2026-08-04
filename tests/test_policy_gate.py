@@ -176,11 +176,19 @@ def test_every_live_mcp_tool_is_mapped(tool_map):
     """An unmapped tool fails closed, but silently — catch it here."""
     import re
     tiered = set(tool_map)
-    for mcp in ("vikunja-mcp", "memory-mcp", "google-workspace-mcp-lite"):
-        src = (REPO / "services" / "compose" / mcp / "app" / "server.py").read_text()
+    integrations = REPO / "services" / "compose" / "agentbox-mcp" / "app" / "integrations"
+    seen = 0
+    for module in sorted(integrations.glob("*.py")):
+        if module.name.startswith("_"):
+            continue
+        src = module.read_text()
+        if "TOOLS = [" not in src:
+            continue
         block = src.split("TOOLS = [", 1)[1].split("\ndef ", 1)[0]
         for name in re.findall(r'"name":\s*"([a-z_]+)"', block):
-            assert name in tiered, f"{mcp} exposes untiered tool: {name}"
+            seen += 1
+            assert name in tiered, f"{module.stem} exposes untiered tool: {name}"
+    assert seen > 30, f"only found {seen} tools; the glob is probably wrong"
 
 
 # --- bridge-side authoritative enforcement ----------------------------------

@@ -237,8 +237,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         if policy_gate is None:
             raise BridgeError(503, "policy enforcement unavailable; refusing a gated request")
+        # The gateway asserts who is calling. Trusted because only the gateway
+        # can present the bridge token — the caller of this bridge IS the
+        # gateway, and the header is its statement of which session it is
+        # serving. Identity-scoped grants match against it; absent means the
+        # legacy single-operator path and matches only unscoped grants.
+        identity = self.headers.get("X-Agentbox-Identity", "").strip() or None
         try:
-            policy_gate.check_capability(capability, subject=path)
+            policy_gate.check_capability(capability, subject=path,
+                                         identity=identity)
         except policy_gate.PolicyDenied as exc:
             raise BridgeError(403, str(exc))
 

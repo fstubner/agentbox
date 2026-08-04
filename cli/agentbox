@@ -323,17 +323,10 @@ ENDPOINTS = {
     "router": ("http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health", WARN),
     "context worker": ("http://127.0.0.1:1235/v1/models", WARN),
     "reason worker": ("http://127.0.0.1:1236/v1/models", WARN),
-    "vikunja-mcp": ("http://127.0.0.1:3467/health", FAIL),
-    "memory-mcp": ("http://127.0.0.1:3472/health", FAIL),
-    "google-workspace-mcp-lite": ("http://127.0.0.1:3473/health", FAIL),
+    "agentbox-mcp": ("http://127.0.0.1:3465/health", FAIL),
     # The builder is not on the assistant's critical path — it proposes code,
     # it does not serve a request. A warning, so an outage here never masks one
     # that stops the assistant working.
-    "builder-mcp": ("http://127.0.0.1:3475/health", WARN),
-    # Optional: not every deployment has a house attached. WARN so a box
-    # without Home Assistant is not permanently red, which is how a check
-    # stops being read.
-    "homeassistant-mcp": ("http://127.0.0.1:3477/health", WARN),
     "vision model": ("http://127.0.0.1:1240/v1/models", WARN),
     "control plane api": ("http://127.0.0.1:8000/api/evals/health", WARN),
     "control plane ui": ("http://127.0.0.1:4321/", WARN),
@@ -347,18 +340,7 @@ BRIDGE_READY_PORTS = {
     "vikunja-bridge": 3466,
     "memory-bridge": 3471,
     "google-workspace-bridge": 3470,
-    # MCP readiness is transitive: each probes the bridge it fronts, which
-    # probes its own upstream. Without these, a broken bridge is invisible from
-    # the layer the assistant actually talks to.
-    "vikunja-mcp": 3467,
-    "memory-mcp": 3472,
-    "google-workspace-mcp-lite": 3473,
-    "builder-bridge": 3474,
-    "builder-mcp": 3475,
-    # Undeployed reports "refused; is it deployed?" as a warning; deployed but
-    # unable to reach Home Assistant is a real failure.
-    "homeassistant-bridge": 3476,
-    "homeassistant-mcp": 3477,
+    "agentbox-mcp": 3465,
 }
 
 
@@ -382,59 +364,49 @@ GATEWAY_CONFIG = os.environ.get("AGENTBOX_GATEWAY_CONFIG",
 
 
 def gateway_tool_visibility() -> int:
+    """Check the gateway can see every tool the MCP gateway serves.
+
+    Before consolidation this compared five per-server `include` allowlists
+    against five MCPs, and it earned its keep — a tool missing from one was
+    invisible to the assistant, not refused and not logged. With one endpoint
+    and no allowlist the failure mode changes: the policy is the only gate, so
+    what matters now is that the gateway is actually pointed at the gateway and
+    that the tool count matches what the service assembles.
+    """
     try:
-        lines = Path(GATEWAY_CONFIG).read_text(encoding="utf-8").splitlines()
+        text = Path(GATEWAY_CONFIG).read_text(encoding="utf-8")
     except OSError:
         report(WARN, f"gateway config not readable ({GATEWAY_CONFIG}); "
                      "cannot check which tools the assistant can see")
         return 0
 
-    live: dict[str, set[str]] = {}
-    for service, port in (("vikunja-mcp", "3467"), ("memory-mcp", "3472"),
-                          ("google-workspace-mcp-lite", "3473"),
-                          ("builder-mcp", "3475")):
-        server = REPO / "services" / "compose" / service / "app" / "server.py"
-        if not server.exists():
-            continue
-        block = server.read_text(encoding="utf-8").split("TOOLS = [", 1)
-        if len(block) < 2:
-            continue
-        live[port] = set(re.findall(r'"name":\s*"([a-z_]+)"',
-                                    block[1].split("\ndef ", 1)[0]))
+    port = os.environ.get("AGENTBOX_MCP_PORT", "3465")
+    if f"127.0.0.1:{port}/mcp" not in text:
+        report(WARN, f"gateway config does not point at the MCP gateway on "
+                     f":{port}; the assistant may be using retired endpoints")
+        return 0
 
-    allowed: dict[str, set[str]] = {}
-    port: str | None = None
-    in_servers = False
-    for line in lines:
-        if line.rstrip() == "mcp_servers:":
-            in_servers = True
-            continue
-        if in_servers and line and not line.startswith(" "):
-            break
-        if not in_servers:
-            continue
-        match = re.search(r"url: http://127\.0\.0\.1:(\d+)/mcp", line)
-        if match:
-            port = match.group(1)
-            allowed.setdefault(port, set())
-            continue
-        match = re.match(r"^      - ([a-z_]+)\s*$", line)
-        if match and port:
-            allowed[port].add(match.group(1))
+    stale = [p for p in ("3467", "3472", "3473", "3475", "3477")
+             if f"127.0.0.1:{p}/mcp" in text]
+    if stale:
+        report(WARN, "gateway config still references retired per-service MCPs: "
+                     + ", ".join(stale))
 
-    problems = 0
-    for port, tools in sorted(live.items()):
-        listed = allowed.get(port, set())
-        invisible = sorted(tools - listed)
-        stale = sorted(listed - tools)
-        if invisible:
-            problems += 1
-            report(WARN, f"MCP :{port} — invisible to the assistant: {', '.join(invisible)}")
-        if stale:
-            problems += 1
-            report(WARN, f"MCP :{port} — allowlisted but no longer exists: {', '.join(stale)}")
-    if not problems:
-        report(OK, f"gateway tool allowlists match all {sum(len(t) for t in live.values())} live tools")
+    served = 0
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
+            served = json.loads(r.read()).get("tools", 0)
+    except Exception:  # noqa: BLE001
+        pass
+    # An `include` list is optional now, but if one exists it silently narrows
+    # what the assistant sees — the exact failure this check was written for.
+    includes = re.findall(r"^      - ([a-z_]+)\s*$", text, re.M)
+    if includes and served and len(includes) < served:
+        report(WARN, f"gateway allowlists {len(includes)} of {served} tools; "
+                     f"the rest are invisible to the assistant")
+        return 0
+    report(OK, f"gateway points at the MCP gateway on :{port}"
+               + (f"; {served} tools served" if served else ""))
     return 0
 
 
@@ -969,7 +941,7 @@ def record_decision(actor: str, action: str, subject: str, detail: str = "") -> 
         report(WARN, f"could not record decision: {exc}")
 
 
-def grant(tool: str, ttl: str, repeatable: bool) -> int:
+def grant(tool: str, ttl: str, repeatable: bool, identity: str = "") -> int:
     tiers = load_runtime_tiers()
     capability = load_tool_map().get(tool)
     if capability is None:
@@ -990,11 +962,18 @@ def grant(tool: str, ttl: str, repeatable: bool) -> int:
             existing = []
     now = int(time.time())
     existing = [g for g in existing if float(g.get("expires_at", 0)) > now]
-    existing.append({"tool": tool, "expires_at": now + seconds,
-                     "single_use": not repeatable, "granted_at": now})
+    record = {"tool": tool, "expires_at": now + seconds,
+              "single_use": not repeatable, "granted_at": now}
+    if identity:
+        # Scoped: covers only this identity. Unscoped covers anyone, which is
+        # the single-operator behaviour every pre-identity grant has.
+        record["identity"] = identity
+    existing.append(record)
     GRANTS_PATH.write_text(json.dumps({"grants": existing}, indent=2), encoding="utf-8")
     GRANTS_PATH.chmod(0o644)
     scope = "repeatable" if repeatable else "single-use"
+    if identity:
+        scope += f", for {identity}"
     record_decision("operator", "approve", tool, scope)
     report(OK, f"granted {tool} for {seconds}s ({scope})")
     return 0
@@ -1201,16 +1180,21 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
 # Port and the env var each MCP reads its token from. The names are not
 # uniform — every service picked its own prefix — so this mapping is the only
 # place that knows, rather than each caller guessing.
-MCP_PORTS = {"vikunja-mcp": 3467, "memory-mcp": 3472,
-             "google-workspace-mcp-lite": 3473, "builder-mcp": 3475,
-             "homeassistant-mcp": 3477}
-MCP_TOKEN_VARS = {
-    "vikunja-mcp": "VIKUNJA_MCP_SHARED_TOKEN",
-    "memory-mcp": "MEMORY_MCP_SHARED_TOKEN",
-    "google-workspace-mcp-lite": "GOOGLE_MCP_SHARED_TOKEN",
-    "builder-mcp": "BUILDER_MCP_SHARED_TOKEN",
-    "homeassistant-mcp": "HA_MCP_SHARED_TOKEN",
-}
+MCP_PORTS = {"agentbox-mcp": 3465}
+MCP_TOKEN_VARS = {"agentbox-mcp": "AGENTBOX_MCP_SHARED_TOKEN"}
+
+
+def smoke_token(service: str) -> str:
+    """The gateway may be identity-aware, in which case the shared token is
+    refused and smoke must present a real identity's token instead."""
+    values = service_env_values(service, ("AGENTBOX_MCP_SHARED_TOKEN",
+                                          "AGENTBOX_IDENTITIES"))
+    identities = values.get("AGENTBOX_IDENTITIES", "").strip()
+    if identities:
+        first = identities.split(",")[0]
+        if ":" in first:
+            return first.split(":", 1)[1].strip()
+    return values.get("AGENTBOX_MCP_SHARED_TOKEN", "")
 
 
 def mcp_token(service: str) -> str:
@@ -1268,7 +1252,7 @@ def tool_call(service: str, name: str, arguments: dict, token: str) -> tuple[boo
 def smoke() -> int:
     """Drive the assistant's real workflows and report what actually works."""
     failures = 0
-    tokens = {service: mcp_token(service) for service in MCP_PORTS}
+    tokens = {service: smoke_token(service) for service in MCP_PORTS}
 
     def check(name: str, ok: bool, detail: str = "") -> None:
         nonlocal failures
@@ -1315,7 +1299,7 @@ def smoke() -> int:
               ("" if names else "no tools to check"))
 
     print("\n-- task workflow (test data, cleans up) --")
-    ok, projects = tool_call("vikunja-mcp", "list_projects", {}, tokens["vikunja-mcp"])
+    ok, projects = tool_call("agentbox-mcp", "list_projects", {}, tokens["agentbox-mcp"])
     check("list projects", ok, "" if ok else str(projects))
     project_id = None
     if ok and isinstance(projects, list) and projects:
@@ -1323,8 +1307,8 @@ def smoke() -> int:
 
     # A tool that declares an argument required must say so when it is absent,
     # rather than failing somewhere inside the handler.
-    ok, message = tool_call("vikunja-mcp", "find_or_create_task",
-                            {"title": "missing project_id"}, tokens["vikunja-mcp"])
+    ok, message = tool_call("agentbox-mcp", "find_or_create_task",
+                            {"title": "missing project_id"}, tokens["agentbox-mcp"])
     check("missing required argument is named", not ok and "project_id" in str(message),
           str(message)[:80])
 
@@ -1332,28 +1316,28 @@ def smoke() -> int:
     title = f"agentbox smoke {stamp}"
     created = None
     if project_id:
-        ok, created = tool_call("vikunja-mcp", "find_or_create_task",
+        ok, created = tool_call("agentbox-mcp", "find_or_create_task",
                                 {"project_id": project_id, "title": title},
-                                tokens["vikunja-mcp"])
+                                tokens["agentbox-mcp"])
         check("create task", ok, "" if ok else str(created))
     else:
         check("create task", False, "no project available to create in")
     task_id = (created or {}).get("id") if isinstance(created, dict) else None
 
     if task_id:
-        ok, found = tool_call("vikunja-mcp", "list_tasks", {"view": "lean"},
-                              tokens["vikunja-mcp"])
+        ok, found = tool_call("agentbox-mcp", "list_tasks", {"view": "lean"},
+                              tokens["agentbox-mcp"])
         titles = [t.get("title") for t in (found or [])] if isinstance(found, list) else []
         check("created task is listed", title in titles,
               "" if title in titles else "not found in list_tasks")
 
-        ok, done = tool_call("vikunja-mcp", "complete_task", {"task_id": task_id},
-                             tokens["vikunja-mcp"])
+        ok, done = tool_call("agentbox-mcp", "complete_task", {"task_id": task_id},
+                             tokens["agentbox-mcp"])
         check("complete task (cleanup)", ok, "" if ok else str(done))
 
     print("\n-- projection --")
-    ok, lean = tool_call("vikunja-mcp", "list_tasks", {"view": "lean"}, tokens["vikunja-mcp"])
-    ok2, full = tool_call("vikunja-mcp", "list_tasks", {"view": "full"}, tokens["vikunja-mcp"])
+    ok, lean = tool_call("agentbox-mcp", "list_tasks", {"view": "lean"}, tokens["agentbox-mcp"])
+    ok2, full = tool_call("agentbox-mcp", "list_tasks", {"view": "full"}, tokens["agentbox-mcp"])
     if ok and ok2:
         lean_bytes, full_bytes = len(json.dumps(lean)), len(json.dumps(full))
         check("lean is smaller than full", lean_bytes < full_bytes,
@@ -1364,9 +1348,9 @@ def smoke() -> int:
     print("\n-- policy gate --")
     # Gated by capability email_state_change. Refusal is the pass condition;
     # this is the one place a *successful* call is the bug.
-    ok, message = tool_call("google-workspace-mcp-lite", "archive_gmail",
+    ok, message = tool_call("agentbox-mcp", "archive_gmail",
                             {"message_id": "agentbox-smoke-nonexistent"},
-                            tokens["google-workspace-mcp-lite"])
+                            tokens["agentbox-mcp"])
     check("gated tool is refused without a grant", not ok,
           "ARCHIVED WITHOUT APPROVAL" if ok else "recorded for approval")
     pending = Path(policy_state_dir()) / "pending" / "archive_gmail.json"
@@ -1378,12 +1362,12 @@ def smoke() -> int:
             report(WARN, f"could not clear smoke approval request: {exc}")
 
     print("\n-- memory (proposals stay inert) --")
-    ok, created_proposal = tool_call("memory-mcp", "propose_memory",
+    ok, created_proposal = tool_call("agentbox-mcp", "propose_memory",
                                      {"statement": f"agentbox smoke test {stamp}"},
-                                     tokens["memory-mcp"])
+                                     tokens["agentbox-mcp"])
     check("propose memory", ok, "" if ok else str(created_proposal))
-    ok, proposals = tool_call("memory-mcp", "list_memory_proposals", {},
-                              tokens["memory-mcp"])
+    ok, proposals = tool_call("agentbox-mcp", "list_memory_proposals", {},
+                              tokens["agentbox-mcp"])
     check("proposal is queued for review", ok and bool(proposals),
           "" if ok else str(proposals))
 
@@ -1398,8 +1382,8 @@ def smoke() -> int:
         report(WARN, "no proposal id returned; clean up with `agentbox memory list`")
 
     print("\n-- builder (proposes code; must never ship it) --")
-    ok, listing = tool_call("builder-mcp", "list_repo_files",
-                            {"prefix": "docs/", "limit": 5}, tokens["builder-mcp"])
+    ok, listing = tool_call("agentbox-mcp", "list_repo_files",
+                            {"prefix": "docs/", "limit": 5}, tokens["agentbox-mcp"])
     check("assistant can read the repo", ok,
           f"{(listing or {}).get('total', 0)} files under docs/" if ok else str(listing)[:80])
 
@@ -1408,23 +1392,23 @@ def smoke() -> int:
     for guarded in ("policies/approval-policy.yaml",
                     "services/templates/mcp/policy_gate.py",
                     "cli/agentbox"):
-        ok, message = tool_call("builder-mcp", "propose_change", {
+        ok, message = tool_call("agentbox-mcp", "propose_change", {
             "branch": "smoke-must-be-refused", "message": "smoke test",
             "files": [{"path": guarded, "content": "smoke\n"}]},
-            tokens["builder-mcp"])
+            tokens["agentbox-mcp"])
         check(f"refuses to edit {guarded}", not ok,
               "PROPOSED A CHANGE TO ITS OWN GUARDRAILS" if ok else "refused")
 
-    ok, message = tool_call("builder-mcp", "propose_change", {
+    ok, message = tool_call("agentbox-mcp", "propose_change", {
         "branch": "smoke-escape", "message": "smoke test",
         "files": [{"path": "../../etc/passwd", "content": "smoke\n"}]},
-        tokens["builder-mcp"])
+        tokens["agentbox-mcp"])
     check("refuses paths outside the repo", not ok,
           "WROTE OUTSIDE THE REPO" if ok else "refused")
 
     print("\n-- self-reflection --")
-    ok, window = tool_call("memory-mcp", "review_own_activity", {"days": 7},
-                           tokens["memory-mcp"])
+    ok, window = tool_call("agentbox-mcp", "review_own_activity", {"days": 7},
+                           tokens["agentbox-mcp"])
     check("assistant can read its own activity", ok, "" if ok else str(window))
     if ok and isinstance(window, dict):
         tools_seen = window.get("tools") or {}
@@ -1439,11 +1423,11 @@ def smoke() -> int:
               f"found: {leaked}" if leaked else "counts only")
 
     print("\n-- google (read-only) --")
-    ok, labels = tool_call("google-workspace-mcp-lite", "list_gmail_labels", {},
-                           tokens["google-workspace-mcp-lite"])
+    ok, labels = tool_call("agentbox-mcp", "list_gmail_labels", {},
+                           tokens["agentbox-mcp"])
     check("list gmail labels", ok, f"{len(labels)} labels" if ok and isinstance(labels, list) else str(labels)[:80])
-    ok, events = tool_call("google-workspace-mcp-lite", "list_calendar_events",
-                           {"view": "lean"}, tokens["google-workspace-mcp-lite"])
+    ok, events = tool_call("agentbox-mcp", "list_calendar_events",
+                           {"view": "lean"}, tokens["agentbox-mcp"])
     check("list calendar events", ok,
           f"{len(events)} events" if ok and isinstance(events, list) else str(events)[:80])
 
@@ -1494,6 +1478,9 @@ def main() -> None:
     gr.add_argument("--ttl", default="15m", help="e.g. 30s, 15m, 2h (default 15m)")
     gr.add_argument("--repeatable", action="store_true",
                     help="allow repeated use until expiry instead of single-use")
+    gr.add_argument("--for", dest="identity", default="",
+                    help="scope the grant to one identity (e.g. alex); "
+                         "unscoped grants cover anyone")
     ap = sub.add_parser("approvals", help="what the assistant is waiting on")
     ap_sub = ap.add_subparsers(dest="approvals_cmd", required=True)
     ap_sub.add_parser("list")
@@ -1537,7 +1524,7 @@ def main() -> None:
     if args.cmd == "scaffold":
         sys.exit(scaffold(args.name, args.port, args.upstream_env))
     if args.cmd == "grant":
-        sys.exit(grant(args.tool, args.ttl, args.repeatable))
+        sys.exit(grant(args.tool, args.ttl, args.repeatable, args.identity))
     if args.cmd == "approvals":
         sys.exit(approvals_list() if args.approvals_cmd == "list"
                  else approvals_clear(args.tool))

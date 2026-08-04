@@ -192,6 +192,19 @@ a live instance — that is the one thing outstanding.
 
 ### 7. Two accounts — household shared, personal private
 
+**Foundation built 2026-08-04.** The MCP gateway is identity-aware: identity is
+the presented token, resolved before any tool runs, never readable from a tool
+argument. It routes per-identity to separate bridges, travels to the bridge as
+`X-Agentbox-Identity` for identity-scoped grants, and is recorded in the outcome
+journal. `tests/test_gateway_identity.py` asserts no argument can change it.
+
+What remains for two real accounts: a second Google bridge holding Sarah's
+credential, memory partitioned by owner with a `household` scope, the Discord
+loop resolving her user id to an identity, and the own-account approval rule
+with its named-exception allowlist.
+
+#### Original decision
+
 Decided 2026-08-03. **Order: after Home Assistant, before harness dispatch.**
 
 Today the system has no notion of who is asking — zero references to a

@@ -1,0 +1,88 @@
+services:
+  agentbox-mcp:
+    build:
+      context: ../../..
+      dockerfile: services/compose/agentbox-mcp/Dockerfile
+    image: agentbox/agentbox-mcp:local
+    environment:
+      # Identity-aware auth. `alex:tokenA,sarah:tokenB` — the presented token
+      # IS the identity, resolved before any tool runs and never taken from a
+      # tool argument. Leave empty for single-operator, which falls back to
+      # AGENTBOX_MCP_SHARED_TOKEN with no identity.
+      AGENTBOX_IDENTITIES: "${AGENTBOX_IDENTITIES:-}"
+      AGENTBOX_MCP_SHARED_TOKEN: "${AGENTBOX_MCP_SHARED_TOKEN:-}"
+
+      # Bridge tokens. Scoped, local, revocable — never an upstream credential.
+      VIKUNJA_BRIDGE_URL: "${VIKUNJA_BRIDGE_URL:-http://vikunja-bridge:8080}"
+      VIKUNJA_BRIDGE_TOKEN: "${VIKUNJA_BRIDGE_TOKEN:-}"
+      MEMORY_BRIDGE_URL: "${MEMORY_BRIDGE_URL:-http://memory-bridge:8080}"
+      MEMORY_BRIDGE_TOKEN: "${MEMORY_BRIDGE_TOKEN:-}"
+      GOOGLE_BRIDGE_URL: "${GOOGLE_BRIDGE_URL:-http://google-workspace-bridge:8080}"
+      GOOGLE_BRIDGE_TOKEN: "${GOOGLE_BRIDGE_TOKEN:-}"
+      BUILDER_BRIDGE_URL: "${BUILDER_BRIDGE_URL:-http://builder-bridge:8080}"
+      BUILDER_BRIDGE_TOKEN: "${BUILDER_BRIDGE_TOKEN:-}"
+      HA_BRIDGE_URL: "${HA_BRIDGE_URL:-http://homeassistant-bridge:8080}"
+      HA_BRIDGE_TOKEN: "${HA_BRIDGE_TOKEN:-}"
+
+      # Per-identity overrides. Set GOOGLE_BRIDGE_URL_SARAH and
+      # GOOGLE_BRIDGE_TOKEN_SARAH to route her mail to a bridge holding only
+      # her credential. Unset falls back to the shared bridge above, which is
+      # correct for genuinely shared services like tasks.
+      GOOGLE_BRIDGE_URL_ALEX: "${GOOGLE_BRIDGE_URL_ALEX:-}"
+      GOOGLE_BRIDGE_TOKEN_ALEX: "${GOOGLE_BRIDGE_TOKEN_ALEX:-}"
+      GOOGLE_BRIDGE_URL_SARAH: "${GOOGLE_BRIDGE_URL_SARAH:-}"
+      GOOGLE_BRIDGE_TOKEN_SARAH: "${GOOGLE_BRIDGE_TOKEN_SARAH:-}"
+
+      MCP_OUTCOME_FILE: "/logs/agentbox-mcp-outcomes.jsonl"
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8080"
+    ports:
+      - "${LAN_BIND_IP:-127.0.0.1}:3465:8080"
+    networks:
+      vikunja:
+      memory:
+      google:
+      builder:
+      homeassistant:
+    volumes:
+      - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
+      - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
+      - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
+    cpus: "1.00"
+    mem_limit: 256m
+    pids_limit: 256
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    labels:
+      agentbox.service: agentbox-mcp
+      agentbox.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
+
+networks:
+  vikunja:
+    external: true
+    name: vikunja_default
+  memory:
+    external: true
+    name: memory-bridge_default
+  google:
+    external: true
+    name: google-workspace-bridge_default
+  builder:
+    external: true
+    name: builder_default
+  homeassistant:
+    external: true
+    name: homeassistant_default

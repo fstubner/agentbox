@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Vikunja MCP: task management over the vikunja bridge.
 
 Every write here is reversible and nothing deletes — marking a task for cleanup
@@ -6,16 +5,10 @@ adds a comment rather than removing anything.
 """
 from __future__ import annotations
 
-import json
-import os
-import urllib.error
-import urllib.parse
-import urllib.request
+from mcp_base import ToolError, schema_object
+from integrations._client import bridge_client
 
-from mcp_base import McpHandler, ToolError, schema_object, serve
-
-BRIDGE_URL = os.environ.get("VIKUNJA_BRIDGE_URL", "http://vikunja-bridge:8080").rstrip("/")
-BRIDGE_TOKEN = os.environ.get("VIKUNJA_BRIDGE_TOKEN", "")
+bridge_request = bridge_client("VIKUNJA", "vikunja-bridge", timeout=20)
 
 TASK_FIELDS = {
     "project_id": {"type": "integer", "minimum": 1},
@@ -71,38 +64,12 @@ TOOLS = [
                                    "comment": {"type": "string"}}, ["task_id", "comment"])},
 ]
 
-
-def bridge_request(method, path, payload=None, query=None):
-    if not BRIDGE_TOKEN:
-        raise ToolError("VIKUNJA_BRIDGE_TOKEN is not configured")
-    url = f"{BRIDGE_URL}{path}"
-    if query:
-        clean = {k: v for k, v in query.items() if v not in (None, "")}
-        if clean:
-            url = f"{url}?{urllib.parse.urlencode(clean)}"
-    data = None
-    headers = {"Authorization": f"Bearer {BRIDGE_TOKEN}", "Accept": "application/json"}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            raw = resp.read()
-            return json.loads(raw.decode("utf-8")) if raw else None
-    except urllib.error.HTTPError as exc:
-        raise ToolError(f"bridge returned HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')[:500]}")
-    except urllib.error.URLError as exc:
-        raise ToolError(f"bridge connection failed: {exc.reason}")
-
-
 def task_payload(args):
     payload = {"title": str(args["title"]).strip(), "description": args.get("description", "")}
     for key in ("due_date", "priority"):
         if key in args:
             payload[key] = args[key]
     return payload
-
 
 def dispatch(name, args):
     if name == "list_projects":
@@ -158,16 +125,3 @@ def dispatch(name, args):
                               payload={"comment": args["comment"]})
 
     raise ToolError(f"unknown tool: {name}")
-
-
-class VikunjaMcp(McpHandler):
-    service_name = "vikunja-mcp"
-    instructions = "Use for the operator's task backend. List before creating to avoid duplicates."
-    tools = TOOLS
-    dispatch = staticmethod(dispatch)
-    bridge_url = BRIDGE_URL
-    shared_token = os.environ.get("VIKUNJA_MCP_SHARED_TOKEN", "")
-
-
-if __name__ == "__main__":
-    serve(VikunjaMcp)

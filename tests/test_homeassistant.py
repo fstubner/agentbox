@@ -218,8 +218,8 @@ def test_every_ha_tool_is_mapped():
     import re
     import policy_gate as pg
     mapping = pg.load_tool_map(POLICY)
-    src = (REPO / "services" / "compose" / "homeassistant-mcp" / "app"
-           / "server.py").read_text()
+    src = (REPO / "services" / "compose" / "agentbox-mcp" / "app"
+           / "integrations" / "homeassistant.py").read_text()
     block = src.split("TOOLS = [", 1)[1].split("\ndef ", 1)[0]
     for name in re.findall(r'"name":\s*"([a-z_]+)"', block):
         assert name in mapping, name

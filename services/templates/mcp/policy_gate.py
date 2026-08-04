@@ -160,7 +160,8 @@ def _consumed_key(grant: dict) -> str:
 
 def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
                   consumed_path: Path | None = None, consume: bool = True,
-                  tool_map: dict[str, str] | None = None) -> bool:
+                  tool_map: dict[str, str] | None = None,
+                  identity: str | None = None) -> bool:
     """Return True if an unexpired, unconsumed grant covers `tool`.
 
     Grants are mounted read-only so a compromised MCP cannot issue itself
@@ -184,6 +185,12 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
         # `agentbox grant archive_gmail` authorises the email_state_change the
         # bridge sees.
         if granted != tool and mapping.get(granted) != tool:
+            continue
+        # A grant may be scoped to one identity (`agentbox grant --for alex`).
+        # Scoped grants cover only that identity; unscoped grants cover anyone,
+        # which is the single-operator behaviour every existing grant has.
+        scoped_to = grant.get("identity")
+        if scoped_to is not None and scoped_to != identity:
             continue
         if float(grant.get("expires_at", 0)) <= stamp:
             continue
@@ -211,7 +218,8 @@ def check_capability(capability: str, tiers: dict[str, list[str]] | None = None,
                      grants_path: Path = GRANTS_PATH,
                      consumed_path: Path | None = None,
                      consume: bool = True, subject: str | None = None,
-                     tool_map: dict[str, str] | None = None) -> None:
+                     tool_map: dict[str, str] | None = None,
+                     identity: str | None = None) -> None:
     """Raise PolicyDenied unless `capability` may be exercised now.
 
     Used by the bridges, which know the capability directly rather than a tool
@@ -230,14 +238,15 @@ def check_capability(capability: str, tiers: dict[str, list[str]] | None = None,
             f"'{label}' is always denied by policy and cannot be approved at runtime. "
             f"Only a human, outside the assistant, may do this.")
     if consume_grant(capability, grants_path, consumed_path=consumed_path,
-                     consume=consume, tool_map=tool_map):
+                     consume=consume, tool_map=tool_map, identity=identity):
         return
     raise PolicyDenied(
         f"'{label}' ({capability}) requires operator approval and no grant is "
         f"active. Ask the operator to run: agentbox grant {label} --ttl 15m")
 
 
-def record_pending(tool: str, capability: str | None, path: Path | None = None) -> None:
+def record_pending(tool: str, capability: str | None, path: Path | None = None,
+                   identity: str | None = None) -> None:
     """Note that a call was refused for want of approval.
 
     Best-effort and idempotent per tool: a model that retries should not queue
@@ -250,11 +259,16 @@ def record_pending(tool: str, capability: str | None, path: Path | None = None) 
         entry = store / f"{tool}.json"
         if entry.exists():
             return
-        entry.write_text(json.dumps({
+        record = {
             "tool": tool,
             "capability": capability,
             "requested_at": int(time.time()),
-        }), encoding="utf-8")
+        }
+        if identity:
+            # Who was refused. With more than one person on the gateway, an
+            # approval decision needs to know whose request it is answering.
+            record["identity"] = identity
+        entry.write_text(json.dumps(record), encoding="utf-8")
     except OSError:
         pass
 
@@ -263,7 +277,7 @@ def check(tool: str, tiers: dict[str, list[str]] | None = None,
           grants_path: Path = GRANTS_PATH,
           consumed_path: Path | None = None,
           tool_map: dict[str, str] | None = None,
-          consume: bool = True) -> None:
+          consume: bool = True, identity: str | None = None) -> None:
     """Raise PolicyDenied unless `tool` may run now."""
     resolved = load_tiers() if tiers is None else tiers
     tier = tier_of(tool, resolved, tool_map)
@@ -274,11 +288,11 @@ def check(tool: str, tiers: dict[str, list[str]] | None = None,
             f"'{tool}' is always denied by policy and cannot be approved at runtime. "
             f"Only a human, outside the assistant, may do this.")
     if consume_grant(tool, grants_path, consumed_path=consumed_path,
-                     consume=consume, tool_map=tool_map):
+                     consume=consume, tool_map=tool_map, identity=identity):
         return
     mapping = load_tool_map() if tool_map is None else tool_map
     capability = mapping.get(tool)
-    record_pending(tool, capability)
+    record_pending(tool, capability, identity=identity)
     raise PolicyDenied(
         f"'{tool}' ({capability or 'no mapped capability'}) requires operator "
         f"approval. The operator has been notified and can approve it; ask them "

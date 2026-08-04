@@ -1,5 +1,55 @@
 # Runbook
 
+## The MCP gateway
+
+One service, `agentbox-mcp` on `:3465`, serves every tool from five bridges.
+It replaced five per-service MCPs that were each a tool registry plus an HTTP
+proxy carrying its own copy of the policy gate.
+
+```
+curl -s localhost:3465/health   # tool and integration counts
+curl -s localhost:3465/ready    # per-bridge readiness
+```
+
+`/ready` is not-ready if *any* bridge is unreachable, and names which — a
+gateway fronting five bridges that reported a single upstream would show green
+while a fifth of the tools were dead.
+
+### Adding an integration
+
+One module in `services/compose/agentbox-mcp/app/integrations/` exporting
+`TOOLS` and `dispatch(name, args)`, one line in `INTEGRATIONS`, and a tool→
+capability mapping in the policy. No second container, no second token, no
+second compose file. Duplicate tool names refuse to start rather than
+silently routing to whichever integration the dict happened to yield first.
+
+### Identities
+
+```
+AGENTBOX_IDENTITIES=alex:<token>,sarah:<token>
+```
+
+**The token presented is the identity.** There is no way to ask to be someone
+else, which is what stops an instruction embedded in an email from switching
+accounts — switching would need a credential the process was never given.
+
+Per-identity bridge routing, so each person's mail credential is in its own
+container:
+
+```
+GOOGLE_BRIDGE_URL_SARAH=http://sarah-google-bridge:8080
+GOOGLE_BRIDGE_TOKEN_SARAH=...
+```
+
+Unset falls back to the shared bridge, which is right for genuinely shared
+services like tasks. Grants can be scoped with `agentbox grant <tool> --for
+alex`; unscoped grants cover anyone, as every pre-identity grant does.
+
+Leaving `AGENTBOX_IDENTITIES` empty falls back to `AGENTBOX_MCP_SHARED_TOKEN`
+with no identity — the single-operator behaviour. Note that once identities
+exist the shared token stops working, deliberately: otherwise it would be an
+unnamed sixth identity that every per-identity check ignores.
+
 ## Smoke test
 
 ```

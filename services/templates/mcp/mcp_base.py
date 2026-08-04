@@ -181,6 +181,16 @@ class McpHandler(BaseHTTPRequestHandler):
     dispatch: Callable[[str, dict], Any] = staticmethod(lambda name, args: None)
     bridge_url: str = ""
     shared_token: str = ""
+    # Identity-aware auth: {identity_name: token}. When set, the presented
+    # bearer token *is* the identity assertion — whoever holds alex's token is
+    # alex, for the lifetime of that process. This is what binds identity to
+    # the session rather than to an argument: the process serving one person's
+    # conversation holds only that person's token, so an instruction embedded
+    # in content cannot switch identities — the other credential simply is not
+    # there to present. Empty dict falls back to the single shared_token with
+    # no identity, which is the pre-consolidation behaviour.
+    identity_tokens: dict[str, str] = {}
+    identity: str | None = None
 
     # --- internals -------------------------------------------------------
     def _require_origin(self) -> None:
@@ -285,12 +295,22 @@ class McpHandler(BaseHTTPRequestHandler):
     def _require_auth(self) -> None:
         """Fail closed. An unset token rejects everything rather than
         disabling the check — the defect this base class exists to prevent."""
+        provided = self.headers.get("Authorization", "")
+        if self.identity_tokens:
+            # Compare against every identity, not just until the first match
+            # succeeds structurally — each comparison is constant-time, and the
+            # loop leaks only how many identities exist, which is not a secret.
+            for name, token in self.identity_tokens.items():
+                if token and hmac.compare_digest(provided, f"Bearer {token}"):
+                    self.identity = name
+                    return
+            raise McpError(ERR_UNAUTHORIZED, "invalid MCP bearer token")
         if not self.shared_token:
             raise McpError(ERR_UNAUTHORIZED,
                            "MCP shared token is not configured; refusing all calls")
-        provided = self.headers.get("Authorization", "")
         if not hmac.compare_digest(provided, f"Bearer {self.shared_token}"):
             raise McpError(ERR_UNAUTHORIZED, "invalid MCP bearer token")
+        self.identity = None
 
     def _reply(self, message_id: Any, result: Any = None, error: Any = None) -> dict:
         return response(message_id, result, error, service_name=self.service_name)
@@ -367,12 +387,12 @@ class McpHandler(BaseHTTPRequestHandler):
                     capability=policy_gate.capability_of(name),
                     arguments=arguments, ms=time.monotonic() - started,
                     size=len(json.dumps(payload, default=str)) if payload is not None else 0,
-                    detail=detail)
+                    detail=detail, identity=self.identity or "")
 
             try:
                 # Non-consuming: deny early with a good message, but leave the
                 # single-use grant for the bridge, whose answer is authoritative.
-                policy_gate.check(name, consume=False)
+                policy_gate.check(name, consume=False, identity=self.identity)
                 self._validate_arguments(name, arguments)
                 payload = self.dispatch(name, arguments)
                 note(outcome_log.OK, payload=payload)
@@ -487,7 +507,17 @@ class McpHandler(BaseHTTPRequestHandler):
 def serve(handler_cls: type[McpHandler]) -> None:
     host = os.environ.get("MCP_HOST", "0.0.0.0")
     port = int(os.environ.get("MCP_PORT", "8080"))
-    if not handler_cls.shared_token:
+    if handler_cls.identity_tokens:
+        empty = [n for n, t in handler_cls.identity_tokens.items() if not t]
+        if empty:
+            print(f"WARNING {handler_cls.service_name}: identities with empty "
+                  f"tokens are unusable: {', '.join(empty)}",
+                  file=sys.stderr, flush=True)
+        print(f"{handler_cls.service_name}: "
+              f"{len(handler_cls.identity_tokens)} identit"
+              f"{'y' if len(handler_cls.identity_tokens) == 1 else 'ies'} configured",
+              file=sys.stderr, flush=True)
+    elif not handler_cls.shared_token:
         print(f"WARNING {handler_cls.service_name}: MCP shared token unset — "
               f"every /mcp request will be refused", file=sys.stderr, flush=True)
     print(f"{handler_cls.service_name} listening on {host}:{port}; "
