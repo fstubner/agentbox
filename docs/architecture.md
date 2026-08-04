@@ -85,6 +85,16 @@ human reads carefully first.
 
 - **Levers, not shell.** Every capability is an explicit endpoint with a
   contract, not terminal access.
+- **Tools are designed surfaces, not wrappers.** A tool is not a thinner
+  version of an upstream API — it is a model of what the assistant may do, and
+  its grammar is fully ours. Expressiveness is a budget: the surface should be
+  exactly as expressive as what we are willing to verify, and no more. This is
+  why there is no `call_service`, why automations are template-free, and why a
+  locked-down general-purpose engine (an n8n with nodes excluded) is the wrong
+  shape — subtracting danger from someone else's surface must be re-audited on
+  every upgrade, whereas a grammar we define cannot express the thing we
+  refused. Determinism is enforced in code; the model participates only at the
+  point of intent.
 - **Bridges hold credentials.** OAuth tokens and API secrets live inside
   bridge containers, injected at deploy time (1Password `op://` references or
   plain env files). The assistant and router never see them.

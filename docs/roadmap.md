@@ -144,7 +144,7 @@ Two things to settle before building:
 This merges with the next item; doing them separately would mean building the
 Home Assistant connection twice.
 
-### 6. Home Assistant — **built, awaiting an instance**
+### 6. Home Assistant — **built and live**
 
 `services/compose/homeassistant-{bridge,mcp}`. Five tools: two read, three act,
 and none of them is a general `call_service`.
@@ -176,7 +176,14 @@ depend on the model being sensible.
 Default `HA_CONTROLLABLE_ENTITIES` is empty: it can read the house and change
 nothing until the operator says otherwise.
 
-**Not deployed here — there is no Home Assistant on this network.** Deploying a
+**Update 2026-08-04: deployed and live.** The instance runs on this box
+(`services/compose/homeassistant`, host networking for mDNS/SSDP discovery,
+declared `agentbox.exposure: lan`), the operator has onboarded, tokens are in
+1Password under `op://Agentbox/homeassistant/`, and the bridge/MCP pair is up —
+verified end to end with 19 discovered entities. All three lists
+(`HA_CONTROLLABLE_ENTITIES`, `HA_VIEWABLE_CAMERAS`, `HA_PRIVATE_SCREENS`)
+remain empty: it reads the house and changes nothing until the operator fills
+them. The original note below stands as the record of why deployment waited. Deploying a
 service whose upstream does not exist would leave `doctor` permanently red,
 which is how a check stops being read; the readiness entries report "refused;
 is it deployed?" as a warning instead. 26 tests cover the refusals against the
@@ -258,3 +265,36 @@ elicitation handling at all. Until then approval runs out of band through
   nothing runs it.
 - **No traffic.** The request log holds only test calls, which blocks the
   `view=lean` A/B and every measurement that depends on real use.
+
+### 11. Cross-service rules — a designed grammar, not n8n
+
+Decided 2026-08-04, and the reasoning is the platform's own principle stated
+sharply by the operator: **tools are designed surfaces, not wrappers.** We
+control the grammar of what the assistant can do; expressiveness is a budget
+spent only on what we are willing to verify.
+
+n8n was evaluated seriously. `NODES_INCLUDE` is real — verified in its loader
+source, a load-time allowlist, with `executeCommand` excluded by default — so a
+locked-down instance on an `internal: true` network holding only bridge tokens
+was buildable. Rejected anyway, because it is the subtractive shape: renting a
+general-purpose surface and auditing the subtraction on every upgrade. The
+additive shape is a rules primitive we own:
+
+    rule = when <bridge-observed event | schedule>
+           if   <literal predicates — no templates, no code>
+           do   <allowlisted calls to tools the assistant already has>
+
+Deliberately not Turing-complete, so statically checkable — the template-free
+automation validator generalised platform-wide. The model is involved only at
+authoring time; evaluation is deterministic code. Every `do` is an ordinary
+bridge call, so policy gates, grants and the outcome journal apply with no new
+machinery, and the daily reflection sees what rules did.
+
+Already covered elsewhere: time triggers (Hermes cron), house triggers (HA
+automations). The new work is bridge-observed events plus a small evaluator,
+and rule proposals should flow through the builder's git trail like everything
+else the assistant authors.
+
+Ordering: after the MCP consolidation (the evaluator belongs behind the same
+gateway) and after two accounts (a rule fires as *someone*; building it
+single-user first would mean retrofitting identity into stored rules).
