@@ -12,11 +12,11 @@ flowchart TD
         gw["Hermes gateway<br/><small>isolated user · no shell</small>"]
         gw --> models["Local models<br/><small>:1234 main · :1240 vision</small>"]
         gw --> amcp["agentbox-mcp :3465<br/><small>one gate · identity-aware<br/>bridge tokens only</small>"]
-        amcp --> tbr["tasks bridge :3466<br/><small>holds credential</small>"]
-        amcp --> mbr["memory bridge :3471<br/><small>review gate</small>"]
-        amcp --> gbr["google bridge :3470<br/><small>holds oauth token</small>"]
-        amcp --> bbr["builder bridge :3474<br/><small>holds a repo clone</small>"]
-        amcp --> hbr["home bridge :3476<br/><small>holds ha token</small>"]
+        amcp --> tbr["tasks bridge<br/><small>holds credential · no host port</small>"]
+        amcp --> mbr["memory bridge :3471<br/><small>review gate · operator port</small>"]
+        amcp --> gbr["google bridge<br/><small>holds oauth token · no host port</small>"]
+        amcp --> bbr["builder bridge<br/><small>holds a repo clone · no host port</small>"]
+        amcp --> hbr["home bridge<br/><small>holds ha token · no host port</small>"]
     end
 
     tbr --> vik[(Vikunja :3456)]
@@ -148,7 +148,17 @@ Two gates, because the gateway holds bridge tokens: gate and credential in one
 process means compromising it defeats both. The gateway never holds an upstream
 credential — a leak there costs a scoped, local, revocable bridge token rather
 than a permanent handle on somebody's mail, which is why consolidating the MCPs
-is safe while consolidating the *bridges* would not be. The bridge gate sits in the process
+is safe while consolidating the *bridges* would not be.
+
+The concentration of bridge tokens in one process is mitigated at the network
+layer rather than accepted: **bridges publish no host ports** (memory-bridge
+excepted, labelled `agentbox.exposure: operator` for the review CLI), so they
+are reachable only on compose networks the gateway joins. A leaked bridge token
+is therefore unspendable by anything on the host — exfiltrating the gateway's
+environment yields credentials with nowhere to go. Spending them requires code
+execution *inside* the gateway container: stdlib-only, read-only filesystem,
+non-root, no-new-privileges, every capability dropped. `validate` fails any
+bridge compose that publishes a port without declaring the operator exception. The bridge gate sits in the process
 the compromised one cannot bypass, so holding the credential is not sufficient
 to use it. The idea is borrowed from OpenShell, where egress enforcement lives
 outside the sandbox rather than inside the agent.
@@ -279,7 +289,7 @@ stdlib-only Python.
 ## Identity
 
 The gateway serves one or more identities, configured as
-`AGENTBOX_IDENTITIES=alex:tokenA,sarah:tokenB`. **Which identity is calling is
+`AGENTBOX_IDENTITIES=alex:tokenA,sam:tokenB`. **Which identity is calling is
 decided by which bearer token was presented** — resolved before any tool runs,
 and never read from a tool argument.
 

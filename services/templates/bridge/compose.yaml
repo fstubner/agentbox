@@ -7,8 +7,13 @@ services:
       EXAMPLE_BRIDGE_TOKEN: "${EXAMPLE_BRIDGE_TOKEN:?set EXAMPLE_BRIDGE_TOKEN in the service env file}"
       BRIDGE_HOST: "0.0.0.0"
       BRIDGE_PORT: "8080"
+    # Published for standalone testing during review. Once this bridge has an
+    # integration module in agentbox-mcp, REMOVE this ports block and change
+    # the exposure label back to `private`: a bridge that stays host-reachable
+    # keeps its token spendable by any local process, which is what the
+    # gateway topology exists to prevent. `validate` allows the port only
+    # while the label says `operator`.
     ports:
-      # Bind to localhost on the host; the assistant reaches it over the loopback.
       - "${LAN_BIND_IP:-127.0.0.1}:3480:8080"
     cpus: "0.50"
     mem_limit: 256m
@@ -27,4 +32,4 @@ services:
       start_period: 10s
     labels:
       agentbox.service: example-bridge
-      agentbox.exposure: private
+      agentbox.exposure: operator

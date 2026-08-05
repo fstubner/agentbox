@@ -169,6 +169,19 @@ def validate() -> int:
                 error(f"network_mode: host reaches every interface; declare "
                       f"`agentbox.exposure: lan` and say why: {rel}")
 
+        # A bridge holds a real credential, so it must not be reachable from
+        # the host: any published port makes its bridge token spendable by any
+        # local process that steals one. The MCP gateway reaches bridges over
+        # their compose networks. `agentbox.exposure: operator` is the explicit
+        # exception for bridges that operator tooling must reach directly
+        # (memory review), so the compose file says out loud why the hole
+        # exists.
+        if "/compose/" in str(rel) and rel.parent.name.endswith("-bridge"):
+            if re.search(r"^\s*ports:", text, re.M) and \
+                    "agentbox.exposure: operator" not in text:
+                error(f"a bridge must not publish host ports (or declare "
+                      f"`agentbox.exposure: operator` and say why): {rel}")
+
         if not re.search(r"^\s*(cpus|mem_limit|pids_limit):", text, re.M):
             error(f"compose service should define resource limits: {rel}")
         if "no-new-privileges:true" not in text:
@@ -336,10 +349,11 @@ ENDPOINTS = {
 # container healthcheck deliberately does not — see bridge_base's module
 # docstring. Without this check a downed backing service is invisible: on
 # 2026-07-31 Vikunja was down for hours while all six bridges reported healthy.
+# One entry: the gateway's /ready probes every bridge over the container
+# networks and names the ones that are not. Probing bridges from the host is no
+# longer possible — they publish no host ports, which is the point: a leaked
+# bridge token is unusable by anything outside the gateway's networks.
 BRIDGE_READY_PORTS = {
-    "vikunja-bridge": 3466,
-    "memory-bridge": 3471,
-    "google-workspace-bridge": 3470,
     "agentbox-mcp": 3465,
 }
 
@@ -421,10 +435,15 @@ def bridge_readiness() -> int:
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
-                upstream = json.loads(exc.read()).get("upstream") or {}
-                # Bridges name the field after their upstream, so take whatever
-                # strings are there rather than guessing a key.
-                detail = "; ".join(str(v) for v in upstream.values() if isinstance(v, str))
+                body = json.loads(exc.read())
+                bridges = body.get("bridges") or {}
+                bad_ones = {k: v for k, v in bridges.items() if v is not True}
+                if bad_ones:
+                    detail = "; ".join(f"{k}: {v}" for k, v in sorted(bad_ones.items()))
+                else:
+                    upstream = body.get("upstream") or {}
+                    detail = "; ".join(str(v) for v in upstream.values()
+                                       if isinstance(v, str))
             except Exception:  # noqa: BLE001 — diagnostics only
                 pass
             report(FAIL, f"{service} not ready (HTTP {exc.code}){': ' + detail if detail else ''}")
@@ -446,6 +465,17 @@ def bridge_readiness() -> int:
         except Exception as exc:  # noqa: BLE001
             report(FAIL, f"{service} /ready failed: {type(exc).__name__}")
             bad += 1
+            continue
+        bridges = payload.get("bridges")
+        if isinstance(bridges, dict):
+            # The gateway's aggregate: name each bridge individually so a
+            # failure reads "google: unreachable", not "gateway not ready".
+            for bridge, state in sorted(bridges.items()):
+                if state is True:
+                    report(OK, f"{service}: {bridge} bridge ready")
+                else:
+                    report(FAIL, f"{service}: {bridge} bridge not ready ({state})")
+                    bad += 1
             continue
         upstream = payload.get("upstream", payload.get("bridge"))
         if upstream is None:

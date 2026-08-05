@@ -26,7 +26,7 @@ silently routing to whichever integration the dict happened to yield first.
 ### Identities
 
 ```
-AGENTBOX_IDENTITIES=alex:<token>,sarah:<token>
+AGENTBOX_IDENTITIES=alex:<token>,sam:<token>
 ```
 
 **The token presented is the identity.** There is no way to ask to be someone
@@ -37,8 +37,8 @@ Per-identity bridge routing, so each person's mail credential is in its own
 container:
 
 ```
-GOOGLE_BRIDGE_URL_SARAH=http://sarah-google-bridge:8080
-GOOGLE_BRIDGE_TOKEN_SARAH=...
+GOOGLE_BRIDGE_URL_SAM=http://sam-google-bridge:8080
+GOOGLE_BRIDGE_TOKEN_SAM=...
 ```
 
 Unset falls back to the shared bridge, which is right for genuinely shared
@@ -97,8 +97,12 @@ The split exists because on 2026-07-31 Vikunja was down for hours while all six
 bridges reported healthy and `doctor` was green. A bridge that is up but cannot
 reach what it fronts is not serving anyone.
 
+Bridges publish no host ports (memory-bridge excepted, for the review CLI), so
+they cannot be probed from the host — that is the credential mitigation, not an
+inconvenience. Ask the gateway, which probes them over the container networks:
+
 ```
-curl -s localhost:3466/ready    # vikunja-bridge
+curl -s localhost:3465/ready    # names each bridge and its state
 ```
 
 ### Request logs

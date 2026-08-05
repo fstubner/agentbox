@@ -5,7 +5,7 @@ services:
       dockerfile: services/compose/agentbox-mcp/Dockerfile
     image: agentbox/agentbox-mcp:local
     environment:
-      # Identity-aware auth. `alex:tokenA,sarah:tokenB` — the presented token
+      # Identity-aware auth. `alex:tokenA,sam:tokenB` — the presented token
       # IS the identity, resolved before any tool runs and never taken from a
       # tool argument. Leave empty for single-operator, which falls back to
       # AGENTBOX_MCP_SHARED_TOKEN with no identity.
@@ -24,14 +24,14 @@ services:
       HA_BRIDGE_URL: "${HA_BRIDGE_URL:-http://homeassistant-bridge:8080}"
       HA_BRIDGE_TOKEN: "${HA_BRIDGE_TOKEN:-}"
 
-      # Per-identity overrides. Set GOOGLE_BRIDGE_URL_SARAH and
-      # GOOGLE_BRIDGE_TOKEN_SARAH to route her mail to a bridge holding only
+      # Per-identity overrides. Set GOOGLE_BRIDGE_URL_SAM and
+      # GOOGLE_BRIDGE_TOKEN_SAM to route her mail to a bridge holding only
       # her credential. Unset falls back to the shared bridge above, which is
       # correct for genuinely shared services like tasks.
       GOOGLE_BRIDGE_URL_ALEX: "${GOOGLE_BRIDGE_URL_ALEX:-}"
       GOOGLE_BRIDGE_TOKEN_ALEX: "${GOOGLE_BRIDGE_TOKEN_ALEX:-}"
-      GOOGLE_BRIDGE_URL_SARAH: "${GOOGLE_BRIDGE_URL_SARAH:-}"
-      GOOGLE_BRIDGE_TOKEN_SARAH: "${GOOGLE_BRIDGE_TOKEN_SARAH:-}"
+      GOOGLE_BRIDGE_URL_SAM: "${GOOGLE_BRIDGE_URL_SAM:-}"
+      GOOGLE_BRIDGE_TOKEN_SAM: "${GOOGLE_BRIDGE_TOKEN_SAM:-}"
 
       MCP_OUTCOME_FILE: "/logs/agentbox-mcp-outcomes.jsonl"
       MCP_HOST: "0.0.0.0"

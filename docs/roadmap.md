@@ -198,7 +198,7 @@ argument. It routes per-identity to separate bridges, travels to the bridge as
 `X-Agentbox-Identity` for identity-scoped grants, and is recorded in the outcome
 journal. `tests/test_gateway_identity.py` asserts no argument can change it.
 
-What remains for two real accounts: a second Google bridge holding Sarah's
+What remains for two real accounts: a second Google bridge holding Sam's
 credential, memory partitioned by owner with a `household` scope, the Discord
 loop resolving her user id to an identity, and the own-account approval rule
 with its named-exception allowlist.

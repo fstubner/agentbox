@@ -97,7 +97,7 @@ TOOLS, TOOL_OWNER = _assemble()
 
 
 def load_identities() -> dict[str, str]:
-    """Parse AGENTBOX_IDENTITIES: `alex:token,sarah:token`.
+    """Parse AGENTBOX_IDENTITIES: `alex:token,sam:token`.
 
     Empty means single-operator: fall back to one shared token with no
     identity, which is exactly how every existing deployment behaves.

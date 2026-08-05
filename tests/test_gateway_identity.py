@@ -44,7 +44,7 @@ def load_gateway(identities: str = ""):
 
 @pytest.fixture
 def gw():
-    return load_gateway("alex:tok-alex,sarah:tok-sarah")
+    return load_gateway("alex:tok-alex,sam:tok-sam")
 
 
 @pytest.fixture
@@ -128,7 +128,7 @@ def test_every_gateway_tool_is_mapped_to_a_capability(gw):
 def test_the_token_selects_the_identity(gw, open_gate):
     server, base = serve(gw.AgentboxMcp)
     try:
-        for token, expected in (("tok-alex", "alex"), ("tok-sarah", "sarah")):
+        for token, expected in (("tok-alex", "alex"), ("tok-sam", "sam")):
             seen = {}
             gw.AgentboxMcp.dispatch = staticmethod(
                 lambda n, a: seen.update(who=gw._client.CURRENT_IDENTITY.get()))
@@ -171,8 +171,8 @@ def test_no_argument_can_set_the_identity(gw, open_gate):
         gw.AgentboxMcp.dispatch = staticmethod(
             lambda n, a: seen.update(who=gw._client.CURRENT_IDENTITY.get()))
         rpc(base, "tools/call", {"name": "list_tasks", "arguments": {
-            "identity": "sarah", "as": "sarah", "_identity": "sarah",
-            "X-Agentbox-Identity": "sarah"}}, token="tok-alex")
+            "identity": "sam", "as": "sam", "_identity": "sam",
+            "X-Agentbox-Identity": "sam"}}, token="tok-alex")
         assert seen["who"] == "alex"
     finally:
         server.shutdown()
@@ -207,7 +207,7 @@ def test_unauthenticated_calls_are_still_refused(gw):
 def test_an_identity_with_an_empty_token_cannot_authenticate():
     """`AGENTBOX_IDENTITIES=alex:` must not create an identity that an empty
     Authorization header satisfies."""
-    gw = load_gateway("alex:,sarah:tok-sarah")
+    gw = load_gateway("alex:,sam:tok-sam")
     assert "alex" not in gw.AgentboxMcp.identity_tokens
     server, base = serve(gw.AgentboxMcp)
     try:
@@ -222,10 +222,10 @@ def test_an_identity_with_an_empty_token_cannot_authenticate():
 
 
 def test_identity_routes_to_a_per_identity_bridge(gw, monkeypatch):
-    """Sarah's mail must reach a bridge holding only her credential. The
+    """Sam's mail must reach a bridge holding only her credential. The
     routing table decides, never the model."""
-    monkeypatch.setenv("GOOGLE_BRIDGE_URL_SARAH", "http://sarah-google:8080")
-    monkeypatch.setenv("GOOGLE_BRIDGE_TOKEN_SARAH", "sarah-bridge-token")
+    monkeypatch.setenv("GOOGLE_BRIDGE_URL_SAM", "http://sam-google:8080")
+    monkeypatch.setenv("GOOGLE_BRIDGE_TOKEN_SAM", "sam-bridge-token")
     monkeypatch.setenv("GOOGLE_BRIDGE_URL", "http://shared-google:8080")
     monkeypatch.setenv("GOOGLE_BRIDGE_TOKEN", "shared-bridge-token")
     client = gw._client.bridge_client("GOOGLE", "google-workspace-bridge")
@@ -251,11 +251,11 @@ def test_identity_routes_to_a_per_identity_bridge(gw, monkeypatch):
 
     monkeypatch.setattr(gw._client.urllib.request, "urlopen", fake_urlopen)
 
-    gw._client.CURRENT_IDENTITY.set("sarah")
+    gw._client.CURRENT_IDENTITY.set("sam")
     client("GET", "/v1/x")
-    assert captured["url"].startswith("http://sarah-google:8080")
-    assert captured["auth"] == "Bearer sarah-bridge-token"
-    assert captured["identity"] == "sarah"
+    assert captured["url"].startswith("http://sam-google:8080")
+    assert captured["auth"] == "Bearer sam-bridge-token"
+    assert captured["identity"] == "sam"
 
     # Alex has no override, so he falls back to the shared bridge — correct
     # for services that genuinely are shared.
@@ -355,9 +355,9 @@ def test_identity_scoped_grants_only_match_their_identity():
     try:
         grants.write_text(json.dumps({"grants": [{
             "tool": "archive_gmail", "expires_at": time.time() + 60,
-            "single_use": False, "identity": "sarah"}]}))
+            "single_use": False, "identity": "sam"}]}))
         assert pg.consume_grant("archive_gmail", grants,
-                                consumed_path=consumed, identity="sarah")
+                                consumed_path=consumed, identity="sam")
         assert not pg.consume_grant("archive_gmail", grants,
                                     consumed_path=consumed, identity="alex")
         # And an unscoped grant still covers anyone — the pre-identity default.
@@ -381,6 +381,6 @@ def test_the_journal_records_who_acted(tmp_path):
         "ol_identity", REPO / "services" / "templates" / "mcp" / "outcome_log.py")
     log = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(log)
-    log.record("agentbox-mcp", "list_tasks", log.OK, identity="sarah")
+    log.record("agentbox-mcp", "list_tasks", log.OK, identity="sam")
     entry = json.loads((tmp_path / "o.jsonl").read_text().strip())
-    assert entry["identity"] == "sarah"
+    assert entry["identity"] == "sam"

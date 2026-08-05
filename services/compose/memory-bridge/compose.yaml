@@ -42,7 +42,10 @@ services:
     restart: unless-stopped
     labels:
       agentbox.service: memory-bridge
-      agentbox.exposure: private
+      # `operator`: published on the host loopback on purpose — the memory
+      # review CLI (`agentbox memory approve|reject`) talks to this bridge
+      # directly with the review token, a credential no container holds.
+      agentbox.exposure: operator
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
 
 volumes:
