@@ -26,6 +26,20 @@ silently routing to whichever integration the dict happened to yield first.
 ### Identities
 
 ```
+cli/agentbox identity list
+cli/agentbox identity add sam
+cli/agentbox identity remove sam
+```
+
+`add` generates a token, writes it into the gateway env, and prints the two
+steps it will not do for you: store the token in 1Password, and redeploy. It
+also warns when you add the *first* identity, because that is the moment
+`AGENTBOX_MCP_SHARED_TOKEN` stops working — the Hermes config must be pointed
+at a real identity token or every call 401s and it looks like a broken deploy.
+
+Under the hood this is one env var:
+
+```
 AGENTBOX_IDENTITIES=alex:<token>,sam:<token>
 ```
 
@@ -42,8 +56,39 @@ GOOGLE_BRIDGE_TOKEN_SAM=...
 ```
 
 Unset falls back to the shared bridge, which is right for genuinely shared
-services like tasks. Grants can be scoped with `agentbox grant <tool> --for
-alex`; unscoped grants cover anyone, as every pre-identity grant does.
+services like tasks and wrong for personal mail — `identity list` shows which
+services each person reaches through their own bridge versus the shared one,
+because that difference is easy to get wrong silently.
+
+Grants can be scoped with `agentbox grant <tool> --for alex`; unscoped grants
+cover anyone, as every pre-identity grant does.
+
+### Memory scopes
+
+Two planes, not per-item sharing:
+
+| scope | who reads it |
+|---|---|
+| `<identity>` | only that person — **the default** |
+| `household` | everyone |
+
+Private by default, because a memory landing in the shared plane because nobody
+said otherwise is a disclosure nobody chose. Filtering happens inside the
+memory bridge, not in the gateway: a caller that asked politely for only its
+own memories would leak the moment anything upstream got confused about who it
+was serving.
+
+Per-item ACLs were rejected deliberately — "Sam can see this one thing of
+Alex's" makes "what can she see?" unanswerable without reading every row.
+
+The assistant calls **`whoami`** to find out which identity it is acting for
+and which scopes it can read. It is `allowed` and ungated, because being unsure
+is what causes the cross-account mistakes it prevents. Memories written before
+scopes existed have none and read as household.
+
+`identity remove` does **not** delete that person's memories. They stay scoped
+to the removed name and become unreachable; deleting them is a separate,
+deliberate act.
 
 Leaving `AGENTBOX_IDENTITIES` empty falls back to `AGENTBOX_MCP_SHARED_TOKEN`
 with no identity — the single-operator behaviour. Note that once identities

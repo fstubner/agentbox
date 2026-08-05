@@ -1093,6 +1093,139 @@ def grants_revoke(tool: str | None) -> int:
 MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE", "http://127.0.0.1:3471")
 
 
+# --- identities ---------------------------------------------------------------
+#
+# Adding a person by hand means generating a token, editing the gateway env,
+# editing the Hermes config, and restarting — four steps across three files
+# where a typo produces a 401 that looks like a broken deploy. This makes it
+# one command, and prints the manual steps it cannot safely do for you.
+
+IDENTITY_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
+
+
+def identity_env_path() -> Path:
+    return Path(env_dir()) / "agentbox-mcp.env"
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip()
+    return values
+
+
+def write_env_value(path: Path, key: str, value: str) -> None:
+    """Rewrite one key in place, preserving order and comments."""
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    out, replaced = [], False
+    for line in lines:
+        if line.split("=", 1)[0].strip() == key and not line.lstrip().startswith("#"):
+            out.append(f"{key}={value}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append(f"{key}={value}")
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+
+
+def parse_identities(raw: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if entry and ":" in entry:
+            name, _, token = entry.partition(":")
+            if name.strip() and token.strip():
+                out[name.strip()] = token.strip()
+    return out
+
+
+def identity_list() -> int:
+    values = read_env_file(identity_env_path())
+    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
+    if not identities:
+        report(WARN, "no identities configured — running single-operator")
+        print("\nAdd one with: cli/agentbox identity add <name>")
+        return 0
+    print(f"{len(identities)} identit"
+          f"{'y' if len(identities) == 1 else 'ies'}:\n")
+    for name in sorted(identities):
+        suffix = name.upper().replace("-", "_")
+        # Which services this person reaches through their own bridge rather
+        # than the shared one — the difference between "her mail" and "our
+        # tasks", and the thing that is easy to get wrong silently.
+        own = [prefix.lower() for prefix in ("GOOGLE", "VIKUNJA", "MEMORY", "HA")
+               if values.get(f"{prefix}_BRIDGE_TOKEN_{suffix}")]
+        print(f"  {name:<12} own bridges: {', '.join(own) if own else 'none (all shared)'}")
+    print("\nMemory: each identity sees their own scope plus 'household'.")
+    return 0
+
+
+def identity_add(name: str) -> int:
+    if not IDENTITY_NAME.match(name):
+        report(FAIL, "identity must be lowercase letters, digits, dash or "
+                     "underscore, starting with a letter")
+        return 2
+    path = identity_env_path()
+    if not path.exists():
+        report(FAIL, f"no gateway env at {path}; deploy agentbox-mcp first")
+        return 1
+    values = read_env_file(path)
+    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
+    if name in identities:
+        report(FAIL, f"identity '{name}' already exists")
+        return 1
+
+    import secrets
+    token = secrets.token_hex(32)
+    identities[name] = token
+    write_env_value(path, "AGENTBOX_IDENTITIES",
+                    ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
+    report(OK, f"added identity '{name}'")
+
+    first_identity = len(identities) == 1
+    print(f"\n  token: {token}\n")
+    print("Next:")
+    print(f"  1. Store it:  op item edit Agentbox/agentbox --token_{name}='{token}'")
+    print("  2. Redeploy:  cli/agentbox deploy agentbox-mcp")
+    if first_identity:
+        print("\n  NOTE: this is the first identity, so AGENTBOX_MCP_SHARED_TOKEN")
+        print("  stops working. Point the Hermes gateway config at this token")
+        print("  instead, or it will get 401 on every call.")
+    print(f"\n  Optional — give {name} their own Google account rather than "
+          f"sharing yours:")
+    suffix = name.upper().replace("-", "_")
+    print(f"    GOOGLE_BRIDGE_URL_{suffix}=http://{name}-google-bridge:8080")
+    print(f"    GOOGLE_BRIDGE_TOKEN_{suffix}=<that bridge's token>")
+    print(f"  Without those, {name} shares the existing Google bridge — which "
+          f"is\n  correct for shared services and wrong for personal mail.")
+    return 0
+
+
+def identity_remove(name: str) -> int:
+    path = identity_env_path()
+    values = read_env_file(path)
+    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
+    if name not in identities:
+        report(FAIL, f"no identity '{name}'")
+        return 1
+    del identities[name]
+    write_env_value(path, "AGENTBOX_IDENTITIES",
+                    ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
+    report(OK, f"removed identity '{name}'; redeploy agentbox-mcp to apply")
+    if not identities:
+        report(WARN, "no identities remain — the gateway falls back to "
+                     "AGENTBOX_MCP_SHARED_TOKEN")
+    print(f"\nTheir memories are NOT deleted. They are still scoped to "
+          f"'{name}'\nand simply unreachable. Remove them deliberately if "
+          f"that is what you want.")
+    return 0
+
+
 def env_dir() -> str:
     configured = os.environ.get("AGENTBOX_ENV_DIR")
     if configured:
@@ -1483,6 +1616,13 @@ def main() -> None:
     dep.add_argument("--dry-run", action="store_true")
     sub.add_parser("doctor")
     sub.add_parser("smoke", help="drive real workflows end to end against the running system")
+    idn = sub.add_parser("identity", help="manage who the assistant can act for")
+    idn_sub = idn.add_subparsers(dest="identity_cmd", required=True)
+    idn_sub.add_parser("list")
+    ida = idn_sub.add_parser("add")
+    ida.add_argument("name")
+    idr = idn_sub.add_parser("remove")
+    idr.add_argument("name")
     pr = sub.add_parser("proposals", help="review code changes the assistant has proposed")
     pr_sub = pr.add_subparsers(dest="proposals_cmd", required=True)
     pr_sub.add_parser("list")
@@ -1539,6 +1679,12 @@ def main() -> None:
         sys.exit(doctor())
     if args.cmd == "smoke":
         sys.exit(smoke())
+    if args.cmd == "identity":
+        if args.identity_cmd == "list":
+            sys.exit(identity_list())
+        if args.identity_cmd == "add":
+            sys.exit(identity_add(args.name))
+        sys.exit(identity_remove(args.name))
     if args.cmd == "proposals":
         if args.proposals_cmd == "list":
             sys.exit(proposals_list())

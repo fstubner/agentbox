@@ -73,11 +73,59 @@ def save_store(store: dict[str, Any]) -> None:
     tmp.replace(MEMORY_PATH)
 
 
-def clean_memory(body: dict[str, Any], status: str) -> dict[str, Any]:
+HOUSEHOLD = "household"
+
+
+def identity_of(handler) -> str:
+    """Who this request is for. Asserted by the gateway, never by the model.
+
+    Empty means single-operator, where every memory is implicitly the one
+    person's — the behaviour that predates identities.
+    """
+    return (handler.headers.get("X-Agentbox-Identity", "").strip()
+            if handler is not None else "")
+
+
+def resolve_scope(body: dict[str, Any], identity: str) -> str:
+    """Private to the caller, or shared with the household.
+
+    Two scopes rather than arbitrary sharing between named people. "Sam can see
+    this one thing of Alex's" is a per-item ACL, and per-item ACLs are how
+    sharing systems become impossible to reason about — the operator ends up
+    unable to answer "what can she see?" without reading every row. Household
+    is a plane, not a permission: putting something there is a deliberate act
+    with one obvious meaning.
+    """
+    requested = str(body.get("scope") or "").strip().lower()
+    if not requested:
+        # Private by default. A memory that lands in the shared plane because
+        # nobody said otherwise is a disclosure nobody chose.
+        return identity or HOUSEHOLD
+    if requested == HOUSEHOLD:
+        return HOUSEHOLD
+    if requested in ("private", "me", "self"):
+        return identity or HOUSEHOLD
+    if identity and requested != identity:
+        # Writing into somebody else's private plane is not sharing, it is
+        # impersonation.
+        raise BridgeError(
+            403, f"cannot write to '{requested}'s private memory. Use scope "
+                 f"'{HOUSEHOLD}' to share, or omit scope to keep it yours.")
+    return requested
+
+
+def visible_scopes(identity: str) -> set[str]:
+    """What this identity may read: their own plane plus the household one."""
+    return {identity, HOUSEHOLD} if identity else {HOUSEHOLD}
+
+
+def clean_memory(body: dict[str, Any], status: str,
+                 identity: str = "") -> dict[str, Any]:
     statement = str(body.get("statement", "")).strip()
     if not statement:
         raise BridgeError(400, "statement is required")
     return {
+        "scope": resolve_scope(body, identity),
         "id": body.get("id") or str(uuid.uuid4()),
         "type": body.get("type", "profile_preference"),
         "statement": statement,
@@ -89,6 +137,22 @@ def clean_memory(body: dict[str, Any], status: str) -> dict[str, Any]:
         "updated_at": now(),
         "metadata": body.get("metadata", {}),
     }
+
+
+def visible_to(items: list[dict[str, Any]], identity: str) -> list[dict[str, Any]]:
+    """Drop anything outside this identity's planes.
+
+    Filtered here, in the process holding the store, rather than by the caller.
+    A gateway that asked politely for only its own memories would leak the
+    moment anything upstream got confused about who it was serving.
+
+    Items written before scopes existed have none. They belong to the person
+    who was the only user at the time, so they read as household rather than
+    vanishing — losing them silently would be worse than over-sharing between
+    two people who already share a house.
+    """
+    return [i for i in items
+            if i.get("scope", HOUSEHOLD) in visible_scopes(identity)]
 
 
 def filter_items(items: list[dict[str, Any]], query: dict[str, Any]) -> list[dict[str, Any]]:
@@ -118,16 +182,42 @@ def get_schema(handler, body):
     }}
 
 
+def whoami(handler, body):
+    """What this session is, in the terms the assistant needs to be careful.
+
+    Answered by the bridge from the gateway's asserted header rather than by
+    the gateway from its own state, so the answer comes from the same place
+    that enforces it. A whoami that could disagree with the filter would be
+    worse than none — the assistant would trust it.
+    """
+    identity = identity_of(handler)
+    return 200, {
+        "identity": identity or None,
+        "mode": "multi-identity" if identity else "single-operator",
+        "memory_scopes_readable": sorted(visible_scopes(identity)),
+        "memory_scope_default": identity or HOUSEHOLD,
+        "note": ("You are acting for "
+                 f"'{identity}'. Memories you propose are private to them "
+                 f"unless you pass scope 'household'. You cannot read another "
+                 f"person's private memories, and you cannot act as anyone "
+                 f"else — this is fixed by the credential this session holds, "
+                 f"not by anything you can say."
+                 if identity else
+                 "Single-operator: no identities are configured, so everything "
+                 "belongs to the one operator."),
+    }
+
+
 def list_proposals(handler, body):
     limit = resolve_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
     with _LOCK:
         store = load_store()
-    items = filter_items(store["proposals"], {})
+    items = visible_to(filter_items(store["proposals"], {}), identity_of(handler))
     return 200, {"proposals": items[:limit], "total": len(items)}
 
 
 def create_proposal(handler, body):
-    item = clean_memory(body or {}, "proposed")
+    item = clean_memory(body or {}, "proposed", identity_of(handler))
     with _LOCK:
         store = load_store()
         # Idempotent on the statement: a retried proposal must not queue the
@@ -149,7 +239,7 @@ def create_memory(handler, body):
     the review token like approval does.
     """
     require_review(handler)
-    item = clean_memory(body or {}, "approved")
+    item = clean_memory(body or {}, "approved", identity_of(handler))
     with _LOCK:
         store = load_store()
         store["memories"].append(item)
@@ -161,8 +251,10 @@ def list_memories(handler, body):
     limit = resolve_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
     with _LOCK:
         store = load_store()
-    items = filter_items(store["memories"], {})
-    return 200, {"memories": items[:limit], "total": len(items)}
+    identity = identity_of(handler)
+    items = visible_to(filter_items(store["memories"], {}), identity)
+    return 200, {"memories": items[:limit], "total": len(items),
+                 "scopes_visible": sorted(visible_scopes(identity))}
 
 
 def approve_proposal(handler, proposal_id: str):
@@ -327,6 +419,7 @@ class MemoryBridge(BridgeHandler):
     bridge_token = os.environ.get("MEMORY_BRIDGE_TOKEN", "")
     routes = {
         ("GET", "/schema"): get_schema,
+        ("GET", "/v1/whoami"): whoami,
         ("GET", "/v1/proposals"): list_proposals,
         ("POST", "/v1/proposals"): create_proposal,
         ("GET", "/v1/memories"): list_memories,
@@ -338,6 +431,10 @@ class MemoryBridge(BridgeHandler):
                        body: dict[str, Any] | None) -> str | None:
         # Reading its own activity is what inspect_service_logs was always for:
         # already `allowed` in the policy, never reachable until now.
+        if path.startswith("/v1/whoami"):
+            # Knowing who you are is not a capability worth gating; being
+            # unsure is what causes the mistakes this tool prevents.
+            return None
         if path.startswith("/v1/activity"):
             return "inspect_service_logs"
         return None
