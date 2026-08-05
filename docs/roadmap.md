@@ -324,15 +324,25 @@ filesystem permissions, not by design — but three policy tiers do not:
 while `config.yaml`, the skills directory and the gateway tree are all
 writable.
 
+**An allowlist alone does not work, and the reason is the point.**
+`command_allowlist` lives in `config.yaml`, which `agentbox` can write. The
+assistant edits the allowlist, then runs anything. An allowlist in a file the
+constrained party controls is a suggestion.
+
+That is the same structure the platform already fixes everywhere else:
+`merge_own_pr` denied, grants mounted read-only, the builder refusing
+`policies/`. Each is *separate the constraint from the constrained*, and the
+gateway config is the one place it was never applied.
+
 Options, cheapest first:
 
-1. **`command_allowlist`** — Hermes supports one and it is currently empty.
-   Smallest change, but it is a denylist problem wearing an allowlist's
-   clothes: a shell with `python` on the list is still a shell.
-2. **Make the gateway's own tree read-only to it.** `config.yaml`, `skills/`
-   and the source owned by a different uid, with the gateway reading them and
-   the operator writing them. Directly restores the three broken tiers and
-   matches how `/policy` is already mounted read-only into containers.
+1. **`command_allowlist`** — only meaningful *after* (2), and even then a shell
+   with `python` or `curl` on the list is still a shell.
+2. **Make the gateway's own tree read-only to it** — `config.yaml`, `skills/`
+   and the source owned by another uid. This is the load-bearing one: it
+   restores all three broken tiers by making them physically impossible rather
+   than merely disallowed, and it is what makes any allowlist meaningful. Cost:
+   the operator edits config via sudo from then on.
 3. **Sandbox the terminal.** `terminal.backend: docker` exists in the config.
    Strongest, and the one that makes "no shell access" true rather than
    aspirational.
@@ -343,3 +353,41 @@ Options, cheapest first:
 compose. Also add a `doctor` check for the two permission facts credential
 isolation currently rests on — `agentbox` not in `docker`, operator env dir not
 world-readable — since both are silent if broken.
+
+### 13. Per-identity connectors — use the upstream's sharing, not ours
+
+Corrected 2026-08-05. An earlier version of this plan treated shared-vs-private
+as a property of the *service*. It is not: tasks are both (personal todos and a
+shopping list) and so is calendar (a personal one and a household one).
+
+The resolution is less work, not more. **Google and Vikunja already implement
+sharing.** We should give each identity its own credential and let the upstream
+decide what is shared, rather than building a second sharing model on top of
+theirs.
+
+| service | credential | who decides what is shared |
+|---|---|---|
+| Google | per-identity | Google — a calendar shared between the two accounts |
+| Vikunja | per-identity | Vikunja — its own project/team sharing |
+| Memory | one store | **us** — no upstream exists, hence the `scope` field |
+| Home Assistant | shared | one house; no per-person concept to model |
+| Builder | shared | a repository is shared by definition |
+
+"When are we both free" then needs no code: Sam shares her calendar with Alex
+in Google, and his credential queries her freebusy through the API the bridge
+already exposes. The shopping list is a Vikunja project she is a member of.
+
+**The rule: build scoping only where the upstream has none.** That is memory,
+and it is done.
+
+This reshapes `identity add`. The question is not "is this service shared or
+private" but **"does this person have their own account for it?"** — google
+yes (run her OAuth), vikunja yes (her own user), homeassistant no. Sharing
+*within* a service is configured in that service, where the operator already
+knows how.
+
+`vikunja-bridge` currently holds one `VIKUNJA_API_TOKEN`, so tasks are a single
+shared account today; under this model it becomes a per-identity bridge like
+Google. Provisioning one is `scaffold` + the OAuth helper + per-identity
+routing — all of which exist as pieces and none of which is joined up. That
+joining is the work.
