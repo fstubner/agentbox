@@ -391,3 +391,61 @@ shared account today; under this model it becomes a per-identity bridge like
 Google. Provisioning one is `scaffold` + the OAuth helper + per-identity
 routing — all of which exist as pieces and none of which is joined up. That
 joining is the work.
+
+### 14. Invite-based onboarding for a non-technical person
+
+Asked for 2026-08-05: Alex sends Sam a link, she opens it, creates an identity
+and connects services — without visiting Vikunja, Google Cloud Console, or a
+terminal.
+
+#### The split that makes it safe
+
+A LAN-reachable web page that could run `docker compose` would be the worst
+service on the box. So the flow is deliberately two-phase:
+
+1. **Onboarding page** — temporary, LAN-bound, *unprivileged*. Collects a
+   display name and connector choices, runs Google's OAuth in the browser, and
+   writes a spool record. It has no docker socket, no 1Password token, and
+   cannot create anything.
+2. **Operator provisioner** — `cli/agentbox invite complete`, run by Alex.
+   Reads the spool, creates the Vikunja user, provisions her Google bridge,
+   generates her identity token, wires the routing, redeploys.
+
+Verified 2026-08-05 that this split is *required*, not merely tidy:
+`VIKUNJA_SERVICE_ENABLEREGISTRATION=false`, so `/api/v1/register` 404s and the
+only way to create her account is `vikunja user create` inside the container —
+which needs the docker socket. A web page must never hold that.
+
+#### Local versus external is the real distinction
+
+Not "shared versus private" (see item 13) but **who owns the account**:
+
+| | onboarding does | why |
+|---|---|---|
+| Vikunja | creates her user via the container CLI | local service, we own it |
+| Memory | nothing — her scope exists the moment she does | local, no account concept |
+| Home Assistant | nothing — one house | local, shared |
+| Google | **she signs in** via OAuth in the page | external; we cannot create a Google account and should not try |
+
+So "never leave agentbox" holds for everything we run, and Google is one
+in-page consent screen rather than a trip to Cloud Console. That is the honest
+best case, and it is a good one.
+
+#### The pieces that already exist
+
+`identity add` (token generation, env wiring), `scaffold` (generating a bridge
+from a template), `google-workspace-bridge/oauth-setup.py` (the loopback OAuth
+flow), per-identity routing (`GOOGLE_BRIDGE_URL_SAM`). None of it is joined up,
+and the joining is most of the work.
+
+#### Decisions still open
+
+- **The invite link is a credential.** Single-use, short TTL, and it authorises
+  creating an identity — so it must be as carefully handled as a bridge token.
+- **LAN exposure.** She opens it from her phone, so the page binds to the LAN
+  like Home Assistant does and must declare `agentbox.exposure: lan`. It should
+  run only while an invite is outstanding, not permanently.
+- **Google's redirect URI** must be reachable from her browser and registered
+  in the OAuth client — the `redirect_uri_mismatch` that already bit us once.
+- **The assistant must have no tool for any of this.** Creating identities is
+  operator-plane; there is no capability for it and there should not be.
