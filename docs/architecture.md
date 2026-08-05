@@ -1,8 +1,16 @@
 # Architecture
 
-Agentbox is a self-hosted personal AI assistant platform for a single
-operator on local hardware. The assistant (a Hermes-style gateway) never gets
-raw shell access or raw credentials — it gets narrow, policy-gated levers.
+Agentbox is a self-hosted personal AI assistant platform on local hardware.
+The assistant reaches external services only through narrow, policy-gated
+levers, and never holds a raw upstream credential.
+
+> **Correction, 2026-08-05.** This document previously said the assistant
+> "never gets raw shell access". That was false and had been for the life of
+> the project. See **Shell access** below: the gateway's `hermes-cli` toolset
+> includes a local terminal, `command_allowlist` is empty, and the assistant
+> runs arbitrary commands as the `agentbox` user. The credential claims survive
+> — but by filesystem permissions, not by architecture — and three policy tiers
+> do not survive at all.
 
 ```mermaid
 flowchart TD
@@ -48,6 +56,49 @@ worker models are drawn separately because the gateway does not call them —
 they serve the evaluator. Verified against the live gateway config and the
 router's access log, 2026-08-02.
 
+
+## Shell access — the gap this design does not close
+
+`toolsets: [hermes-cli]` includes `terminal_tool`, `terminal.backend` is
+`local`, `command_allowlist` is empty and `disabled_toolsets` is empty. The
+assistant executes arbitrary commands as `agentbox`.
+
+Measured 2026-08-05, exactly:
+
+**Still holds, but for a different reason than claimed.** The assistant cannot
+read an upstream credential:
+
+- `agentbox` is not in the `docker` group, so `docker inspect` cannot dump a
+  bridge container's environment;
+- `/home/alex/.config/agent-control-plane/` is mode 700 to the operator, so
+  the env files holding every bridge token and the memory review token are
+  unreadable;
+- bridges *are* reachable at their container IPs from the host — verified,
+  `/health` returns 200 — but an unauthenticated call returns 401, and the
+  token to authenticate it is behind the two lines above.
+
+That is real isolation, but it is **unix permissions doing the work, not the
+architecture**. One `usermod -aG docker agentbox` deletes it silently. Treat
+those two properties as load-bearing and check them in `doctor`.
+
+**Does not hold.** The assistant can write to `/home/agentbox/`, which means:
+
+| Policy says | Reality |
+|---|---|
+| `modify_production_gateway_config` — approval_required | `config.yaml` is writable |
+| `enable_skill_bundle_production` — approval_required | the skills directory is writable |
+| `modify_upstream_agent_source` — **always_denied** | the gateway's own tree is writable |
+
+So the builder's protected-path check, the memory review token, and every
+approval tier are enforced against *tool calls* while a shell sits beside them
+with none of it applied. The containment argument in this document — "a
+constraint holds when the model is compromised" — is true of the bridges and
+false of the gateway host.
+
+This is not a defect introduced by any recent change; it predates the policy
+model. It is recorded here rather than quietly fixed because the fix is a
+posture decision (sandbox the terminal, allowlist it, or remove the toolset)
+and belongs to the operator. See `docs/roadmap.md`.
 
 ## Trust boundaries
 

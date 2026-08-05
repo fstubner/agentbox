@@ -311,3 +311,35 @@ else the assistant authors.
 Ordering: after the MCP consolidation (the evaluator belongs behind the same
 gateway) and after two accounts (a rule fires as *someone*; building it
 single-user first would mean retrofitting identity into stored rules).
+
+### 12. Close the shell gap — **highest priority**
+
+Found 2026-08-05 while answering "can the terminal tool find the credentials?".
+
+The assistant has an unrestricted local shell as `agentbox` (`toolsets:
+[hermes-cli]`, empty `command_allowlist`). Credentials survive it — by
+filesystem permissions, not by design — but three policy tiers do not:
+`modify_production_gateway_config` and `enable_skill_bundle_production` are
+`approval_required` and `modify_upstream_agent_source` is `always_denied`,
+while `config.yaml`, the skills directory and the gateway tree are all
+writable.
+
+Options, cheapest first:
+
+1. **`command_allowlist`** — Hermes supports one and it is currently empty.
+   Smallest change, but it is a denylist problem wearing an allowlist's
+   clothes: a shell with `python` on the list is still a shell.
+2. **Make the gateway's own tree read-only to it.** `config.yaml`, `skills/`
+   and the source owned by a different uid, with the gateway reading them and
+   the operator writing them. Directly restores the three broken tiers and
+   matches how `/policy` is already mounted read-only into containers.
+3. **Sandbox the terminal.** `terminal.backend: docker` exists in the config.
+   Strongest, and the one that makes "no shell access" true rather than
+   aspirational.
+4. **Drop the toolset.** The assistant has 39 designed tools; the shell is what
+   the tool-surface principle exists to replace. Ask what it is still for.
+
+(2) restores the policy model; (3) restores the architecture claim. They
+compose. Also add a `doctor` check for the two permission facts credential
+isolation currently rests on — `agentbox` not in `docker`, operator env dir not
+world-readable — since both are silent if broken.
