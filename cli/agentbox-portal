@@ -117,7 +117,7 @@ GOOGLE_SCOPES = os.environ.get(
 
 # Same variable and default as cli/agentbox, deliberately. Two names for one
 # endpoint is how a portal ends up quietly pointed at nothing.
-PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://agentbox.local:8771")
+PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
 MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
                                    "http://127.0.0.1:3471")
 

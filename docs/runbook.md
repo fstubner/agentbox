@@ -74,7 +74,7 @@ cover anyone, as every pre-identity grant does.
 
 ```
 cli/agentbox-invite create sam
-AGENTBOX_INVITE_ORIGIN=http://agentbox.local:8770 \
+AGENTBOX_INVITE_ORIGIN=http://127.0.0.1:8770 \
 AGENTBOX_GOOGLE_CLIENT_ID=<client id> \
   cli/agentbox-invite serve
 cli/agentbox invite complete <id>
@@ -169,7 +169,7 @@ memories the assistant proposed **about them** and manage their own
 connectors; admins additionally get operations.
 
 ```bash
-cli/agentbox-portal link sam --base-url http://agentbox.local:8771
+cli/agentbox-portal link sam --base-url http://127.0.0.1:8771
 ```
 
 Ordinarily people sign in themselves: they type their email address and a link
