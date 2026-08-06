@@ -137,7 +137,11 @@ than gating:
   injected label id is refused;
 - durable memory needs an operator token the assistant does not hold, so an
   injected "remember that…" reaches a review queue and stops;
-- no tool sends mail or deletes anything, because those are not exposed.
+- no tool sends mail or deletes anything, because those are not exposed;
+- a camera look takes an *enum*, not a question, and returns counts and enums
+  rather than prose — so neither the request nor the reply has a field an
+  injected instruction can occupy. Text in the room is reported as present and
+  deliberately never transcribed.
 
 A constraint holds when the model is compromised. An approval only helps if a
 human reads carefully first.

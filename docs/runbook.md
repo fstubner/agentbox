@@ -363,15 +363,28 @@ privacy, and no injection surface.
 **Cameras are opt-in one at a time** via `HA_VIEWABLE_CAMERAS`, and separately
 from control — `camera` stays in the never-actuate list, so nothing pans, tilts
 or records. A look fetches one frame, sends it to the local vision model, and
-discards it. The assistant receives a description, never the image, and the
-description is flagged untrusted.
+discards it.
 
-That flag is not decoration. Anything written where a lens can see it — a note
-on the fridge, a phone screen, the television — is about to be read out by a
-model, so a camera gives anyone with physical access to that room a way to put
-text into the assistant's context. Looking on request bounds that to moments
-somebody asked; watching continuously would not, which is why there is no
-continuous mode.
+**Both ends are closed vocabularies**, which is what makes a camera safe to
+point at an assistant that reads email:
+
+- the *question* is an enum (`occupancy` or `activity`), not free text. A
+  caller-composed question is a question an injected instruction can compose —
+  "transcribe everything you can see" would turn the camera into a reader
+  pointed at whatever is in frame.
+- the *answer* is `{people, posture, text_visible}` with `posture` intersected
+  against a fixed vocabulary. Unknown keys are dropped, and a reply that is not
+  valid JSON — which is what a successful injection looks like — is discarded
+  rather than passed through as prose.
+
+Text in the room is reported as `text_visible: true` and **never transcribed**.
+Knowing a whiteboard has writing on it is the useful part; reading it aloud is
+the vulnerability.
+
+An earlier version returned a prose description flagged `untrusted: true`. A
+flag is a hint the model may ignore; a schema is not. Looking on request also
+bounds exposure to moments somebody asked, which is why there is no continuous
+mode.
 
 **Screens have two levels**, like a phone lock screen:
 
