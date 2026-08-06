@@ -153,10 +153,10 @@ def ha_request(method: str, path: str, payload: dict | None = None) -> Any:
         if exc.code in (401, 403):
             # Never echo the upstream body here: an auth failure from HA can
             # quote the token back.
-            raise BridgeError(502, "Home Assistant rejected the credential")
-        raise BridgeError(502, f"Home Assistant returned {exc.code}: {detail}")
+            raise BridgeError(502, "Home Assistant rejected the credential") from None
+        raise BridgeError(502, f"Home Assistant returned {exc.code}: {detail}") from None
     except urllib.error.URLError as exc:
-        raise BridgeError(502, f"Home Assistant unreachable: {exc.reason}")
+        raise BridgeError(502, f"Home Assistant unreachable: {exc.reason}") from None
 
 
 def domain_of(entity_id: str) -> str:
@@ -280,7 +280,7 @@ def set_light(handler, body):
             try:
                 brightness = int(brightness)
             except (TypeError, ValueError):
-                raise BridgeError(400, "brightness_pct must be an integer")
+                raise BridgeError(400, "brightness_pct must be an integer") from None
             if not 1 <= brightness <= 100:
                 raise BridgeError(400, "brightness_pct must be 1-100")
             payload["brightness_pct"] = brightness
@@ -305,7 +305,7 @@ def set_climate(handler, body):
     try:
         temperature = float(body.get("temperature"))
     except (TypeError, ValueError):
-        raise BridgeError(400, "temperature is required and must be a number")
+        raise BridgeError(400, "temperature is required and must be a number") from None
     # A bound the assistant cannot argue its way past. Not comfort policy — a
     # thermostat driven to an extreme by a confused model or an injected
     # instruction is a burst pipe or a heat risk to whoever is asleep upstairs.
@@ -344,7 +344,7 @@ def create_automation(handler, body):
     try:
         summary = automation.validate(json.dumps(config), config, CONTROLLABLE)
     except automation.AutomationRefused as exc:
-        raise BridgeError(403, str(exc))
+        raise BridgeError(403, str(exc)) from None
 
     alias = str(config.get("alias") or "").strip()
     if not alias:
@@ -421,9 +421,9 @@ def look_at_camera(handler, body):
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
             image = response.read()
     except urllib.error.HTTPError as exc:
-        raise BridgeError(502, f"could not fetch a frame ({exc.code})")
+        raise BridgeError(502, f"could not fetch a frame ({exc.code})") from None
     except urllib.error.URLError as exc:
-        raise BridgeError(502, f"could not fetch a frame: {exc.reason}")
+        raise BridgeError(502, f"could not fetch a frame: {exc.reason}") from None
     if not image:
         raise BridgeError(502, "camera returned an empty frame")
 
@@ -459,7 +459,7 @@ def look_at_camera(handler, body):
             result = json.loads(response.read())
     except urllib.error.URLError as exc:
         raise BridgeError(503, f"vision model unavailable: {exc.reason}. "
-                               f"Is llama-vision running on {VISION_URL}?")
+                               f"Is llama-vision running on {VISION_URL}?") from None
     raw = ((result.get("choices") or [{}])[0]
            .get("message", {}).get("content", "")).strip()
 

@@ -39,9 +39,9 @@ def vikunja_request(method, path, payload=None, query=None):
             detail = json.loads(raw)
         except json.JSONDecodeError:
             detail = raw[:500]
-        raise BridgeError(exc.code, {"vikunja_error": detail})
+        raise BridgeError(exc.code, {"vikunja_error": detail}) from None
     except urllib.error.URLError as exc:
-        raise BridgeError(502, {"vikunja_error": str(exc.reason)})
+        raise BridgeError(502, {"vikunja_error": str(exc.reason)}) from None
 
 
 def clean_task_payload(body, allow_title=True):
@@ -59,7 +59,7 @@ def require_int(value, name):
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        raise BridgeError(400, f"{name} must be an integer")
+        raise BridgeError(400, f"{name} must be an integer") from None
     if parsed <= 0:
         raise BridgeError(400, f"{name} must be positive")
     return parsed

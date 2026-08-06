@@ -165,7 +165,7 @@ def read_file(handler, body):
     try:
         content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        raise BridgeError(415, f"{path} is not text")
+        raise BridgeError(415, f"{path} is not text") from None
     # Readable but not writable — say so here rather than letting the assistant
     # draft a change and only discover the refusal on submit.
     protected = any(path == g.rstrip("/") or path.startswith(g) for g in PROTECTED)

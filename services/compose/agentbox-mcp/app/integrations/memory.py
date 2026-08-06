@@ -13,7 +13,9 @@ from integrations._client import bridge_client
 bridge_request = bridge_client("MEMORY", "memory-bridge", timeout=20)
 
 MEMORY_FIELDS = {
-    "type": {"type": "string", "description": "health_profile, food_preference, project_context, workflow_rule, household_preference, etc."},
+    "type": {"type": "string",
+             "description": "health_profile, food_preference, project_context, "
+                            "workflow_rule, household_preference, etc."},
     "statement": {"type": "string"},
     "source": {"type": "string"},
     "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
@@ -38,7 +40,9 @@ TOOLS = [
          "description": "'private' (default) is visible only to the person you "
                         "are acting for. 'household' is visible to everyone."}},
          ["statement"])},
-    {"name": "list_memory_proposals", "description": "List pending memory proposals.", "inputSchema": schema_object({"limit": LIMIT})},
+    {"name": "list_memory_proposals",
+     "description": "List pending memory proposals.",
+     "inputSchema": schema_object({"limit": LIMIT})},
     {"name": "search_memories",
      "description": "List stored memories for context retrieval. Returns only "
                     "what the person you are acting for may see: their own "

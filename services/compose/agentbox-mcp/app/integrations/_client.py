@@ -78,8 +78,8 @@ def bridge_client(env_prefix: str, default_host: str, timeout: int = 20):
                 detail = json.loads(detail).get("error", detail)
             except ValueError:
                 pass
-            raise ToolError(f"bridge HTTP {exc.code}: {detail}")
+            raise ToolError(f"bridge HTTP {exc.code}: {detail}") from None
         except urllib.error.URLError as exc:
-            raise ToolError(f"bridge connection failed: {exc.reason}")
+            raise ToolError(f"bridge connection failed: {exc.reason}") from None
 
     return bridge_request

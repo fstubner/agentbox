@@ -333,7 +333,7 @@ def activity(handler, body):
     try:
         days = max(1, min(90, int(first(query, "days", "7"))))
     except ValueError:
-        raise BridgeError(400, "days must be an integer")
+        raise BridgeError(400, "days must be an integer") from None
 
     records = read_outcomes(days)
     calls = [r for r in records if r.get("tool")]
