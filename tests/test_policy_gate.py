@@ -16,7 +16,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
-import policy_gate as pg  # noqa: E402
+import policy_gate as pg
 
 POLICY = REPO / "policies" / "approval-policy.yaml"
 

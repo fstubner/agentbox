@@ -40,9 +40,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from bridge_base import (BridgeError, BridgeHandler, project_fields,
-                         resolve_limit, resolve_view, serve)
 import automation
+from bridge_base import BridgeError, BridgeHandler, project_fields, resolve_limit, resolve_view, serve
 
 # Every automation this service writes is named with this prefix, so the
 # operator can tell at a glance in the HA UI which ones the assistant authored
@@ -588,11 +587,11 @@ class HomeAssistantBridge(BridgeHandler):
 
     def capability_for(self, method: str, path: str,
                        body: dict[str, Any] | None) -> str | None:
-        if path.startswith("/v1/entities") or path.startswith("/v1/entity"):
+        if path.startswith(("/v1/entities", "/v1/entity")):
             return "home_read_state"
         if path.startswith("/v1/climate"):
             return "home_control_climate"
-        if path.startswith("/v1/light") or path.startswith("/v1/scene"):
+        if path.startswith(("/v1/light", "/v1/scene")):
             return "home_control_comfort"
         if path.startswith("/v1/camera"):
             return "home_view_camera"

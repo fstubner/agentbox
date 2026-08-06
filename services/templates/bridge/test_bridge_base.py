@@ -14,7 +14,6 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-
 BASE = Path(__file__).resolve().parent / "app" / "bridge_base.py"
 spec = importlib.util.spec_from_file_location("bridge_base", BASE)
 bridge_base = importlib.util.module_from_spec(spec)

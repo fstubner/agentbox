@@ -7,6 +7,7 @@ review gate did not exist, guarded only by a sentence in a tool description.
 from __future__ import annotations
 
 from mcp_base import ToolError, schema_object
+
 from integrations._client import bridge_client
 
 bridge_request = bridge_client("MEMORY", "memory-bridge", timeout=20)

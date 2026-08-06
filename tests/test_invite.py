@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
-import json
 import os
-import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -124,8 +121,8 @@ def test_the_page_cannot_provision_anything(inv):
         assert forbidden not in imported, f"imports {forbidden}"
 
     # And no credential names anywhere outside comments.
-    code = "\n".join(l for l in source.splitlines()
-                     if not l.lstrip().startswith("#"))
+    code = "\n".join(line for line in source.splitlines()
+                     if not line.lstrip().startswith("#"))
     code = code.split('"""', 2)[-1]          # drop the module docstring
     for forbidden in ("OP_SERVICE_ACCOUNT", "BRIDGE_TOKEN", "docker exec"):
         assert forbidden not in code, forbidden

@@ -11,8 +11,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from bridge_base import (BridgeError, BridgeHandler, VIEWS, project_fields,
-                         resolve_view, serve)
+from bridge_base import VIEWS, BridgeError, BridgeHandler, project_fields, resolve_view, serve
 
 VIKUNJA_URL = os.environ.get("VIKUNJA_URL", "http://vikunja:3456").rstrip("/")
 VIKUNJA_API_TOKEN = os.environ.get("VIKUNJA_API_TOKEN", "")

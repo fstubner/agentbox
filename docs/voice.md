@@ -1,5 +1,12 @@
 # Voice
 
+> Paths below use the deployment variables rather than one machine's literal
+> layout: `$HERMES_HOME` is the gateway profile, `$GATEWAY_USER_HOME` the
+> gateway user's home, `$GATEWAY_VENV` its virtualenv, `$AGENTBOX_ENV_DIR` the
+> operator's env files, `$AGENTBOX_REPO` this checkout. CI refuses literal home
+> directories so the repo stays portable and free of one person's filesystem.
+
+
 Speech in and out, entirely on this box. Nothing spoken to the assistant and
 nothing it says back leaves the machine.
 
@@ -29,7 +36,7 @@ sudo apt-get install -y libopus0 ffmpeg
 ```
 
 ```bash
-sudo -u agentbox /home/agentbox/hermes-agent-test/.venv/bin/pip install faster-whisper piper-tts
+sudo -u agentbox $GATEWAY_VENV/bin/pip install faster-whisper piper-tts
 ```
 
 Without `libopus0` the gateway logs `Opus codec not found — voice channel
@@ -39,13 +46,13 @@ feature being off.
 
 Models are cached under the gateway's profile, not the operator's home:
 
-- Piper voice — `/home/agentbox/agentbox/cache/piper-voices/`
-- Whisper — `/home/agentbox/agentbox/cache/whisper/`
+- Piper voice — `$HERMES_HOME/cache/piper-voices/`
+- Whisper — `$HERMES_HOME/cache/whisper/`
 
 Pre-fetch the Piper voice so the first spoken reply is not a 60-second pause:
 
 ```bash
-sudo -u agentbox env HERMES_HOME=/home/agentbox/agentbox /home/agentbox/hermes-agent-test/.venv/bin/python -m piper.download_voices en_US-lessac-medium --data-dir /home/agentbox/agentbox/cache/piper-voices
+sudo -u agentbox env HERMES_HOME=$HERMES_HOME $GATEWAY_VENV/bin/python -m piper.download_voices en_US-lessac-medium --data-dir $HERMES_HOME/cache/piper-voices
 ```
 
 ## Config

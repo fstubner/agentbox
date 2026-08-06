@@ -138,7 +138,10 @@ def test_second_service_gets_a_different_port(sandbox):
     first = (sandbox / "services/compose/todoist-bridge/compose.yaml").read_text()
     second = (sandbox / "services/compose/linear-bridge/compose.yaml").read_text()
     import re
-    port_of = lambda t: re.search(r":(\d{4}):8080", t).group(1)  # noqa: E731
+
+    def port_of(text):
+        return re.search(r":(\d{4}):8080", text).group(1)
+
     assert port_of(first) != port_of(second)
 
 
