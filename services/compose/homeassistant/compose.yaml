@@ -47,6 +47,16 @@ services:
     pids_limit: 512
     security_opt:
       - no-new-privileges:true
+      # docker-default plus D-Bus rules for BlueZ, and nothing else. See
+      # services/apparmor/agentbox-homeassistant for why this exists rather
+      # than `apparmor=unconfined`: every restriction docker-default imposes
+      # still applies, and the container can reach org.bluez but not systemd,
+      # logind, NetworkManager or anything else on the system bus.
+      #
+      # Install it before deploying, or the container will not start:
+      #   sudo cp services/apparmor/agentbox-homeassistant /etc/apparmor.d/
+      #   sudo apparmor_parser -r -W /etc/apparmor.d/agentbox-homeassistant
+      - apparmor=agentbox-homeassistant
     # BLE scanning needs raw socket access to the adapter. NET_ADMIN alone is
     # not enough and NET_RAW alone is not enough; BlueZ wants both to start a
     # scan. Still no --privileged, and no-new-privileges above still holds.
