@@ -185,10 +185,101 @@ def test_vikunja_provisioning_uses_the_container_cli():
     assert '"user", "create"' in block
 
 
-def test_google_is_not_pretended_to_be_automatic():
-    """We cannot create a Google account or consent on her behalf, and a flow
-    that implied otherwise would leave her sharing Alex's mail."""
+def test_consent_is_the_only_part_that_is_not_automated():
+    """Superseded an earlier version that printed OAuth steps as homework.
+
+    We can neither create a Google account nor consent on her behalf — but
+    everything *after* consent is ours to do, and printing it as instructions
+    was stopping at the hard part. She consents in the page; the exchange and
+    the bridge are automatic."""
     source = (REPO / "cli" / "agentbox").read_text()
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
-    assert "cannot be automated" in block
-    assert "she shares yours" in block
+    assert "exchange_oauth_code" in block
+    assert "provision_google_bridge" in block
+    # And the old homework is gone.
+    assert "Run the OAuth flow signed in as HER" not in source
+
+
+# --- automatic connector provisioning -------------------------------------------
+#
+# "She picks Gmail and it works" is the whole point of onboarding. The parts
+# that can be automated now are; the one that cannot — her consent — happens in
+# the page rather than being printed as homework.
+
+
+def test_the_page_can_start_google_consent_but_not_finish_it(inv):
+    """The privilege split, stated in code: a client id is public and lives
+    here, a client secret is not and does not. So the page can send her to
+    Google and receive a code, and a code without the secret is inert."""
+    source = (REPO / "cli" / "agentbox-invite").read_text()
+    assert "AGENTBOX_GOOGLE_CLIENT_ID" in source
+    assert "CLIENT_SECRET" not in source
+    assert "oauth2.googleapis.com/token" not in source  # no exchange here
+
+
+def test_consent_asks_for_a_refresh_token_explicitly(inv):
+    """access_type=offline plus prompt=consent are what make Google return a
+    refresh token. Without them a returning user gets none, and the failure
+    surfaces minutes later on the operator side instead of here."""
+    source = (REPO / "cli" / "agentbox-invite").read_text()
+    block = source.split("def google_auth_url", 1)[1].split("\ndef ", 1)[0]
+    assert '"access_type": "offline"' in block
+    assert '"prompt": "consent"' in block
+
+
+def test_the_callback_verifies_state_against_the_invite(inv):
+    """`state` carries the invite through Google and back. If it were not
+    checked, anyone could post a code and have a bridge provisioned."""
+    source = (REPO / "cli" / "agentbox-invite").read_text()
+    block = source.split("def _google_callback", 1)[1].split("\n    def ", 1)[0]
+    assert "hmac.compare_digest" in block
+
+
+def test_the_exchange_lives_on_the_operator_side():
+    source = (REPO / "cli" / "agentbox").read_text()
+    assert "oauth2.googleapis.com/token" in source
+    block = source.split("def exchange_oauth_code", 1)[1].split("\ndef ", 1)[0]
+    assert "GOOGLE_CLIENT_SECRET" in block
+
+
+def test_a_provisioned_bridge_holds_only_that_persons_token():
+    """The reason for a second container rather than a second credential in the
+    first one."""
+    source = (REPO / "cli" / "agentbox").read_text()
+    block = source.split("def provision_google_bridge", 1)[1].split("\ndef ", 1)[0]
+    assert "GOOGLE_REFRESH_TOKEN={refresh_token}" in block
+    # A fresh bridge token per identity, not the shared one.
+    assert "_secrets.token_hex(32)" in block
+
+
+def test_a_new_identity_gets_no_writable_calendar():
+    """Inheriting the operator's would let her assistant write to his."""
+    source = (REPO / "cli" / "agentbox").read_text()
+    block = source.split("def provision_google_bridge", 1)[1].split("\ndef ", 1)[0]
+    assert '"GOOGLE_ALLOWED_WRITE_CALENDAR_ID="' in block
+
+
+def test_the_identity_bridge_joins_the_existing_network():
+    """A per-identity network would mean editing the gateway's compose every
+    time somebody joins — and a config the onboarding flow rewrites is one that
+    will eventually be rewritten wrongly."""
+    compose = (REPO / "services" / "compose" / "google-workspace-bridge"
+               / "identity.compose.yaml").read_text()
+    assert "google-workspace-bridge_default" in compose
+    assert "external: true" in compose
+
+
+def test_the_identity_bridge_publishes_no_host_port():
+    compose = (REPO / "services" / "compose" / "google-workspace-bridge"
+               / "identity.compose.yaml").read_text()
+    assert "ports:" not in compose
+    assert "agentbox.exposure: private" in compose
+
+
+def test_missing_consent_is_reported_rather_than_silently_shared():
+    """If she skipped the Google step she falls back to the shared bridge —
+    correct for shared services, wrong for mail, so it must be said."""
+    source = (REPO / "cli" / "agentbox").read_text()
+    block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
+    assert "did not finish the consent" in block
+    assert "wrong for mail" in block

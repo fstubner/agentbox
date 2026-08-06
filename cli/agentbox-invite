@@ -48,6 +48,17 @@ STATE = Path(os.environ.get(
     "AGENTBOX_INVITE_DIR",
     str(Path("~/.local/state/agentbox/invites").expanduser())))
 DEFAULT_TTL_HOURS = int(os.environ.get("AGENTBOX_INVITE_TTL_HOURS", "24"))
+# Public by design — a client id is not a secret. The *secret* stays on the
+# operator side, which is why this page can start Google's consent flow but
+# cannot finish it: it receives an authorisation code, and a code is useless
+# without the secret that exchanges it. That is the whole reason onboarding is
+# two phases rather than one privileged service.
+GOOGLE_CLIENT_ID = os.environ.get("AGENTBOX_GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_SCOPES = os.environ.get(
+    "AGENTBOX_GOOGLE_SCOPES",
+    "https://www.googleapis.com/auth/gmail.modify "
+    "https://www.googleapis.com/auth/calendar")
+PUBLIC_ORIGIN = os.environ.get("AGENTBOX_INVITE_ORIGIN", "").rstrip("/")
 BIND_HOST = os.environ.get("AGENTBOX_INVITE_HOST", "0.0.0.0")
 BIND_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))
 
@@ -86,6 +97,29 @@ CONNECTORS = {
 
 def now() -> int:
     return int(time.time())
+
+
+def google_auth_url(token_id: str, secret: str) -> str:
+    """Where to send her for consent.
+
+    `prompt=consent` and `access_type=offline` together are what make Google
+    return a *refresh* token rather than only an access token. Without them a
+    person who has approved this client before gets no refresh token and the
+    bridge cannot be provisioned — a failure that shows up minutes later on the
+    operator side rather than here, so it is worth being explicit.
+    """
+    redirect = f"{PUBLIC_ORIGIN}/google/callback"
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect,
+        "response_type": "code",
+        "scope": GOOGLE_SCOPES,
+        "access_type": "offline",
+        "prompt": "consent",
+        # Carries the invite through Google and back, so the callback knows
+        # whose onboarding this is without a cookie or a session.
+        "state": f"{token_id}:{secret}",
+    })
 
 
 def invite_path(token_id: str) -> Path:
@@ -174,6 +208,17 @@ DONE = """<p>Thanks{name} — that's everything we need.</p>
 <p>{owner} will finish setting up your account. You'll hear from them shortly.</p>
 <p class="fixed">You can close this page.</p>"""
 
+GOOGLE_STEP = """<p>Thanks{name}. One more step — you asked to connect Gmail
+and Calendar, so Google needs your permission.</p>
+<p>You'll sign in to Google directly. {owner} never sees your password, and you
+can revoke access at any time from your Google account.</p>
+<p><a href="{url}"><button type="button">Sign in with Google</button></a></p>
+<p class="fixed">Nothing else is connected to Google until you do this.</p>"""
+
+GOOGLE_DONE = """<p>Google connected.</p>
+<p>{owner} will finish setting up your account shortly.</p>
+<p class="fixed">You can close this page.</p>"""
+
 
 def render_form(household: str) -> str:
     personal, shared = [], []
@@ -220,7 +265,42 @@ class InviteHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         return (query.get("i", [""])[0].strip(), query.get("t", [""])[0].strip())
 
+    def _google_callback(self) -> None:
+        """Google hands the authorisation code back here.
+
+        The code is stored, not exchanged: exchanging needs the client secret,
+        which this process deliberately does not have. `agentbox invite
+        complete` does that and provisions her bridge.
+        """
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        state = query.get("state", [""])[0]
+        token_id, _, secret = state.partition(":")
+        # The invite is already marked used by this point, so validate against
+        # the record directly rather than through valid_invite.
+        record = load_invite(token_id)
+        if not record or not hmac.compare_digest(
+                str(record.get("secret", "")), secret):
+            return self._error("This link is not valid. Ask for a new one.")
+
+        if query.get("error"):
+            return self._error(
+                "Google was not connected — you can ask for a new invite and "
+                "try again. Everything else you chose is already saved.")
+
+        code = query.get("code", [""])[0]
+        if not code:
+            return self._error("Google did not return an authorisation code.")
+
+        record["google_code"] = code
+        record["google_redirect_uri"] = f"{PUBLIC_ORIGIN}/google/callback"
+        save_invite(record)
+        self._send(200, PAGE.format(
+            household=html.escape(self.household),
+            body=GOOGLE_DONE.format(owner=html.escape(self.owner))))
+
     def do_GET(self) -> None:
+        if urllib.parse.urlparse(self.path).path == "/google/callback":
+            return self._google_callback()
         if urllib.parse.urlparse(self.path).path != "/":
             return self._send(404, PAGE.format(
                 household=html.escape(self.household),
@@ -255,6 +335,16 @@ class InviteHandler(BaseHTTPRequestHandler):
         record["display_name"] = display_name
         record["connectors"] = chosen
         save_invite(record)
+
+        # If she asked for Google, consent has to happen now — a code is only
+        # valid for minutes, so collecting it later would mean asking twice.
+        if "google" in chosen and GOOGLE_CLIENT_ID and PUBLIC_ORIGIN:
+            return self._send(200, PAGE.format(
+                household=html.escape(self.household),
+                body=GOOGLE_STEP.format(
+                    name=f", {html.escape(display_name)}",
+                    owner=html.escape(self.owner),
+                    url=html.escape(google_auth_url(token_id, secret)))))
 
         self._send(200, PAGE.format(
             household=html.escape(self.household),
@@ -298,6 +388,15 @@ def cmd_serve(args) -> int:
         return 1
     InviteHandler.household = args.household
     InviteHandler.owner = args.owner
+    if not PUBLIC_ORIGIN:
+        print("note: AGENTBOX_INVITE_ORIGIN is unset, so the Google step is "
+              "skipped.\n      Set it to the URL she will actually open "
+              "(e.g. http://agentbox.local:8770)\n      and register "
+              "<that>/google/callback as a redirect URI on the OAuth client.",
+              file=sys.stderr)
+    elif not GOOGLE_CLIENT_ID:
+        print("note: AGENTBOX_GOOGLE_CLIENT_ID is unset, so the Google step is "
+              "skipped.", file=sys.stderr)
     server = ThreadingHTTPServer((BIND_HOST, BIND_PORT), InviteHandler)
     print(f"Onboarding page on {BIND_HOST}:{BIND_PORT} — "
           f"{len(pending)} invite(s) outstanding.")

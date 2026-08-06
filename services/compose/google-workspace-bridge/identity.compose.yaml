@@ -1,0 +1,63 @@
+# A Google bridge holding one person's credential.
+#
+# Deployed once per identity by `agentbox invite complete`, so Sam's mail is
+# reached with Sam's token and Alex's with Alex's. The gateway routes to it by
+# container name via GOOGLE_BRIDGE_URL_<IDENTITY>.
+#
+# It joins the *existing* google-workspace-bridge_default network rather than
+# creating its own. That is deliberate: a per-identity network would mean
+# editing the gateway's compose file every time somebody joins, and a config
+# the onboarding flow has to rewrite is a config that will eventually be
+# rewritten wrongly. One network, one container per person, no gateway change.
+#
+# Everything else matches the shared bridge exactly — same image, same
+# constraints, no host port. The only difference is whose refresh token is
+# inside it.
+services:
+  identity-google-bridge:
+    image: agentbox/google-workspace-bridge:local
+    container_name: "${IDENTITY_NAME:?set IDENTITY_NAME}-google-bridge"
+    environment:
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+      # This person's token, and nobody else's. That is the whole point of a
+      # second container rather than a second credential in the first one.
+      GOOGLE_REFRESH_TOKEN: "${GOOGLE_REFRESH_TOKEN:-}"
+      GOOGLE_BRIDGE_TOKEN: "${GOOGLE_BRIDGE_TOKEN:-}"
+      GOOGLE_ALLOWED_WRITE_CALENDAR_ID: "${GOOGLE_ALLOWED_WRITE_CALENDAR_ID:-}"
+      GOOGLE_OWNED_LABEL_PREFIX: "${GOOGLE_OWNED_LABEL_PREFIX:-agentbox/}"
+      BRIDGE_HOST: "0.0.0.0"
+      BRIDGE_PORT: "8080"
+      BRIDGE_LOG_FILE: "/logs/${IDENTITY_NAME:?set IDENTITY_NAME}-google-bridge.jsonl"
+    networks:
+      google:
+    volumes:
+      - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
+      - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
+      - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
+    cpus: "0.50"
+    mem_limit: 160m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    labels:
+      agentbox.service: identity-google-bridge
+      agentbox.exposure: private
+      agentbox.identity: "${IDENTITY_NAME:?set IDENTITY_NAME}"
+
+networks:
+  google:
+    external: true
+    name: google-workspace-bridge_default

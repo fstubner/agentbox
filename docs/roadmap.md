@@ -405,9 +405,11 @@ joining is the work.
 secret is indistinguishable from an unknown id, and completing a test
 invite really did create a Vikunja user via the container CLI.
 
-Still manual: her Google OAuth and the per-identity bridge deploy,
-which `complete` prints instructions for rather than automating —
-consent cannot be delegated.
+Connector provisioning is automatic as of 2026-08-06: she consents in the page,
+and `invite complete` exchanges the code and stands up a Google bridge holding
+only her credential, wiring the per-identity routing. Consent itself remains
+hers to give — that is not a gap, it is the one part that should never be
+delegated.
 
 #### Original design
 
