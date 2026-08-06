@@ -483,6 +483,13 @@ def _drive_folder_guard(parents):
 
 
 DRIVE_FIELDS = "id,name,mimeType,modifiedTime,size,owners(displayName),webViewLink"
+ACTIVITY_API = "https://driveactivity.googleapis.com/v2"
+# The activity feed is deeply nested and mostly type-tag envelopes. Flattening
+# it here rather than in the model keeps a verbose upstream shape out of the
+# context window, which is the same reason the calendar has a `lean` view.
+ACTIVITY_ACTIONS = ("create", "edit", "move", "rename", "delete", "restore",
+                    "permissionChange", "comment", "dlpChange", "reference",
+                    "settingsChange")
 
 
 def drive_search(body):
@@ -574,6 +581,114 @@ def drive_list_folder(body):
     return google_json("GET", f"{DRIVE_API}/files?{params}") or {}
 
 
+def _activity_actor(actor):
+    """A display name for whoever acted, or a truthful placeholder.
+
+    Activity records carry a user id rather than a name, and resolving one
+    costs an extra People API call and a wider scope. "someone" is honest;
+    inventing a name would not be.
+    """
+    if not isinstance(actor, dict):
+        return "unknown"
+    known = actor.get("user", {}).get("knownUser", {})
+    if known.get("isCurrentUser"):
+        return "you"
+    if "user" in actor:
+        return "someone"
+    for kind in ("impersonation", "system", "administrator", "anonymous"):
+        if kind in actor:
+            return kind
+    return "unknown"
+
+
+def _activity_kind(detail):
+    for name in ACTIVITY_ACTIONS:
+        if name in (detail or {}):
+            return name
+    return "unknown"
+
+
+def drive_activity(body):
+    """Who changed what, and when.
+
+    Read-only by construction: drive.activity.readonly can observe history and
+    cannot alter it. Useful for exactly the questions a shared drive raises —
+    "who edited the budget?", "when did this move?" — without granting anything
+    that could answer them destructively.
+    """
+    payload = {"pageSize": resolve_limit(body.get("max_results"), 20, 100)}
+    file_id = str(body.get("file_id", "")).strip()
+    folder_id = str(body.get("folder_id", "")).strip()
+    if file_id and folder_id:
+        raise BridgeError(400, "give file_id or folder_id, not both")
+    if file_id:
+        payload["itemName"] = f"items/{file_id}"
+    elif folder_id:
+        payload["ancestorName"] = f"items/{folder_id}"
+    else:
+        payload["ancestorName"] = "items/root"
+    raw = google_json("POST", f"{ACTIVITY_API}/activity:query", payload) or {}
+    events = []
+    for activity in raw.get("activities", []):
+        targets = []
+        for target in activity.get("targets", []):
+            item = target.get("driveItem", {})
+            if item.get("title"):
+                targets.append(item["title"])
+        events.append({
+            "when": activity.get("timestamp")
+                    or activity.get("timeRange", {}).get("endTime"),
+            "action": _activity_kind(activity.get("primaryActionDetail")),
+            "actors": sorted({_activity_actor(a)
+                              for a in activity.get("actors", [])}),
+            "items": targets,
+        })
+    return {"activity": events, "count": len(events)}
+
+
+def drive_sharing(body):
+    """Who can currently see one file.
+
+    Reading permissions is not changing them, and the two are worth separating.
+    "Is anything of mine shared publicly?" is a question worth being able to
+    ask; making something public is a disclosure that belongs to a human. So
+    this lists, and there is no route that writes.
+    """
+    file_id = str(body.get("file_id", "")).strip()
+    if not file_id:
+        raise BridgeError(400, "file_id is required")
+    params = urllib.parse.urlencode({
+        "fields": "permissions(id,type,role,emailAddress,domain,"
+                  "allowFileDiscovery)"})
+    raw = google_json("GET", f"{DRIVE_API}/files/"
+                             f"{urllib.parse.quote(file_id)}/permissions"
+                             f"?{params}") or {}
+    entries = []
+    public = False
+    for entry in raw.get("permissions", []):
+        kind = entry.get("type")
+        if kind in ("anyone", "domain"):
+            public = True
+        entries.append({
+            "who": entry.get("emailAddress") or entry.get("domain") or kind,
+            "type": kind,
+            "role": entry.get("role"),
+        })
+    return {"permissions": entries, "shared_beyond_owner": len(entries) > 1,
+            "reachable_by_anyone_or_whole_domain": public}
+
+
+def drive_recent(body):
+    """Recently modified files, without needing a search term."""
+    params = urllib.parse.urlencode({
+        "q": "trashed = false",
+        "pageSize": resolve_limit(body.get("max_results"), 15, 50),
+        "fields": f"files({DRIVE_FIELDS})",
+        "orderBy": "modifiedTime desc",
+    })
+    return google_json("GET", f"{DRIVE_API}/files?{params}") or {}
+
+
 def drive_create(body):
     """Create a plain-text or markdown file in the agent-owned folder.
 
@@ -610,6 +725,9 @@ _POST_ROUTES = {
     "/v1/drive/read": drive_read,
     "/v1/drive/list": drive_list_folder,
     "/v1/drive/create": drive_create,
+    "/v1/drive/activity": drive_activity,
+    "/v1/drive/sharing": drive_sharing,
+    "/v1/drive/recent": drive_recent,
     "/v1/gmail/search": gmail_search,
     "/v1/gmail/read": gmail_read,
     "/v1/gmail/clean": gmail_clean,
@@ -647,7 +765,9 @@ class GoogleWorkspaceBridge(BridgeHandler):
     def capability_for(self, method, path, body):
         if path == "/v1/drive/create":
             return "drive_write_own_folder"
-        if path in ("/v1/drive/search", "/v1/drive/read", "/v1/drive/list"):
+        if path in ("/v1/drive/search", "/v1/drive/read", "/v1/drive/list",
+                    "/v1/drive/activity", "/v1/drive/sharing",
+                    "/v1/drive/recent"):
             return "drive_read"
         if path == "/v1/gmail/modify":
             action = str((body or {}).get("action", ""))

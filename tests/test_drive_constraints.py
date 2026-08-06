@@ -75,11 +75,30 @@ def test_there_is_no_delete_or_share_route(gb):
     by any argument to any route.
     """
     for path in gb._POST_ROUTES:
-        assert "permission" not in path
-        assert "share" not in path
         assert "delete" not in path
-    source = (APP / "bridge.py").read_text()
-    assert "/permissions" not in source
+
+    # Permissions may be *read* — "is this shared publicly?" is worth asking.
+    # They may never be written: that call is what turns a private document
+    # into a public link, and it belongs to a human who can see the file.
+    #
+    # Checked by walking the syntax tree rather than grepping, because a string
+    # search over source is satisfied by a comment and proves nothing.
+    import ast
+    tree = ast.parse((APP / "bridge.py").read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", "")
+        if name not in ("google_json", "google_delete", "google_bytes"):
+            continue
+        literals = " ".join(
+            n.value for n in ast.walk(node)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str))
+        if "permissions" not in literals:
+            continue
+        method = literals.split()[0] if name == "google_json" else "DELETE"
+        assert method == "GET", (
+            f"{name} touches permissions with {method}; only GET is allowed")
 
 
 # --- query construction --------------------------------------------------------
@@ -215,7 +234,8 @@ def test_onboarding_scopes_match_what_the_bridge_calls():
     setup = (REPO / "services/compose/google-workspace-bridge"
                     "/oauth-setup.py").read_text()
     invite = (REPO / "cli" / "agentbox-invite").read_text()
-    for scope in ("gmail.modify", "calendar", "drive.file"):
+    for scope in ("gmail.modify", "calendar", "drive.file",
+                  "drive.activity.readonly"):
         assert scope in setup, f"{scope} missing from oauth-setup"
         assert scope in invite, f"{scope} missing from the invite flow"
 
@@ -256,3 +276,57 @@ def test_ambiguous_optin_values_do_not_grant_broad_read(monkeypatch):
     for value in ("", "0", "no", "false", "maybe"):
         assert not [s for s in _oauth_scopes(monkeypatch, value)
                     if "drive.readonly" in s]
+
+
+def test_sharing_route_reads_and_never_writes(gb, monkeypatch):
+    """Listing who can see a file must not become a way to change it."""
+    seen = {}
+
+    def fake(method, url, **kwargs):
+        seen["method"], seen["url"] = method, url
+        return {"permissions": [{"type": "user", "role": "owner",
+                                 "emailAddress": "a@b.c"},
+                                {"type": "anyone", "role": "reader"}]}
+
+    monkeypatch.setattr(gb, "google_json", fake)
+    result = gb.drive_sharing({"file_id": "f1"})
+    assert seen["method"] == "GET"
+    assert result["reachable_by_anyone_or_whole_domain"] is True
+    assert result["shared_beyond_owner"] is True
+
+
+def test_sharing_reports_private_files_as_private(gb, monkeypatch):
+    monkeypatch.setattr(gb, "google_json", lambda *a, **k: {
+        "permissions": [{"type": "user", "role": "owner",
+                         "emailAddress": "a@b.c"}]})
+    result = gb.drive_sharing({"file_id": "f1"})
+    assert result["reachable_by_anyone_or_whole_domain"] is False
+    assert result["shared_beyond_owner"] is False
+
+
+def test_activity_scopes_to_one_item_or_one_folder_not_both(gb):
+    with pytest.raises(gb.BridgeError):
+        gb.drive_activity({"file_id": "f", "folder_id": "d"})
+
+
+def test_activity_defaults_to_the_whole_drive(gb, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(gb, "google_json", lambda m, u, payload=None, **k:
+                        seen.update(payload or {}) or {"activities": []})
+    gb.drive_activity({})
+    assert seen["ancestorName"] == "items/root"
+
+
+def test_activity_is_flattened_and_actors_are_not_invented(gb, monkeypatch):
+    """Resolving a user id to a name needs another call and a wider scope.
+    'someone' is honest; a fabricated name would not be."""
+    monkeypatch.setattr(gb, "google_json", lambda *a, **k: {"activities": [{
+        "timestamp": "2026-08-06T10:00:00Z",
+        "primaryActionDetail": {"edit": {}},
+        "actors": [{"user": {"knownUser": {"isCurrentUser": False}}}],
+        "targets": [{"driveItem": {"title": "Budget"}}]}]})
+    result = gb.drive_activity({"folder_id": "d1"})
+    event = result["activity"][0]
+    assert event["action"] == "edit"
+    assert event["actors"] == ["someone"]
+    assert event["items"] == ["Budget"]

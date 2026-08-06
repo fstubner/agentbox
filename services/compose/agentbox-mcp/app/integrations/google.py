@@ -116,6 +116,27 @@ TOOLS = [
                        "default": "text/plain"}},
          ["name", "content"])},
 
+    {"name": "drive_activity",
+     "description": "Who changed what in Drive, and when. Give file_id for one "
+                    "file, folder_id for a folder, or neither for the whole "
+                    "drive. Read-only: it observes history and cannot alter it.",
+     "inputSchema": schema_object({
+         "file_id": {"type": "string"},
+         "folder_id": {"type": "string"},
+         "max_results": {"type": "integer", "minimum": 1, "maximum": 100}})},
+
+    {"name": "check_drive_sharing",
+     "description": "Who can currently see one Drive file. Use to answer "
+                    "'is this shared?' — it lists access and cannot grant or "
+                    "revoke any.",
+     "inputSchema": schema_object({"file_id": {"type": "string"}},
+                                  ["file_id"])},
+
+    {"name": "list_recent_drive_files",
+     "description": "Recently modified Drive files, newest first.",
+     "inputSchema": schema_object({
+         "max_results": {"type": "integer", "minimum": 1, "maximum": 50}})},
+
     {"name": "list_calendars",
      "description": "List Google calendars.",
      "inputSchema": schema_object({
@@ -158,6 +179,9 @@ ROUTES = {
     "read_drive_file": "/v1/drive/read",
     "list_drive_folder": "/v1/drive/list",
     "create_drive_file": "/v1/drive/create",
+    "drive_activity": "/v1/drive/activity",
+    "check_drive_sharing": "/v1/drive/sharing",
+    "list_recent_drive_files": "/v1/drive/recent",
     "list_calendar_events": "/v1/calendar/events",
     "calendar_freebusy": "/v1/calendar/freebusy",
     "create_agent_calendar_event": "/v1/calendar/events/create",

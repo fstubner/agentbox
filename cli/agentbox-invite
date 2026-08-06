@@ -61,7 +61,8 @@ GOOGLE_SCOPES = os.environ.get(
     "AGENTBOX_GOOGLE_SCOPES",
     "https://www.googleapis.com/auth/gmail.modify "
     "https://www.googleapis.com/auth/calendar "
-    "https://www.googleapis.com/auth/drive.file")
+    "https://www.googleapis.com/auth/drive.file "
+    "https://www.googleapis.com/auth/drive.activity.readonly")
 PUBLIC_ORIGIN = os.environ.get("AGENTBOX_INVITE_ORIGIN", "").rstrip("/")
 BIND_HOST = os.environ.get("AGENTBOX_INVITE_HOST", "0.0.0.0")
 BIND_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))

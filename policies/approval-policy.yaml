@@ -106,6 +106,9 @@ tools:
   read_drive_file: drive_read
   list_drive_folder: drive_read
   create_drive_file: drive_write_own_folder
+  drive_activity: drive_read
+  check_drive_sharing: drive_read
+  list_recent_drive_files: drive_read
 
   # memory-mcp
   propose_memory: propose_memory_for_review

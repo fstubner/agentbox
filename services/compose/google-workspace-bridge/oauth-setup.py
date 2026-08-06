@@ -57,6 +57,9 @@ SCOPES = (
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/drive.file",
+    # Read-only audit trail: who changed what, when. Cannot alter history, and
+    # cannot read file *contents* — a narrower thing than it sounds.
+    "https://www.googleapis.com/auth/drive.activity.readonly",
 )
 
 # Opt-in, and the single most consequential choice in this file.
