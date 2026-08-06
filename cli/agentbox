@@ -1588,6 +1588,47 @@ def revoke_google_token(refresh_token: str) -> bool:
         return False
 
 
+def connectors_sync(quiet: bool = False) -> int:
+    """Complete every connector request people raised in the portal.
+
+    This exists because the two-phase split was solving the right problem the
+    wrong way round. The portal must not hold the docker socket — a
+    LAN-reachable page that can run containers is the worst thing on this box.
+    But making the *operator* the manual step meant Sam could not reconnect her
+    own account without finding Alex, which defeats the point of a
+    self-service portal.
+
+    So the privilege stays here and the waiting goes away: this runs on a timer
+    as the operator's own user, picks up what the portal spooled, and finishes
+    it. The portal still holds no secret and no socket. The person just does not
+    have to ask anyone.
+
+    Timer interval matters: Google expires authorisation codes at about ten
+    minutes, so anything under a couple of minutes is fine and thirty seconds
+    is comfortable.
+    """
+    pending = portal_requests()
+    if not pending:
+        if not quiet:
+            report(OK, "no connector requests waiting")
+        return 0
+    failures = 0
+    for record in pending:
+        identity = str(record.get("identity", ""))
+        action = str(record.get("action", ""))
+        if not identity:
+            continue
+        if action == "reconnect" and record.get("code"):
+            if identity_reconnect(identity) != 0:
+                failures += 1
+        elif action == "disconnect":
+            if identity_disconnect(identity) != 0:
+                failures += 1
+    if failures:
+        report(WARN, f"{failures} connector request(s) could not be completed")
+    return 0
+
+
 def identity_reconnect(name: str) -> int:
     """Finish a reconnect the portal started.
 
@@ -2134,6 +2175,12 @@ def main() -> None:
     idd = idn_sub.add_parser("disconnect",
                              help="revoke and remove a Google connection")
     idd.add_argument("name")
+    con = sub.add_parser("connectors",
+                         help="complete connector requests raised in the portal")
+    con_sub = con.add_subparsers(dest="connectors_cmd", required=True)
+    cs = con_sub.add_parser("sync")
+    cs.add_argument("--quiet", action="store_true",
+                    help="say nothing when there is nothing to do")
     pr = sub.add_parser("proposals", help="review code changes the assistant has proposed")
     pr_sub = pr.add_subparsers(dest="proposals_cmd", required=True)
     pr_sub.add_parser("list")
@@ -2210,6 +2257,8 @@ def main() -> None:
             sys.exit(identity_remove(args.name))
         report(FAIL, f"unknown identity subcommand: {args.identity_cmd}")
         sys.exit(2)
+    if args.cmd == "connectors":
+        sys.exit(connectors_sync(args.quiet))
     if args.cmd == "proposals":
         if args.proposals_cmd == "list":
             sys.exit(proposals_list())

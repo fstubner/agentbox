@@ -254,16 +254,24 @@ The person starts it themselves at the portal under **Your accounts** →
 *Reconnect or switch account*. That sends them through Google's consent screen
 and captures an authorisation code.
 
+That is the whole flow. A timer picks it up within thirty seconds and
+finishes it — no command to run.
+
 ```bash
-cli/agentbox identity reconnect sam
+systemctl --user status agentbox-connectors.timer
+cli/agentbox connectors sync          # or do it now, by hand
 ```
 
-Two halves, for the same reason onboarding has two: the portal can *start*
-consent because a client id is not a secret, but exchanging the code needs the
-client secret, which does not belong on a LAN-reachable page. **Authorisation
-codes expire in about ten minutes**, so run the command while they are still
-around; `reconnect` refuses a stale code with a plain message rather than
-letting Google return something opaque.
+There are still two processes, because the portal must not hold the Google
+client secret, write access to the env directory, or the docker socket: a
+LAN-reachable page that can run containers is the worst thing that could exist
+on this box. What changed is that the operator is no longer the *waiting* part.
+Requiring a human command per reconnect meant nobody could fix their own
+account without finding Alex, which defeats the point of self-service.
+
+**Authorisation codes expire in about ten minutes.** The timer runs well inside
+that; `reconnect` refuses a stale code with a plain message rather than letting
+Google return something opaque.
 
 Consent is bound to the requesting identity. A callback whose `state` does not
 match is refused — otherwise a crafted link could land someone else's

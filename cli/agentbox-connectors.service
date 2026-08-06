@@ -1,0 +1,22 @@
+# Finishes what the portal spooled: reconnects and disconnects.
+#
+# Runs as the OPERATOR's user instance and holds what the portal deliberately
+# does not — the Google client secret, write access to the env directory, and
+# the docker socket. That is the whole reason the two are separate processes:
+# a LAN-reachable page that could run containers is the worst thing that could
+# exist on this box, and `docker run -v /:/host` is a root shell.
+#
+# Splitting them used to mean the operator was a manual step in every
+# reconnect, so nobody could fix their own account without asking. Now the
+# privilege stays here and the waiting is gone.
+
+[Unit]
+Description=Complete Agentbox connector requests
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/oss/agentbox/cli/agentbox connectors sync --quiet
+
+NoNewPrivileges=true
+PrivateTmp=true
