@@ -1,5 +1,12 @@
 # Architecture
 
+> Paths below use the deployment variables rather than one machine's literal
+> layout: `$HERMES_HOME` is the gateway profile, `$GATEWAY_USER_HOME` the
+> gateway user's home, `$GATEWAY_VENV` its virtualenv, `$AGENTBOX_ENV_DIR` the
+> operator's env files, `$AGENTBOX_REPO` this checkout. CI refuses literal home
+> directories so the repo stays portable and free of one person's filesystem.
+
+
 Agentbox is a self-hosted personal AI assistant platform on local hardware.
 The assistant reaches external services only through narrow, policy-gated
 levers, and never holds a raw upstream credential.
@@ -95,7 +102,7 @@ Two filesystem facts, not architecture:
 
 - `agentbox` is not in the `docker` group, so `docker inspect` cannot dump a
   bridge container's environment;
-- `/home/alex/.config/agent-control-plane/` is mode 700 to the operator, so
+- `$AGENTBOX_ENV_DIR/` is mode 700 to the operator, so
   the env files holding every bridge token and the memory review token are
   unreadable;
 - bridges *are* reachable at their container IPs from the host — verified,

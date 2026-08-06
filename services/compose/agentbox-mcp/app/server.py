@@ -56,10 +56,15 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from mcp_base import McpHandler, ToolError, serve  # noqa: E402
-
-from integrations import _client  # noqa: E402
-from integrations import builder, google, homeassistant, memory, vikunja  # noqa: E402
+from integrations import (
+    _client,
+    builder,
+    google,
+    homeassistant,
+    memory,
+    vikunja,
+)
+from mcp_base import McpHandler, ToolError, serve
 
 INTEGRATIONS = {
     "vikunja": vikunja,

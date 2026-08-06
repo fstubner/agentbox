@@ -217,6 +217,7 @@ def test_reads_are_allowed_and_climate_needs_approval():
 
 def test_every_ha_tool_is_mapped():
     import re
+
     import policy_gate as pg
     mapping = pg.load_tool_map(POLICY)
     src = (REPO / "services" / "compose" / "agentbox-mcp" / "app"
@@ -314,7 +315,6 @@ def test_the_image_is_never_returned(monkeypatch):
 
 def _fake_camera_then_vision():
     """First call returns JPEG bytes, second returns a vision completion."""
-    import io
     import json as _json
     state = {"n": 0}
 

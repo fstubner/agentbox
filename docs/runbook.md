@@ -1,5 +1,12 @@
 # Runbook
 
+> Paths below use the deployment variables rather than one machine's literal
+> layout: `$HERMES_HOME` is the gateway profile, `$GATEWAY_USER_HOME` the
+> gateway user's home, `$GATEWAY_VENV` its virtualenv, `$AGENTBOX_ENV_DIR` the
+> operator's env files, `$AGENTBOX_REPO` this checkout. CI refuses literal home
+> directories so the repo stays portable and free of one person's filesystem.
+
+
 ## The MCP gateway
 
 One service, `agentbox-mcp` on `:3465`, serves every tool from five bridges.
@@ -261,14 +268,14 @@ The schedule lives in the gateway's own scheduler, not cron(8). It runs as the
 job created without it lands in a different profile and never fires:
 
 ```
-sudo -u agentbox env HERMES_HOME=/home/agentbox/agentbox HOME=/home/agentbox \
-  /home/agentbox/hermes-agent-test/.venv/bin/python -m hermes_cli.main cron list
+sudo -u agentbox env HERMES_HOME=$HERMES_HOME HOME=$GATEWAY_USER_HOME \
+  $GATEWAY_VENV/bin/python -m hermes_cli.main cron list
 ```
 
 The scheduler enumerates jobs at startup, so **restart the gateway after adding
 one** (`sudo systemctl restart hermes-gateway-agentbox`). `cron list` prints
 "Gateway is not running" even when it is; check `.tick.lock` in
-`/home/agentbox/agentbox/cron/` for the real answer.
+`$HERMES_HOME/cron/` for the real answer.
 
 ### What it can and cannot see
 
@@ -317,8 +324,8 @@ root-equivalent and would undo the whole model.
 ### Adding a new skill
 
 ```
-sudo install -d -o root -g agentbox -m 0750 /home/agentbox/agent-control-plane/hermes/skills/<name>
-sudo install -o root -g agentbox -m 0640 skills/<name>/SKILL.md /home/agentbox/agent-control-plane/hermes/skills/<name>/SKILL.md
+sudo install -d -o root -g agentbox -m 0750 $GATEWAY_HOME/hermes/skills/<name>
+sudo install -o root -g agentbox -m 0640 skills/<name>/SKILL.md $GATEWAY_HOME/hermes/skills/<name>/SKILL.md
 ```
 
 Skills in this repo are the source; that directory is what the gateway loads.
@@ -356,7 +363,7 @@ The clone is owned by you with group 65532 and setgid, the same shape as
 `policy-state` and `logs` — the container writes it by group.
 
 ```
-git clone /home/alex/oss/agentbox ~/.local/state/agentbox/builder-repo
+git clone $AGENTBOX_REPO ~/.local/state/agentbox/builder-repo
 sudo chown -R "$USER":65532 ~/.local/state/agentbox/builder-repo
 sudo find ~/.local/state/agentbox/builder-repo -type d -exec chmod 2775 {} +
 sudo find ~/.local/state/agentbox/builder-repo -type f -exec chmod 664 {} +

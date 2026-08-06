@@ -7,12 +7,9 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-
 from email.message import EmailMessage
 
-from bridge_base import (BridgeError, BridgeHandler, resolve_limit, project_fields,
-                         resolve_view, serve)
-
+from bridge_base import BridgeError, BridgeHandler, project_fields, resolve_limit, resolve_view, serve
 
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")

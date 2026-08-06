@@ -44,7 +44,6 @@ something was never permitted in the first place.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 # Anything that defers a decision to runtime. Checked on the raw YAML text

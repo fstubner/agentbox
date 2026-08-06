@@ -16,7 +16,6 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-
 MAIN_BASE = os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1")
 CONTEXT_BASE = os.environ.get("AGENTBOX_CONTEXT_BASE", "http://127.0.0.1:1235/v1")
 REASON_BASE = os.environ.get("AGENTBOX_REASON_BASE", "http://127.0.0.1:1236/v1")
@@ -31,7 +30,7 @@ TIMEOUT_SECONDS = float(os.environ.get("AGENTBOX_ROUTER_TIMEOUT_SECONDS", "600")
 
 def read_key() -> str:
     try:
-        with open(KEY_FILE, "r", encoding="utf-8") as f:
+        with open(KEY_FILE, encoding="utf-8") as f:
             return f.read().strip()
     except FileNotFoundError:
         return ""

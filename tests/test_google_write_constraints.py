@@ -98,6 +98,6 @@ def test_empty_attendees_list_is_not_treated_as_an_attempt():
 
 def test_writes_to_other_calendars_still_refused():
     with pytest.raises(gb.BridgeError) as exc:
-        gb.calendar_create_event({"calendar_id": "personal@gmail.com",
+        gb.calendar_create_event({"calendar_id": "personal@example.com",
                                   "event": {"summary": "x"}})
     assert exc.value.status == 403

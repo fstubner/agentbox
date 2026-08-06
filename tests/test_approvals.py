@@ -16,7 +16,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
-import policy_gate as pg  # noqa: E402
+import policy_gate as pg
 
 spec = importlib.util.spec_from_loader(
     "approvals",
@@ -28,7 +28,7 @@ def message(content, user_id="operator-1", bot=False):
     return {"id": "1", "content": content, "author": {"id": user_id, "bot": bot}}
 
 
-def accepts(msg, operators={"operator-1"}):
+def accepts(msg, operators=frozenset({"operator-1"})):
     """Mirror of the loop's filter, which is the whole security boundary."""
     author = msg.get("author") or {}
     if author.get("bot"):

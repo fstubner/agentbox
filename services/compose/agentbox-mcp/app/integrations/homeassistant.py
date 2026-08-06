@@ -13,6 +13,7 @@ same limits as a direct call.
 from __future__ import annotations
 
 from mcp_base import ToolError, schema_object
+
 from integrations._client import bridge_client
 
 bridge_request = bridge_client("HA", "homeassistant-bridge", timeout=30)

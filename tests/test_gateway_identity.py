@@ -131,7 +131,8 @@ def test_the_token_selects_the_identity(gw, open_gate):
         for token, expected in (("tok-alex", "alex"), ("tok-sam", "sam")):
             seen = {}
             gw.AgentboxMcp.dispatch = staticmethod(
-                lambda n, a: seen.update(who=gw._client.CURRENT_IDENTITY.get()))
+                lambda n, a, _seen=seen: _seen.update(
+                    who=gw._client.CURRENT_IDENTITY.get()))
             rpc(base, "tools/call",
                 {"name": "list_tasks", "arguments": {}}, token=token)
             assert seen["who"] == expected
@@ -348,6 +349,7 @@ def test_the_gateway_holds_no_upstream_credentials():
 
 def test_identity_scoped_grants_only_match_their_identity():
     import time
+
     import policy_gate as pg
 
     grants = REPO / ".test-grants.json"

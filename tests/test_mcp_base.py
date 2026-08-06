@@ -29,7 +29,8 @@ sys.path.insert(0, str(MCP_APP))
 # policy_gate binds its paths as default arguments at import, so the real policy
 # has to be in place before mcp_base imports it. Without this every tool looks
 # unmapped and the gate denies it — correct behaviour, wrong thing to test here.
-import os  # noqa: E402
+import os
+
 os.environ["AGENTBOX_RUNTIME_POLICY"] = str(REPO / "policies" / "approval-policy.yaml")
 os.environ["AGENTBOX_POLICY_GRANTS"] = str(REPO / ".no-such-grants.json")
 spec = importlib.util.spec_from_file_location("mcp_base", MCP_APP / "mcp_base.py")

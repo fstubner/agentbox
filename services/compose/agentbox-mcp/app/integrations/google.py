@@ -6,6 +6,7 @@ irreversible step with a human who reads it in Gmail first.
 from __future__ import annotations
 
 from mcp_base import ToolError, schema_object
+
 from integrations._client import bridge_client
 
 _post_client = bridge_client("GOOGLE", "google-workspace-bridge", timeout=30)

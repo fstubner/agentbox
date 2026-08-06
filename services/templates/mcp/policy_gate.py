@@ -68,7 +68,7 @@ def load_tiers(path: Path = POLICY_PATH) -> dict[str, list[str]]:
         if not line.startswith(" "):
             break
         stripped = line.strip()
-        if stripped.endswith(":") or stripped.endswith(": []"):
+        if stripped.endswith((":", ": []")):
             current = stripped.split(":", 1)[0].strip()
             tiers.setdefault(current, [])
             continue

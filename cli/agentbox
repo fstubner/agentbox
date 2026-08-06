@@ -374,7 +374,7 @@ READY_TIMEOUT = 10
 # as the operator usually cannot read it — which is correct, and not a fault to
 # report as one.
 GATEWAY_CONFIG = os.environ.get("AGENTBOX_GATEWAY_CONFIG",
-                                "/home/agentbox/agentbox/config.yaml")
+                                str(Path("~agentbox/agentbox/config.yaml").expanduser()))
 
 
 def gateway_tool_visibility() -> int:
@@ -429,7 +429,8 @@ def gateway_tool_visibility() -> int:
 # thing, and the tier is simply no longer true. Checked here because a
 # constraint nobody verifies is a constraint that has already regressed once.
 GATEWAY_USER = os.environ.get("AGENTBOX_GATEWAY_USER", "agentbox")
-GATEWAY_HOME = Path(os.environ.get("AGENTBOX_GATEWAY_HOME", "/home/agentbox"))
+GATEWAY_HOME = Path(os.environ.get("AGENTBOX_GATEWAY_HOME",
+                                   str(Path("~agentbox").expanduser())))
 
 
 def _agent_can(action: str, path: str) -> bool | None:
@@ -459,7 +460,7 @@ def assistant_containment() -> int:
     bad = 0
     unknown = False
     for capability, path in checks:
-        # Asked as the gateway user throughout: /home/agentbox is mode 750, so
+        # Asked as the gateway user throughout: its home is mode 750, so
         # the operator cannot even stat inside it — Path.exists() raises.
         if _agent_can("-e", str(path)) is not True:
             continue

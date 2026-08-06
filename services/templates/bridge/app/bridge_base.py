@@ -54,9 +54,10 @@ import sys
 import time
 import traceback
 import urllib.parse
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 MAX_BODY_BYTES = int(os.environ.get("BRIDGE_MAX_BODY_BYTES", str(1 << 20)))
 LOG_PROBES = os.environ.get("BRIDGE_LOG_PROBES", "0") == "1"
@@ -249,7 +250,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except policy_gate.PolicyDenied as exc:
             raise BridgeError(403, str(exc))
 
-    def route_fallback(self, method: str, path: str, body: dict[str, Any] | None) -> "tuple[int, Any]":
+    def route_fallback(self, method: str, path: str, body: dict[str, Any] | None) -> tuple[int, Any]:
         """Override for dynamic paths (e.g. /v1/things/{id}/action).
 
         Called only AFTER auth has passed — never before.
