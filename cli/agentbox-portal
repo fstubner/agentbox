@@ -86,6 +86,10 @@ SESSION_TTL_SECONDS = int(os.environ.get("AGENTBOX_PORTAL_SESSION_TTL", "1800"))
 # A link is a credential. Minting them without limit turns a leaked identity
 # name into an unbounded supply of guesses at the delivery channel.
 MAX_LINKS_PER_HOUR = int(os.environ.get("AGENTBOX_PORTAL_MAX_LINKS", "5"))
+# Lets the assistant mint a sign-in link so a person does not have to go and
+# find an email. Unset means the endpoint does not exist — a capability nobody
+# configured should be absent, not merely unused.
+AGENT_TOKEN = os.environ.get("AGENTBOX_PORTAL_AGENT_TOKEN", "").strip()
 
 # identity -> email, as "alex:alex@example.com,sam:sam@example.com".
 # Addresses live beside the identity list rather than in it so that adding an
@@ -123,6 +127,45 @@ MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
 
 ADMIN = "admin"
 MEMBER = "member"
+
+# How a session was authenticated. This is not decoration: it decides what the
+# session may do.
+#
+# EMAIL    the person proved control of their inbox and their browser.
+# OPERATOR the operator minted a link and handed it over directly.
+# AGENT    the assistant minted it on request, so the person did not have to
+#          go and check their email.
+#
+# The last one is convenient and cannot be trusted, for a reason that has
+# nothing to do with the assistant misbehaving: whatever channel it delivers
+# the link over, it can read that channel. It is the Discord bot. So any
+# capability an AGENT session has is a capability the assistant effectively
+# has.
+#
+# The response is not to forbid agent-minted links — they are genuinely useful,
+# and the assistant already holds most of what the portal exposes. It is to
+# make an agent-minted session grant *nothing the assistant could not already
+# do*, so stealing one buys nothing.
+ORIGIN_EMAIL = "email"
+ORIGIN_OPERATOR = "operator"
+ORIGIN_AGENT = "agent"
+
+# Capabilities withheld from an agent-minted session.
+#
+# Approving a memory is the one that matters. The review gate is the
+# assistant's only route to durable memory, and self-approval collapses it
+# entirely — it would be writing its own long-term memory with no human in the
+# loop. Disconnecting is here because revoking someone's account access on
+# their behalf is not a convenience.
+#
+# Everything else — reading your own memories, seeing connector status,
+# starting a reconnect that an operator must still finish — is safe to reach
+# from a link the assistant produced.
+AGENT_WITHHELD = frozenset({
+    "memory:decide_own",
+    "memory:decide_household",
+    "connector:disconnect_own",
+})
 
 # What each role may do. Enumerated rather than computed: a capability that
 # nobody granted should be absent, not merely unreachable by the current UI.
@@ -181,13 +224,23 @@ def role_of(identity: str) -> str:
     return ADMIN if identity in admin_names() else MEMBER
 
 
-def can(role: str, capability: str) -> bool:
-    """Whether `role` may exercise `capability`. Unknown role -> nothing."""
-    return capability in ROLE_CAPABILITIES.get(role, frozenset())
+def can(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> bool:
+    """Whether this session may exercise `capability`.
+
+    Two gates, and both must pass: the role says what this person may ever do,
+    the origin says what this particular sign-in may do. An unknown origin is
+    treated as agent-minted, which is the safe direction for a value that
+    arrived from disk.
+    """
+    if capability not in ROLE_CAPABILITIES.get(role, frozenset()):
+        return False
+    if origin in (ORIGIN_EMAIL, ORIGIN_OPERATOR):
+        return True
+    return capability not in AGENT_WITHHELD
 
 
-def require(role: str, capability: str) -> None:
-    if not can(role, capability):
+def require(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> None:
+    if not can(role, capability, origin):
         raise PermissionError(capability)
 
 
@@ -225,8 +278,8 @@ def _recent_link_count(identity: str) -> int:
     return count
 
 
-def mint_link(identity: str, base_url: str,
-              request_nonce: str = "") -> tuple[str, str]:
+def mint_link(identity: str, base_url: str, request_nonce: str = "",
+              origin: str = ORIGIN_OPERATOR) -> tuple[str, str]:
     """Create a single-use login link. Returns (url, link_id).
 
     `request_nonce` binds the link to the browser that asked for it: the same
@@ -253,6 +306,7 @@ def mint_link(identity: str, base_url: str,
         "secret_hash": _hash(secret),
         # Hashed for the same reason the secret is: this file is not a login.
         "nonce_hash": _hash(request_nonce) if request_nonce else "",
+        "origin": origin,
         "created_at": now(),
         "expires_at": now() + LINK_TTL_SECONDS,
         "used_at": None,
@@ -266,8 +320,12 @@ def mint_link(identity: str, base_url: str,
 
 
 def redeem_link(link_id: str, secret: str,
-                request_nonce: str = "") -> tuple[str, str]:
-    """Consume a link, returning (identity, ""). On failure ("", reason).
+                request_nonce: str = "") -> tuple[str, str, str]:
+    """Consume a link, returning (identity, origin, reason).
+
+    Three fields rather than two because origin and reason are different
+    things, and a slot meaning "origin on success, reason on failure" is how a
+    caller ends up treating an error string as a privilege level.
 
     Marks the link used *before* returning, so two concurrent redemptions of a
     stolen link cannot both succeed.
@@ -277,20 +335,20 @@ def redeem_link(link_id: str, secret: str,
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return "", generic
+        return "", "", generic
     if not hmac.compare_digest(str(record.get("secret_hash", "")),
                                _hash(secret)):
-        return "", generic
+        return "", "", generic
     # The browser binding. A link requested through the sign-in form carries a
     # nonce hash, and only the browser holding the matching cookie may spend it.
     expected = str(record.get("nonce_hash", ""))
     if expected and not hmac.compare_digest(expected, _hash(request_nonce)):
-        return "", ("This link must be opened in the browser that asked for "
-                    "it. Request a new one from this device.")
+        return "", "", ("This link must be opened in the browser that asked "
+                        "for it. Request a new one from this device.")
     if record.get("used_at"):
-        return "", "This link has already been used. Ask for a new one."
+        return "", "", "This link has already been used. Ask for a new one."
     if now() > int(record.get("expires_at", 0)):
-        return "", "This link has expired. Ask for a new one."
+        return "", "", "This link has expired. Ask for a new one."
     record["used_at"] = now()
     try:
         path.write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -298,8 +356,9 @@ def redeem_link(link_id: str, secret: str,
         # Single-use that cannot be enforced is not single-use. Refuse rather
         # than hand out a link that stays live — the same reasoning as an
         # unwritable grant-consumption record in policy_gate.
-        return "", generic
-    return str(record.get("identity", "")), ""
+        return "", "", generic
+    return (str(record.get("identity", "")),
+            str(record.get("origin", ORIGIN_AGENT)), "")
 
 
 # --- sessions ------------------------------------------------------------------
@@ -309,10 +368,10 @@ def session_path(sid: str) -> Path:
     return STATE / "sessions" / f"{sid}.json"
 
 
-def new_session(identity: str) -> str:
+def new_session(identity: str, origin: str = ORIGIN_EMAIL) -> str:
     sid = secrets.token_urlsafe(24)
     record = {"identity": identity, "role": role_of(identity),
-              "expires_at": now() + SESSION_TTL_SECONDS}
+              "origin": origin, "expires_at": now() + SESSION_TTL_SECONDS}
     path = session_path(_hash(sid))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record), encoding="utf-8")
@@ -338,7 +397,12 @@ def load_session(sid: str) -> dict | None:
     identity = str(record.get("identity", ""))
     if not identity:
         return None
-    return {"identity": identity, "role": role_of(identity)}
+    # Origin is trusted from the record because it was set at redemption from
+    # the link, not from anything the browser said. An absent value means a
+    # session predating this field, treated as agent-minted — the safe way to
+    # read a value that is not there.
+    return {"identity": identity, "role": role_of(identity),
+            "origin": str(record.get("origin", ORIGIN_AGENT))}
 
 
 def end_session(sid: str) -> None:
@@ -406,7 +470,7 @@ def own_proposals(identity: str, role: str) -> list[dict]:
 
 
 def decide_memory(identity: str, role: str, proposal_id: str,
-                  approve: bool) -> tuple[bool, str]:
+                  approve: bool, origin: str = ORIGIN_EMAIL) -> tuple[bool, str]:
     """Approve or reject one proposal, refusing anything out of scope.
 
     The scope check re-reads the proposal rather than trusting a form field.
@@ -414,7 +478,7 @@ def decide_memory(identity: str, role: str, proposal_id: str,
     decide whose memory is being touched — the same rule that keeps identity
     bound to the session credential everywhere else in this system.
     """
-    require(role, "memory:decide_own")
+    require(role, "memory:decide_own", origin)
     try:
         visible = {p.get("id"): p for p in own_proposals(identity, role)}
     except BridgeUnreachable:
@@ -586,6 +650,33 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
 # --- pages ---------------------------------------------------------------------
 
 STYLE = """
+ *{box-sizing:border-box}
+ body{font:15px/1.55 system-ui,-apple-system,sans-serif;margin:0;color:#1a1d21;
+      background:#f6f7f9}
+ .shell{max-width:56rem;margin:0 auto;padding:0 1rem 3rem}
+ header.top{background:#fff;border-bottom:1px solid #e3e6ea;margin-bottom:1.5rem}
+ header.top .shell{display:flex;align-items:center;gap:1rem;padding:.85rem 1rem}
+ .brand{font-weight:650;letter-spacing:-.01em}
+ .who{margin-left:auto;color:#5b6470;font-size:.875rem}
+ .badge{display:inline-block;font-size:.7rem;text-transform:uppercase;
+        letter-spacing:.04em;background:#eef1f5;color:#4a5563;border-radius:1rem;
+        padding:.15rem .5rem;margin-left:.4rem}
+ .tabs{display:flex;gap:.25rem;border-bottom:1px solid #e3e6ea;margin:0 0 1.5rem}
+ .tabs a{padding:.6rem .9rem;text-decoration:none;color:#5b6470;
+         border-bottom:2px solid transparent;font-size:.925rem}
+ .tabs a.on{color:#1a1d21;border-bottom-color:#2f6feb;font-weight:550}
+ h1{font-size:1.25rem;margin:0 0 .2rem;letter-spacing:-.01em}
+ .card{background:#fff;border:1px solid #e3e6ea;border-radius:.6rem;
+       padding:1rem 1.1rem;margin:0 0 .75rem}
+ .warn{background:#fff8e6;border-color:#f0d99a}
+ .empty{color:#5b6470;background:#fff;border:1px dashed #d7dce2;
+        border-radius:.6rem;padding:1.75rem 1.1rem;text-align:center}
+ .row{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+ .grow{flex:1;min-width:12rem}
+ .dot{width:.5rem;height:.5rem;border-radius:50%;display:inline-block;
+      margin-right:.4rem}
+ .dot.on{background:#1a7f37}.dot.off{background:#b9c0c9}
+
  body{font:16px/1.55 system-ui,sans-serif;max-width:38rem;margin:0 auto;
       padding:2rem 1.25rem;color:#1a1a1a}
  h1{font-size:1.4rem;margin:0 0 .2rem}
@@ -609,23 +700,53 @@ def page(title: str, body: str) -> bytes:
     return (f"<!doctype html><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>{html.escape(title)}</title><style>{STYLE}</style>"
-            f"{body}").encode()
+            f"<div class=shell>{body}</div>").encode()
 
 
-def render_home(identity: str, role: str, flash: str) -> bytes:
+def chrome(identity: str, role: str, origin: str, active: str,
+           body: str) -> str:
+    """The dashboard shell: identity bar, tabs, then the page.
+
+    The origin badge is not decoration. A person needs to know why an approve
+    button is missing, and "this link came from the assistant" is the answer.
+    """
+    tabs = [("/", "Memories"), ("/connectors", "Accounts")]
+    if role == ADMIN:
+        tabs.append(("/admin", "Operations"))
+    rendered = "".join(
+        f"<a href='{href}' class='{'on' if href == active else ''}'>"
+        f"{label}</a>" for href, label in tabs)
+    badge = ""
+    if origin == ORIGIN_AGENT:
+        badge = "<span class=badge>assistant link</span>"
+    elif role == ADMIN:
+        badge = "<span class=badge>admin</span>"
+    return (f"<header class=top><div class=shell>"
+            f"<span class=brand>Agentbox</span>"
+            f"<span class=who>{html.escape(identity)}{badge}</span>"
+            f"</div></header><div class=shell>"
+            f"<nav class=tabs>{rendered}</nav>{body}</div>")
+
+
+def render_home(identity: str, role: str, flash: str,
+                origin: str = ORIGIN_EMAIL) -> bytes:
     try:
         proposals, reachable = own_proposals(identity, role), True
     except BridgeUnreachable:
         proposals, reachable = [], False
-    parts = [f"<h1>Hello, {html.escape(identity)}</h1>",
-             f"<p class=sub>What {'Agentbox'} would like to remember about you."
-             f"{' You are an admin.' if role == ADMIN else ''}</p>"]
+    parts = ["<h1>Memories</h1>",
+             "<p class=sub>What Agentbox would like to remember about you. "
+             "Nothing is saved until you say so.</p>"]
+    if origin == ORIGIN_AGENT:
+        parts.append(
+            "<div class='card warn'><b>Signed in from an assistant link</b>"
+            "<p class=sub style='margin:.35rem 0 0'>You can read everything "
+            "here, but approving a memory needs a link you requested yourself. "
+            "The assistant can see any link it sends you, so a link it made "
+            "cannot be used to approve its own memories.</p></div>")
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-    nav = ["<a href='/connectors'>Your accounts</a>"]
-    if role == ADMIN:
-        nav.append("<a href='/admin'>Operations</a>")
-    parts.append(f"<nav>{' '.join(nav)}</nav><p></p>")
+
     if not reachable:
         parts.append("<p class=empty><b>The memory service is not "
                      "responding.</b> This is not the same as having nothing "
@@ -634,7 +755,7 @@ def render_home(identity: str, role: str, flash: str) -> bytes:
     elif not proposals:
         parts.append("<p class=empty>Nothing waiting. The assistant proposes a "
                      "memory when it notices something worth keeping; it cannot "
-                     "save one until you say yes.</p>")
+                     "save one until you say yes.</div>")
     for item in proposals:
         scope = html.escape(str(item.get("scope", "household")))
         label = "private to you" if scope == identity else scope
@@ -646,9 +767,10 @@ def render_home(identity: str, role: str, flash: str) -> bytes:
             f"<button class=yes name=verb value=approve>Remember this</button>"
             f"<button name=verb value=reject>Forget it</button></form></div>")
     parts.append("<footer>Only you can approve a memory in your own private "
-                 "scope — not the assistant, and not the household admin."
-                 "<br><a href='/logout'>Sign out</a></footer>")
-    return page(f"{identity} — Agentbox", "".join(parts))
+                 "scope \u2014 not the assistant, and not the household admin."
+                 " &middot; <a href='/logout'>Sign out</a></footer>")
+    return page(f"{identity} \u2014 Agentbox",
+                chrome(identity, role, origin, "/", "".join(parts)))
 
 
 SIGNIN = """<h1>Agentbox</h1>
@@ -670,13 +792,12 @@ def render_signin(flash: str = "") -> bytes:
         flash=f"<div class=flash>{html.escape(flash)}</div>" if flash else ""))
 
 
-def render_connectors(identity: str, role: str, flash: str) -> bytes:
-    parts = ["<h1>Your accounts</h1>",
+def render_connectors(identity: str, role: str, flash: str,
+                      origin: str = ORIGIN_EMAIL) -> bytes:
+    parts = ["<h1>Accounts</h1>",
              "<p class=sub>What Agentbox can reach on your behalf.</p>"]
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-    parts.append("<nav><a href='/'>&larr; Your memories</a></nav><p></p>")
-
     waiting = pending_requests(identity)
     if waiting:
         kinds = ", ".join(sorted({str(r.get("action", "?")) for r in waiting}))
@@ -706,22 +827,24 @@ def render_connectors(identity: str, role: str, flash: str) -> bytes:
         "revokes it at Google and removes it from this box \u2014 your memories "
         "are untouched either way."
         "<br><a href='/logout'>Sign out</a></footer>")
-    return page("Your accounts \u2014 Agentbox", "".join(parts))
+    return page("Accounts \u2014 Agentbox",
+                chrome(identity, role, origin, "/connectors", "".join(parts)))
 
 
-def render_admin(identity: str, flash: str) -> bytes:
+def render_admin(identity: str, flash: str,
+                 origin: str = ORIGIN_EMAIL) -> bytes:
     parts = ["<h1>Operations</h1>",
              "<p class=sub>Admin only. Connector health and messaging setup.</p>"]
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-    parts.append("<nav><a href='/'>&larr; Your memories</a></nav><p></p>")
     parts.append(
         "<div class=card><b>Connector health</b>"
         "<p class=sub style='margin:.4rem 0 0'>Revoking access at Google leaves "
         "this box holding a dead refresh token; without a check the first "
         "symptom is a confusing tool failure days later.</p></div>")
     parts.append("<footer><a href='/logout'>Sign out</a></footer>")
-    return page("Operations — Agentbox", "".join(parts))
+    return page("Operations \u2014 Agentbox",
+                chrome(identity, ADMIN, origin, "/admin", "".join(parts)))
 
 
 # --- server --------------------------------------------------------------------
@@ -787,14 +910,14 @@ class PortalHandler(BaseHTTPRequestHandler):
         flash = (query.get("m") or [""])[0][:120]
 
         if parsed.path == "/login":
-            identity, reason = redeem_link(
+            identity, origin, reason = redeem_link(
                 (query.get("id") or [""])[0], (query.get("k") or [""])[0],
                 cookie_value(self.headers.get("Cookie", ""), "req"))
             if not identity:
                 self._send(403, page("Not valid", f"<h1>Sorry</h1>"
                                      f"<p>{html.escape(reason)}</p>"))
                 return
-            sid = new_session(identity)
+            sid = new_session(identity, origin)
             # The request nonce has done its job; leaving it set would let a
             # later link be spent from this browser without a fresh request.
             # HttpOnly so a script cannot read it; SameSite=Lax so another site
@@ -820,8 +943,9 @@ class PortalHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/connectors":
-            self._send(200, render_connectors(session["identity"],
-                                              session["role"], flash))
+            self._send(200, render_connectors(
+                session["identity"], session["role"], flash,
+                session.get("origin", ORIGIN_AGENT)))
             return
 
         if parsed.path == "/google/callback":
@@ -834,14 +958,58 @@ class PortalHandler(BaseHTTPRequestHandler):
                                      "<h1>Not allowed</h1><p>Operations is "
                                      "admin only.</p>"))
                 return
-            self._send(200, render_admin(session["identity"], flash))
+            self._send(200, render_admin(
+                session["identity"], flash,
+                session.get("origin", ORIGIN_AGENT)))
             return
 
         if parsed.path == "/":
-            self._send(200, render_home(session["identity"], session["role"],
-                                        flash))
+            self._send(200, render_home(
+                session["identity"], session["role"], flash,
+                session.get("origin", ORIGIN_AGENT)))
             return
         self._send(404, page("Not found", "<h1>Not found</h1>"))
+
+    def _agent_link(self, form) -> None:
+        """Mint a sign-in link on the assistant's behalf.
+
+        Authenticated with a token the assistant holds, and deliberately not
+        the same one anything else uses. What it produces is an ORIGIN_AGENT
+        session, which cannot approve memories or disconnect accounts — so a
+        model that decides to call this on its own initiative, or is talked
+        into it by a malicious email, gains nothing it did not already have.
+
+        That is the whole design. There is no attempt to stop the assistant
+        reading a link it delivered, because it delivers over channels it can
+        read and no amount of care changes that.
+        """
+        provided = self.headers.get("X-Agentbox-Portal-Token", "")
+        if not AGENT_TOKEN or not provided or not hmac.compare_digest(
+                provided, AGENT_TOKEN):
+            self._send(403, page("No", "<h1>No</h1>"))
+            return
+        identity = (form.get("identity") or [""])[0].strip()
+        if not identity:
+            self._send(400, page("No", "<h1>identity is required</h1>"))
+            return
+        try:
+            url, _ = mint_link(identity, PUBLIC_URL, origin=ORIGIN_AGENT)
+        except RuntimeError as exc:
+            self._send(429, page("Slow down", f"<h1>{html.escape(str(exc))}</h1>"))
+            return
+        body = json.dumps({
+            "url": url,
+            "expires_in_seconds": LINK_TTL_SECONDS,
+            "limits": "This link can review memories and connector status. It "
+                      "cannot approve a memory or disconnect an account — for "
+                      "those, sign in from the email link.",
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _connector_action(self, session, form) -> None:
         identity, role = session["identity"], session["role"]
@@ -858,8 +1026,12 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._redirect(google_consent_url(_consent_state(identity)))
             return
         if action == "disconnect":
-            if not can(role, "connector:disconnect_own"):
-                self._redirect("/connectors?m=Not+allowed.")
+            if not can(role, "connector:disconnect_own",
+                       session.get("origin", ORIGIN_AGENT)):
+                self._redirect("/connectors?" + urllib.parse.urlencode(
+                    {"m": "This link was created by the assistant, so it "
+                          "cannot disconnect an account. Sign in from the "
+                          "email link to do that."}))
                 return
             save_request({
                 "id": secrets.token_urlsafe(9),
@@ -948,6 +1120,12 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._request_link((form.get("email") or [""])[0])
             return
 
+        # Before the session gate: this endpoint *creates* sessions, and it
+        # authenticates with its own token rather than a cookie.
+        if path == "/agent/link":
+            self._agent_link(form)
+            return
+
         session = self._session()
         if not session:
             self._send(401, render_signin())
@@ -962,9 +1140,12 @@ class PortalHandler(BaseHTTPRequestHandler):
                 _, message = decide_memory(
                     session["identity"], session["role"],
                     (form.get("id") or [""])[0],
-                    (form.get("verb") or [""])[0] == "approve")
+                    (form.get("verb") or [""])[0] == "approve",
+                    session.get("origin", ORIGIN_AGENT))
             except PermissionError:
-                message = "Not allowed."
+                message = ("This link was created by the assistant, so it "
+                           "cannot approve memories. Sign in from the email "
+                           "link to decide this one.")
             self._redirect("/?" + urllib.parse.urlencode({"m": message}))
             return
         self._send(404, page("Not found", "<h1>Not found</h1>"))
