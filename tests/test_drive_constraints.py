@@ -330,3 +330,121 @@ def test_activity_is_flattened_and_actors_are_not_invented(gb, monkeypatch):
     assert event["action"] == "edit"
     assert event["actors"] == ["someone"]
     assert event["items"] == ["Budget"]
+
+
+# --- actor name resolution -----------------------------------------------------
+
+
+def test_actors_resolve_to_real_names(gb, monkeypatch):
+    monkeypatch.setattr(gb, "google_json", lambda method, url, payload=None, **k:
+                        {"activities": [{
+                            "timestamp": "2026-08-06T10:00:00Z",
+                            "primaryActionDetail": {"edit": {}},
+                            "actors": [{"user": {"knownUser": {
+                                "personName": "people/123",
+                                "isCurrentUser": False}}}],
+                            "targets": [{"driveItem": {"title": "Budget"}}]}]}
+                        if "activity" in url else {})
+    monkeypatch.setattr(gb, "resolve_people", lambda names: {"people/123": "Sam"})
+    assert gb.drive_activity({})["activity"][0]["actors"] == ["Sam"]
+
+
+def test_unresolvable_actor_is_not_invented(gb, monkeypatch):
+    """Not everyone is a contact. An unknown person stays unknown."""
+    actor = {"user": {"knownUser": {"personName": "people/999",
+                                    "isCurrentUser": False}}}
+    assert gb._activity_actor(actor, {}) == "someone"
+    assert gb._activity_actor(actor, {"people/111": "Someone Else"}) == "someone"
+
+
+def test_current_user_needs_no_lookup(gb):
+    actor = {"user": {"knownUser": {"personName": "people/1", "isCurrentUser": True}}}
+    assert gb._activity_actor(actor, {}) == "you"
+    assert gb._actor_person_name(actor) == ""
+
+
+def test_missing_contacts_scope_does_not_break_activity(gb, monkeypatch):
+    """Name resolution is a courtesy on top of the feed.
+
+    A household that never granted the contacts scope should still get its
+    history, with actors reading "someone" — losing a nicety, not a feature.
+    """
+    def fake(method, url, payload=None, **kwargs):
+        if "people" in url:
+            raise gb.BridgeError(403, "insufficient scopes")
+        return {"activities": [{
+            "timestamp": "2026-08-06T10:00:00Z",
+            "primaryActionDetail": {"edit": {}},
+            "actors": [{"user": {"knownUser": {"personName": "people/7",
+                                               "isCurrentUser": False}}}],
+            "targets": [{"driveItem": {"title": "Budget"}}]}]}
+
+    gb._PERSON_CACHE.clear()
+    monkeypatch.setattr(gb, "google_json", fake)
+    result = gb.drive_activity({})
+    assert result["activity"][0]["actors"] == ["someone"]
+
+
+def test_people_are_resolved_in_one_batched_call(gb, monkeypatch):
+    """One request per activity page, not one per event."""
+    calls = []
+
+    def fake(method, url, payload=None, **kwargs):
+        calls.append(url)
+        return {"responses": [
+            {"requestedResourceName": f"people/{n}",
+             "person": {"names": [{"displayName": f"Person {n}"}]}}
+            for n in range(1, 4)]}
+
+    gb._PERSON_CACHE.clear()
+    monkeypatch.setattr(gb, "google_json", fake)
+    names = gb.resolve_people([f"people/{n}" for n in range(1, 4)] * 5)
+    assert len(calls) == 1
+    assert names["people/2"] == "Person 2"
+
+
+def test_resolved_names_are_cached(gb, monkeypatch):
+    calls = []
+
+    def fake(method, url, payload=None, **kwargs):
+        calls.append(url)
+        return {"responses": [{"requestedResourceName": "people/1",
+                               "person": {"names": [{"displayName": "Sam"}]}}]}
+
+    gb._PERSON_CACHE.clear()
+    monkeypatch.setattr(gb, "google_json", fake)
+    assert gb.resolve_people(["people/1"]) == {"people/1": "Sam"}
+    assert gb.resolve_people(["people/1"]) == {"people/1": "Sam"}
+    assert len(calls) == 1
+
+
+def test_failed_resolution_is_cached_briefly(gb, monkeypatch):
+    """One missing scope must not mean one failed request per query forever."""
+    calls = []
+
+    def fake(method, url, payload=None, **kwargs):
+        calls.append(url)
+        raise gb.BridgeError(403, "no scope")
+
+    gb._PERSON_CACHE.clear()
+    monkeypatch.setattr(gb, "google_json", fake)
+    gb.resolve_people(["people/1"])
+    gb.resolve_people(["people/1"])
+    assert len(calls) == 1
+
+
+def test_email_is_used_when_a_person_has_no_display_name(gb, monkeypatch):
+    gb._PERSON_CACHE.clear()
+    monkeypatch.setattr(gb, "google_json", lambda *a, **k: {"responses": [
+        {"requestedResourceName": "people/1",
+         "person": {"emailAddresses": [{"value": "sam@example.com"}]}}]})
+    assert gb.resolve_people(["people/1"]) == {"people/1": "sam@example.com"}
+
+
+def test_batches_respect_the_api_ceiling(gb, monkeypatch):
+    calls = []
+    gb._PERSON_CACHE.clear()
+    monkeypatch.setattr(gb, "google_json",
+                        lambda method, url, **k: calls.append(url) or {})
+    gb.resolve_people([f"people/{n}" for n in range(gb.PEOPLE_BATCH_MAX + 50)])
+    assert len(calls) == 2

@@ -60,6 +60,18 @@ SCOPES = (
     # Read-only audit trail: who changed what, when. Cannot alter history, and
     # cannot read file *contents* — a narrower thing than it sounds.
     "https://www.googleapis.com/auth/drive.activity.readonly",
+    # Turns "someone edited the budget" into a name. Drive Activity returns a
+    # people/{id}, and only the People API maps that to a human.
+    #
+    # This reads the contact list, which is a real widening and worth being
+    # deliberate about — it is the difference between the assistant knowing who
+    # collaborates on a document and knowing everyone you have ever emailed.
+    # Activity queries work without it and simply say "someone", so a
+    # deployment that would rather not grant it loses a courtesy, not a feature.
+    "https://www.googleapis.com/auth/contacts.readonly",
+    # Workspace domains only; silently returns nothing on a personal account,
+    # where it costs nothing to have asked.
+    "https://www.googleapis.com/auth/directory.readonly",
 )
 
 # Opt-in, and the single most consequential choice in this file.

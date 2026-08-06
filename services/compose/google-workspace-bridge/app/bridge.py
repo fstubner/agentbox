@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -490,6 +491,14 @@ ACTIVITY_API = "https://driveactivity.googleapis.com/v2"
 ACTIVITY_ACTIONS = ("create", "edit", "move", "rename", "delete", "restore",
                     "permissionChange", "comment", "dlpChange", "reference",
                     "settingsChange")
+PEOPLE_API = "https://people.googleapis.com/v1"
+# Display names are stable; re-resolving the same handful of collaborators on
+# every activity query would be a request per call for an answer that does not
+# change. Cached in-process, which is the right lifetime — the container is
+# restarted on deploy, so a renamed contact corrects itself.
+PERSON_CACHE_TTL = int(os.environ.get("GOOGLE_PERSON_CACHE_TTL", "3600"))
+PEOPLE_BATCH_MAX = 200          # the API's documented ceiling
+_PERSON_CACHE: dict[str, tuple[str, float]] = {}
 
 
 def drive_search(body):
@@ -581,19 +590,96 @@ def drive_list_folder(body):
     return google_json("GET", f"{DRIVE_API}/files?{params}") or {}
 
 
-def _activity_actor(actor):
+def resolve_people(resource_names):
+    """Map people/{account_id} -> display name, in one batched request.
+
+    Returns only what it could resolve. An unresolvable person is left out
+    rather than guessed at: not every actor is a contact or a directory member,
+    and "someone" is a true statement where a made-up name would not be.
+
+    Degrades rather than raises. Name resolution is a courtesy on top of the
+    activity feed, so losing it must not turn a working query into an error —
+    a household without the contacts scope should still get its history.
+    """
+    wanted = [n for n in dict.fromkeys(resource_names) if n]
+    if not wanted:
+        return {}
+    resolved: dict[str, str] = {}
+    stamp = time.time()
+    misses = []
+    for name in wanted:
+        cached = _PERSON_CACHE.get(name)
+        if cached and cached[1] > stamp:
+            if cached[0]:
+                resolved[name] = cached[0]
+        else:
+            misses.append(name)
+    for start in range(0, len(misses), PEOPLE_BATCH_MAX):
+        chunk = misses[start:start + PEOPLE_BATCH_MAX]
+        query = [("personFields", "names,emailAddresses")]
+        query += [("resourceNames", name) for name in chunk]
+        try:
+            raw = google_json(
+                "GET", f"{PEOPLE_API}/people:batchGet?"
+                       f"{urllib.parse.urlencode(query)}") or {}
+        except BridgeError:
+            # Most likely the contacts scope was never granted. Cache the
+            # failure briefly so one missing scope does not mean one failed
+            # request per activity query forever.
+            for name in chunk:
+                _PERSON_CACHE[name] = ("", stamp + 300)
+            continue
+        returned = {}
+        for entry in raw.get("responses", []):
+            person = entry.get("person") or {}
+            key = entry.get("requestedResourceName") or person.get("resourceName")
+            names = person.get("names") or []
+            emails = person.get("emailAddresses") or []
+            label = ""
+            if names:
+                label = str(names[0].get("displayName", "")).strip()
+            if not label and emails:
+                label = str(emails[0].get("value", "")).strip()
+            if key and label:
+                returned[key] = label
+        for name in chunk:
+            label = returned.get(name, "")
+            _PERSON_CACHE[name] = (label, stamp + PERSON_CACHE_TTL)
+            if label:
+                resolved[name] = label
+    return resolved
+
+
+def _actor_person_name(actor):
+    """The people/{id} this actor refers to, if any."""
+    if not isinstance(actor, dict):
+        return ""
+    known = actor.get("user", {}).get("knownUser", {})
+    if known.get("isCurrentUser"):
+        return ""
+    return str(known.get("personName", ""))
+
+
+def _activity_actor(actor, names=None):
     """A display name for whoever acted, or a truthful placeholder.
 
-    Activity records carry a user id rather than a name, and resolving one
-    costs an extra People API call and a wider scope. "someone" is honest;
-    inventing a name would not be.
+    Resolved through the People API where possible. Where it is not — the
+    person is not a contact, not in the directory, or the scope was never
+    granted — this falls back to "someone" rather than inventing anything.
     """
     if not isinstance(actor, dict):
         return "unknown"
-    known = actor.get("user", {}).get("knownUser", {})
+    user = actor.get("user", {})
+    known = user.get("knownUser", {})
     if known.get("isCurrentUser"):
         return "you"
     if "user" in actor:
+        person = str(known.get("personName", ""))
+        resolved = (names or {}).get(person, "")
+        if resolved:
+            return resolved
+        if "deletedUser" in user:
+            return "a deleted account"
         return "someone"
     for kind in ("impersonation", "system", "administrator", "anonymous"):
         if kind in actor:
@@ -628,8 +714,14 @@ def drive_activity(body):
     else:
         payload["ancestorName"] = "items/root"
     raw = google_json("POST", f"{ACTIVITY_API}/activity:query", payload) or {}
+    activities = raw.get("activities", [])
+    # One batched lookup for the whole feed rather than one per event: the same
+    # few collaborators recur across a page of activity.
+    names = resolve_people([_actor_person_name(actor)
+                            for activity in activities
+                            for actor in activity.get("actors", [])])
     events = []
-    for activity in raw.get("activities", []):
+    for activity in activities:
         targets = []
         for target in activity.get("targets", []):
             item = target.get("driveItem", {})
@@ -639,7 +731,7 @@ def drive_activity(body):
             "when": activity.get("timestamp")
                     or activity.get("timeRange", {}).get("endTime"),
             "action": _activity_kind(activity.get("primaryActionDetail")),
-            "actors": sorted({_activity_actor(a)
+            "actors": sorted({_activity_actor(a, names)
                               for a in activity.get("actors", [])}),
             "items": targets,
         })
