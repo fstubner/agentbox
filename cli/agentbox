@@ -374,7 +374,7 @@ READY_TIMEOUT = 10
 # as the operator usually cannot read it — which is correct, and not a fault to
 # report as one.
 GATEWAY_CONFIG = os.environ.get("AGENTBOX_GATEWAY_CONFIG",
-                                str(Path("~agentbox/agentbox/config.yaml").expanduser()))
+                                os.path.expanduser("~agentbox/agentbox/config.yaml"))
 
 
 def gateway_tool_visibility() -> int:
@@ -429,8 +429,12 @@ def gateway_tool_visibility() -> int:
 # thing, and the tier is simply no longer true. Checked here because a
 # constraint nobody verifies is a constraint that has already regressed once.
 GATEWAY_USER = os.environ.get("AGENTBOX_GATEWAY_USER", "agentbox")
+# os.path.expanduser, not Path.expanduser: the latter raises RuntimeError when
+# the user does not exist, and this is a module-level constant — so importing
+# the CLI at all would fail on any machine without a gateway user, CI included.
+# os.path leaves the string untouched instead, which is the right non-answer.
 GATEWAY_HOME = Path(os.environ.get("AGENTBOX_GATEWAY_HOME",
-                                   str(Path("~agentbox").expanduser())))
+                                   os.path.expanduser("~agentbox")))
 
 
 def _agent_can(action: str, path: str) -> bool | None:
