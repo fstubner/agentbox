@@ -25,14 +25,34 @@ services:
     volumes:
       - "${AGENTBOX_HA_CONFIG:-${HOME}/.local/state/agentbox/homeassistant}:/config"
       - /etc/localtime:/etc/localtime:ro
-      # Bluetooth/USB dongles would be added here as explicit device mappings.
-      # None by default: this container should not see hardware nobody asked it
-      # to see.
+      # --- BLUETOOTH, DELIBERATE -------------------------------------------
+      #
+      # Home Assistant talks to Bluetooth through BlueZ, and BlueZ is reached
+      # over the system D-Bus. Without this socket the integration can see the
+      # adapter (host networking) but cannot drive it, which is not a quiet
+      # failure: it logged "Failed to force stop scanner" every ten minutes for
+      # two days while discovering nothing at all.
+      #
+      # State the cost plainly. This is the system bus, not a private one, so
+      # the container can address other services on it — a wider grant than a
+      # device mapping. It is here because there are real Bluetooth devices to
+      # talk to; a deployment with none should delete these three lines and
+      # disable the integration rather than carry the grant for nothing.
+      #
+      # Mounted read-only: connecting to a socket is not a filesystem write, so
+      # this costs nothing and stops the container creating files in /run/dbus.
+      - /run/dbus:/run/dbus:ro
     cpus: "2.00"
     mem_limit: 2048m
     pids_limit: 512
     security_opt:
       - no-new-privileges:true
+    # BLE scanning needs raw socket access to the adapter. NET_ADMIN alone is
+    # not enough and NET_RAW alone is not enough; BlueZ wants both to start a
+    # scan. Still no --privileged, and no-new-privileges above still holds.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8123/ >/dev/null || exit 1"]
       interval: 30s

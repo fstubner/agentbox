@@ -181,3 +181,37 @@ def pytest_redactor():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.Redactor()
+
+
+# --- the irreversible subset ---------------------------------------------------
+
+
+def test_strip_removes_high_harm_identifiers(pii):
+    out = pii.strip_sensitive("card 4111 1111 1111 1111, NI AB123456C, "
+                              "key sk-abcdefghijklmnop")
+    assert "4111" not in out and "AB123456C" not in out
+    assert "sk-abcdefghijklmnop" not in out
+    assert out.count("removed") == 3
+
+
+def test_strip_keeps_what_the_assistant_needs(pii):
+    """Emails and phones are absent from NEVER_NEEDED on purpose: the assistant
+    cannot reply to anyone without them, so they need the reversible path."""
+    text = "mail sam@example.com or call +44 7700 900123"
+    assert pii.strip_sensitive(text) == text
+    assert "EMAIL" not in pii.NEVER_NEEDED
+    assert "PHONE" not in pii.NEVER_NEEDED
+
+
+def test_strip_needs_no_state_to_reverse(pii):
+    """The whole reason this half ships alone: nothing has to be remembered."""
+    import inspect
+    source = inspect.getsource(pii.strip_sensitive)
+    assert "self" not in source and "cache" not in source
+
+
+def test_strip_respects_checksums(pii):
+    """An order number must survive stripping as much as it survives
+    substitution."""
+    text = "order 1234567812345678 shipped"
+    assert pii.strip_sensitive(text) == text

@@ -111,6 +111,41 @@ def _valid(kind: str, text: str) -> bool:
     return True
 
 
+# Kinds the assistant has no legitimate use for.
+#
+# It does not need a card number to summarise a receipt, or a National
+# Insurance number to file a letter. Because nothing downstream ever needs the
+# value back, these can be removed outright — no placeholder to restore, no
+# mapping to keep, no state to expire. That is what makes this half shippable
+# on its own: the hard part of substitution is remembering what was replaced,
+# and here there is nothing to remember.
+#
+# Emails and phone numbers are deliberately absent. The assistant needs those
+# to reply to anyone, so they require the reversible path and are handled by
+# Redactor, not here.
+NEVER_NEEDED = ("CARD", "IBAN", "NINO", "SSN", "SECRET")
+
+
+def strip_sensitive(text: str, kinds: tuple[str, ...] = NEVER_NEEDED) -> str:
+    """Remove high-harm identifiers outright, before the model sees them.
+
+    Irreversible on purpose. A value the assistant is never given is a value it
+    cannot leak, be talked into repeating, or write into a memory proposal —
+    and unlike a filter on the way out, there is no prompt that recovers it.
+    """
+    if not text:
+        return text
+    lookup = dict(PATTERNS)
+    for kind in kinds:
+        pattern = lookup.get(kind)
+        if pattern is None:
+            continue
+        text = pattern.sub(
+            lambda m, k=kind: f"[{k} removed]" if _valid(k, m.group())
+            else m.group(), text)
+    return text
+
+
 class Redactor:
     """Substitutes personal data for placeholders, and can reverse it.
 

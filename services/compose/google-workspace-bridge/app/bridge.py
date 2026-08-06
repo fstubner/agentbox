@@ -11,6 +11,7 @@ import urllib.request
 from email.message import EmailMessage
 
 from bridge_base import BridgeError, BridgeHandler, project_fields, resolve_limit, resolve_view, serve
+from pii import strip_sensitive
 
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -34,6 +35,19 @@ DRIVE_EXPORT_AS = {
     "application/vnd.google-apps.presentation": "text/plain",
 }
 DRIVE_MAX_TEXT = int(os.environ.get("GOOGLE_DRIVE_MAX_TEXT", "40000"))
+# Remove card numbers, bank details, NI/SSN and credential-shaped strings from
+# text before it leaves this process. On by default: the assistant has no use
+# for any of them, so the cost of removing them is nothing and the cost of
+# passing them on is a receipt sitting in a model's context.
+#
+# Set GOOGLE_STRIP_SENSITIVE=0 to pass text through untouched.
+STRIP_SENSITIVE = os.environ.get("GOOGLE_STRIP_SENSITIVE", "1").strip() not in (
+    "0", "false", "no", "")
+
+
+def _clean(text):
+    """Apply the irreversible strip, if enabled."""
+    return strip_sensitive(text) if STRIP_SENSITIVE else text
 MAX_DRIVE_BYTES = int(os.environ.get("GOOGLE_DRIVE_MAX_BYTES", str(4 * 1024 * 1024)))
 HOST = os.environ.get("BRIDGE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("BRIDGE_PORT", "8080"))
@@ -231,14 +245,14 @@ def gmail_read(body):
         "id": message.get("id"),
         "threadId": message.get("threadId"),
         "labelIds": message.get("labelIds", []),
-        "snippet": message.get("snippet", ""),
+        "snippet": _clean(message.get("snippet", "")),
         "headers": {
             "from": headers.get("from", ""),
             "to": headers.get("to", ""),
             "date": headers.get("date", ""),
             "subject": headers.get("subject", ""),
         },
-        "text": text[:50000],
+        "text": _clean(text[:50000]),
     }
 
 
@@ -251,7 +265,7 @@ def gmail_clean(body):
         "labelIds": message.get("labelIds", []),
         "snippet": message.get("snippet", ""),
         "headers": message.get("headers", {}),
-        "clean_text": text[:12000],
+        "clean_text": _clean(text[:12000]),
         "line_candidates": line_candidates(text),
     }
 
@@ -572,7 +586,7 @@ def drive_read(body):
         "mimeType": mime,
         "modifiedTime": meta.get("modifiedTime"),
         "webViewLink": meta.get("webViewLink"),
-        "untrusted_text": text[:DRIVE_MAX_TEXT],
+        "untrusted_text": _clean(text[:DRIVE_MAX_TEXT]),
         "truncated": truncated,
     }
 
