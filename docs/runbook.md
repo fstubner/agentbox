@@ -210,6 +210,39 @@ Env: `AGENTBOX_IDENTITY_EMAILS="alex:alex@example.com,sam:sam@example.com"`,
 host the portal still runs and links are minted; they just have to be handed
 over by the operator.
 
+### Signing in to the portal
+
+```bash
+systemctl --user status agentbox-portal
+```
+
+On this box: **http://127.0.0.1:8771**. From a phone on the LAN: the box's
+address on port 8771. People sign in with their email; the operator can mint a
+link directly with `cli/agentbox-portal link <name>` for anyone whose address
+is not configured yet.
+
+#### The LAN address works for everything except Google consent
+
+This caught us out, so it is worth stating plainly. The portal is happy on a
+LAN address — magic links, memory review, connector status all work from a
+phone. **Google's consent redirect is the exception.** Google accepts a
+redirect URI only as loopback over http, or a real public-suffix domain over
+https. `agentbox.local` and a bare `192.168.x.x` are both refused by the
+console with "must end with a public top-level domain".
+
+Two ways out:
+
+- **Loopback.** Register `http://127.0.0.1:8771/google/callback` and do the
+  reconnect from a browser on the box itself. Simplest, and fine when the
+  operator is the one reconnecting.
+- **A real name over https.** A Tailscale `*.ts.net` host is the least work —
+  it is a genuine public domain with a real certificate, so
+  `https://agentbox.<tailnet>.ts.net/google/callback` is accepted, and it
+  works from a phone anywhere. Set `AGENTBOX_PORTAL_URL` to that.
+
+`agentbox validate` refuses a portal URL Google would reject, so this fails at
+config time rather than halfway through a consent screen in someone's browser.
+
 ### Reconnecting or switching a Google account
 
 Scopes change. Drive, Drive activity and contacts were all added after Alex

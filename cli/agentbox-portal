@@ -102,7 +102,11 @@ SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", SMTP_USER)
 # page can *start* Google's consent flow and receive an authorisation code, but
 # a code is useless without the client secret that exchanges it. The secret
 # stays on the operator side. Same reasoning as cli/agentbox-invite.
-GOOGLE_CLIENT_ID = os.environ.get("AGENTBOX_GOOGLE_CLIENT_ID", "").strip()
+# GOOGLE_CLIENT_ID is what the bridge env file already calls it, so the unit
+# can source that file directly instead of the operator copying the value into
+# a second place where the two can disagree.
+GOOGLE_CLIENT_ID = (os.environ.get("AGENTBOX_GOOGLE_CLIENT_ID", "")
+                    or os.environ.get("GOOGLE_CLIENT_ID", "")).strip()
 GOOGLE_SCOPES = os.environ.get(
     "AGENTBOX_GOOGLE_SCOPES",
     "https://www.googleapis.com/auth/gmail.modify "
@@ -466,6 +470,35 @@ def pending_requests(identity: str = "") -> list[dict]:
             continue
         out.append(record)
     return out
+
+
+def google_redirect_acceptable(url: str) -> tuple[bool, str]:
+    """Whether Google will accept this as an authorised redirect URI.
+
+    Google takes exactly two shapes: loopback over plain http, or a real
+    public-suffix domain over https. A .local mDNS name is neither, and the
+    console refuses it with "must end with a public top-level domain".
+
+    Checked here because the alternative is discovering it in the browser
+    halfway through a consent flow, which is how it was discovered. The docs
+    told the operator to register a URI Google was never going to accept.
+    """
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False, "no host in the portal URL"
+    if host in ("127.0.0.1", "::1", "localhost"):
+        if parsed.scheme != "http":
+            return False, "loopback redirects must use http, not https"
+        return True, ""
+    if parsed.scheme != "https":
+        return False, (f"{host} is not loopback, so Google requires https "
+                       f"(only 127.0.0.1 and localhost may use http)")
+    if host.endswith(".local") or "." not in host:
+        return False, (f"{host} is not a public domain; Google rejects .local "
+                       f"and bare hostnames. Use a loopback URL, or a real "
+                       f"name over https such as a Tailscale *.ts.net host")
+    return True, ""
 
 
 def google_consent_url(state: str) -> str:

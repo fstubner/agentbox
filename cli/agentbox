@@ -458,6 +458,33 @@ def _agent_can(action: str, path: str) -> bool | None:
     return result.returncode == 0
 
 
+def portal_redirect_uri() -> int:
+    """Fail early if the portal's OAuth redirect is one Google will refuse.
+
+    Registering it is a console step nobody can automate, so the least this can
+    do is not send an operator to register something impossible. It sent them
+    twice: both the invite page and the portal documented an agentbox.local
+    URI, which Google rejects outright.
+    """
+    url = os.environ.get("AGENTBOX_PORTAL_URL", "")
+    if not url:
+        return 0
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in ("127.0.0.1", "::1", "localhost"):
+        if parsed.scheme != "http":
+            report(FAIL, "loopback portal URLs must use http for Google OAuth")
+            return 1
+        return 0
+    if parsed.scheme != "https" or host.endswith(".local") or "." not in host:
+        report(FAIL, f"AGENTBOX_PORTAL_URL={url} cannot be registered as a "
+                     f"Google redirect URI. Google accepts loopback over http, "
+                     f"or a real public domain over https — .local and bare "
+                     f"hostnames are refused by the console.")
+        return 1
+    return 0
+
+
 def connector_credentials() -> int:
     """Check each identity's Google credential still works.
 
@@ -664,6 +691,7 @@ def doctor() -> int:
     bad += bridge_readiness()
     bad += assistant_containment()
     bad += connector_credentials()
+    bad += portal_redirect_uri()
     bad += gateway_tool_visibility()
     bad += validate()
     return 1 if bad else 0
