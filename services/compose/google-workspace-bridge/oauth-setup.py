@@ -51,11 +51,31 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 # Derived from what app/bridge.py actually calls:
 #   gmail.modify  — read messages/labels, mark read, archive, apply labels
 #   calendar      — list calendars, read events, freebusy, create events
+#   drive.file    — create and read *only files this app created*
 # Keep this list minimal; widening it widens the blast radius of the token.
 SCOPES = (
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/drive.file",
 )
+
+# Opt-in, and the single most consequential choice in this file.
+#
+# drive.file (above) lets the assistant read and write the files it created and
+# nothing else — a boundary Google enforces, so it holds even if this bridge is
+# compromised. It cannot answer "find my tenancy agreement", because it cannot
+# see it.
+#
+# drive.readonly lets it read every file in the drive. That is what makes Drive
+# search useful and it is a genuinely large widening: tax returns, medical
+# letters, contracts. Set GOOGLE_ENABLE_DRIVE_READ_ALL=1 to request it, having
+# decided that on purpose.
+#
+# Note this is the *credential's* boundary, not a policy check. An approval
+# prompt on a tool call only helps if a human reads carefully every time; a
+# scope that was never granted cannot be spent at all.
+if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip() in ("1", "true", "yes"):
+    SCOPES = SCOPES + ("https://www.googleapis.com/auth/drive.readonly",)
 
 
 AUTH_FILES = (

@@ -54,10 +54,14 @@ DEFAULT_TTL_HOURS = int(os.environ.get("AGENTBOX_INVITE_TTL_HOURS", "24"))
 # without the secret that exchanges it. That is the whole reason onboarding is
 # two phases rather than one privileged service.
 GOOGLE_CLIENT_ID = os.environ.get("AGENTBOX_GOOGLE_CLIENT_ID", "").strip()
+# Must stay in step with google-workspace-bridge/oauth-setup.py. A member
+# onboarded with fewer scopes than the bridge calls gets a token that fails at
+# the first Drive request, days later, with an opaque 403.
 GOOGLE_SCOPES = os.environ.get(
     "AGENTBOX_GOOGLE_SCOPES",
     "https://www.googleapis.com/auth/gmail.modify "
-    "https://www.googleapis.com/auth/calendar")
+    "https://www.googleapis.com/auth/calendar "
+    "https://www.googleapis.com/auth/drive.file")
 PUBLIC_ORIGIN = os.environ.get("AGENTBOX_INVITE_ORIGIN", "").rstrip("/")
 BIND_HOST = os.environ.get("AGENTBOX_INVITE_HOST", "0.0.0.0")
 BIND_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))
