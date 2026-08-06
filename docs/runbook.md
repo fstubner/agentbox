@@ -73,10 +73,17 @@ cover anyone, as every pre-identity grant does.
 ### Onboarding somebody
 
 ```
-cli/agentbox-invite create sam          # mints a single-use link
-cli/agentbox-invite serve               # run the page while she fills it in
-cli/agentbox invite complete <id>       # you provision, afterwards
+cli/agentbox-invite create sam
+AGENTBOX_INVITE_ORIGIN=http://agentbox.local:8770 \
+AGENTBOX_GOOGLE_CLIENT_ID=<client id> \
+  cli/agentbox-invite serve
+cli/agentbox invite complete <id>
 ```
+
+`AGENTBOX_INVITE_ORIGIN` must be the URL **she** opens, and
+`<that origin>/google/callback` must be registered as a redirect URI on the
+OAuth client — the same `redirect_uri_mismatch` that has already bitten once.
+Without both set, the Google step is skipped and `serve` says so.
 
 She opens the link on her phone, picks a name, ticks which services she wants
 her own account for, and that is her whole involvement. She never sees Vikunja's
@@ -109,12 +116,28 @@ credential with `docker inspect`.
 | Tasks | created for her — she gets a one-time password to change |
 | Memory | her private scope exists the moment her identity does |
 | The house | shared; nothing to set up |
-| **Gmail / Calendar** | **she must consent herself** |
+| Gmail / Calendar | **she consents in the page**, then her bridge is built for her |
 
-Google is the one thing that cannot be automated: we can neither create a Google
-account nor consent on her behalf. `invite complete` prints the OAuth steps
-rather than pretending. Until they are done she shares your Google bridge, which
-is correct for shared services and wrong for mail — so do them.
+**Consent is the only part that is not automated**, and it cannot be: we can
+neither create a Google account nor agree on her behalf. Everything after it
+is. She clicks "Sign in with Google" in the invite page; Google returns an
+authorisation code; `invite complete` exchanges it for a refresh token and
+stands up `sam-google-bridge` holding only her credential, then wires
+`GOOGLE_BRIDGE_URL_SAM` so her mail is reached with her token and nobody
+else's.
+
+**One timing constraint:** authorisation codes expire in about ten minutes and
+are single use, so run `invite complete` while she is still in the room. A
+stale code fails with `invalid_grant` and says so.
+
+She gets **no writable calendar** by default —
+`GOOGLE_ALLOWED_WRITE_CALENDAR_ID` is left blank in her env file, because
+inheriting yours would let her assistant write to your calendar. Set it if she
+wants one.
+
+If she skips the Google step she falls back to the shared bridge, which is
+correct for shared services and wrong for mail — `invite complete` says so
+rather than leaving it silent.
 
 ### Memory scopes
 
