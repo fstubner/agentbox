@@ -249,15 +249,36 @@ To see why it is failing, read the journal or check the wrapper's own
 preconditions (`op whoami` and three `op read` calls, any of which exits 1
 before Hermes starts). Do not reach for a manual `gateway run`.
 
+### Assistant containment
+
+`doctor` verifies five properties the assistant's confinement rests on, all of
+which fail silently if broken:
+
+```
+modify_production_gateway_config enforced (config.yaml not writable)
+enable_skill_bundle_production   enforced (skills not writable)
+modify_upstream_agent_source     enforced (hermes-agent-test not writable)
+docker socket unreachable to the assistant
+operator credential directory unreadable to the assistant
+```
+
+The first three are policy tiers that were bypassable until 2026-08-05, because
+the assistant had a shell and could rewrite its own config. The last two are
+what stop that shell — were it ever re-enabled — from reading a real
+credential. **Never add `agentbox` to the `docker` group**: that is
+root-equivalent and would undo the whole model.
+
 ### Adding a new skill
 
 ```
-sudo install -d -o agentbox -g agentbox -m 0775 /home/agentbox/agent-control-plane/hermes/skills/<name>
-sudo install -o agentbox -g agentbox -m 0664 skills/<name>/SKILL.md /home/agentbox/agent-control-plane/hermes/skills/<name>/SKILL.md
+sudo install -d -o root -g agentbox -m 0750 /home/agentbox/agent-control-plane/hermes/skills/<name>
+sudo install -o root -g agentbox -m 0640 skills/<name>/SKILL.md /home/agentbox/agent-control-plane/hermes/skills/<name>/SKILL.md
 ```
 
 Skills in this repo are the source; that directory is what the gateway loads.
-They are not synced automatically.
+They are not synced automatically. Root-owned deliberately — the assistant
+reads its skills and must not be able to rewrite them, since a skill shapes its
+behaviour as directly as its config does.
 
 ## Reviewing the assistant's code proposals
 

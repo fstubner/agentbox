@@ -424,6 +424,79 @@ def gateway_tool_visibility() -> int:
     return 0
 
 
+# The properties the assistant's containment actually rests on. Every one is
+# silent if it breaks: nothing errors, the policy file still says the right
+# thing, and the tier is simply no longer true. Checked here because a
+# constraint nobody verifies is a constraint that has already regressed once.
+GATEWAY_USER = os.environ.get("AGENTBOX_GATEWAY_USER", "agentbox")
+GATEWAY_HOME = Path(os.environ.get("AGENTBOX_GATEWAY_HOME", "/home/agentbox"))
+
+
+def _agent_can(action: str, path: str) -> bool | None:
+    """Can the gateway user do `action` (`-w` / `-r`) to `path`? None if unknown."""
+    result = subprocess.run(["sudo", "-n", "-u", GATEWAY_USER, "test", action, path],
+                            capture_output=True, timeout=10)
+    # sudo itself failing (no NOPASSWD) is not an answer about the path.
+    if result.returncode not in (0, 1):
+        return None
+    return result.returncode == 0
+
+
+def assistant_containment() -> int:
+    """Verify the assistant still cannot rewrite what constrains it.
+
+    Three policy tiers were bypassable until 2026-08-05 because the gateway
+    could write its own config, skills and source — enforced against tool calls
+    while a shell sat beside them. The fix was ownership, and ownership is
+    exactly the kind of thing a later `chown -R` undoes without comment.
+    """
+    checks = [
+        ("modify_production_gateway_config", GATEWAY_HOME / "agentbox/config.yaml"),
+        ("enable_skill_bundle_production",
+         GATEWAY_HOME / "agent-control-plane/hermes/skills"),
+        ("modify_upstream_agent_source", GATEWAY_HOME / "hermes-agent-test"),
+    ]
+    bad = 0
+    unknown = False
+    for capability, path in checks:
+        # Asked as the gateway user throughout: /home/agentbox is mode 750, so
+        # the operator cannot even stat inside it — Path.exists() raises.
+        if _agent_can("-e", str(path)) is not True:
+            continue
+        writable = _agent_can("-w", str(path))
+        if writable is None:
+            unknown = True
+            continue
+        if writable:
+            bad += 1
+            report(FAIL, f"{GATEWAY_USER} can write {path} — '{capability}' is "
+                         f"bypassable by shell regardless of its tier")
+        else:
+            report(OK, f"{capability} enforced ({path.name} not writable)")
+
+    # Credential isolation currently rests on these two facts, not on the
+    # architecture. Both are one command away from silently disappearing.
+    if _agent_can("-r", "/var/run/docker.sock"):
+        bad += 1
+        report(FAIL, f"{GATEWAY_USER} can reach the docker socket — it can read "
+                     f"every bridge credential with `docker inspect`")
+    elif not unknown:
+        report(OK, "docker socket unreachable to the assistant")
+
+    operator_env = Path(env_dir())
+    if _agent_can("-r", str(operator_env)):
+        bad += 1
+        report(FAIL, f"{GATEWAY_USER} can read {operator_env} — every bridge "
+                     f"token and the memory review token are in there")
+    elif not unknown:
+        report(OK, "operator credential directory unreadable to the assistant")
+
+    if unknown:
+        report(WARN, "could not test as the gateway user (needs passwordless "
+                     "sudo); containment unverified")
+    return bad
+
+
 def bridge_readiness() -> int:
     """Report bridges whose upstream is unreachable."""
     bad = 0
@@ -535,6 +608,7 @@ def doctor() -> int:
     report(OK if pct < 90 else WARN, f"disk usage {pct}%")
     bad += deploy_freshness()
     bad += bridge_readiness()
+    bad += assistant_containment()
     bad += gateway_tool_visibility()
     bad += validate()
     return 1 if bad else 0

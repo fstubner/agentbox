@@ -312,7 +312,7 @@ Ordering: after the MCP consolidation (the evaluator belongs behind the same
 gateway) and after two accounts (a rule fires as *someone*; building it
 single-user first would mean retrofitting identity into stored rules).
 
-### 12. Close the shell gap — **highest priority**
+### 12. Close the shell gap — **done 2026-08-05**
 
 Found 2026-08-05 while answering "can the terminal tool find the credentials?".
 
@@ -333,6 +333,12 @@ That is the same structure the platform already fixes everywhere else:
 `merge_own_pr` denied, grants mounted read-only, the builder refusing
 `policies/`. Each is *separate the constraint from the constrained*, and the
 gateway config is the one place it was never applied.
+
+**Resolved:** toolset disabled (option 4) plus read-only tree (option 2).
+`terminal.backend: docker` was rejected — it needs the docker socket, which is
+root-equivalent and would have been a larger hole than the one it patched.
+`doctor` now verifies all five properties. The original options are kept below
+because the reasoning still applies if the terminal is ever re-enabled.
 
 Options, cheapest first:
 

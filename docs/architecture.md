@@ -4,13 +4,13 @@ Agentbox is a self-hosted personal AI assistant platform on local hardware.
 The assistant reaches external services only through narrow, policy-gated
 levers, and never holds a raw upstream credential.
 
-> **Correction, 2026-08-05.** This document previously said the assistant
-> "never gets raw shell access". That was false and had been for the life of
-> the project. See **Shell access** below: the gateway's `hermes-cli` toolset
-> includes a local terminal, `command_allowlist` is empty, and the assistant
-> runs arbitrary commands as the `agentbox` user. The credential claims survive
-> — but by filesystem permissions, not by architecture — and three policy tiers
-> do not survive at all.
+> **Corrected and closed, 2026-08-05.** This document long claimed the
+> assistant "never gets raw shell access". That was false: `hermes-cli`
+> included a local terminal with an empty `command_allowlist`. Three policy
+> tiers were bypassable as a result. The toolset is now disabled and the
+> gateway's config, skills and source are read-only to it, so those tiers are
+> enforced by ownership rather than merely asserted. `cli/agentbox doctor`
+> checks all of it. See **Shell access** below.
 
 ```mermaid
 flowchart TD
@@ -57,16 +57,41 @@ they serve the evaluator. Verified against the live gateway config and the
 router's access log, 2026-08-02.
 
 
-## Shell access — the gap this design does not close
+## Shell access — closed, and what it rests on
 
-`toolsets: [hermes-cli]` includes `terminal_tool`, `terminal.backend` is
-`local`, `command_allowlist` is empty and `disabled_toolsets` is empty. The
-assistant executes arbitrary commands as `agentbox`.
+Until 2026-08-05 the assistant had an unrestricted local shell as `agentbox`:
+`toolsets: [hermes-cli]` includes `terminal_tool`, `command_allowlist` was
+empty. It could rewrite its own config, its own skills and its own source, so
+`modify_production_gateway_config`, `enable_skill_bundle_production` and
+`modify_upstream_agent_source` were enforced against tool calls while a shell
+sat beside them with none of it applied.
 
-Measured 2026-08-05, exactly:
+**The fix was ownership, not an allowlist.** `command_allowlist` lives in
+`config.yaml`, which the assistant could write — so it would have edited the
+allowlist and then run anything. An allowlist in a file the constrained party
+controls is a suggestion. This is the same rule the platform already applies as
+`merge_own_pr`, read-only grant mounts, and the builder's protected paths:
+*separate the constraint from the constrained.* The gateway config was the one
+place it had never been applied.
 
-**Still holds, but for a different reason than claimed.** The assistant cannot
-read an upstream credential:
+What changed:
+
+- `toolsets: []` and `disabled_toolsets: [hermes-cli]`. The work directory had
+  been empty since June, so nothing depended on it — and 39 designed tools are
+  precisely what a shell was there to substitute for.
+- `config.yaml`, the skills directory and the gateway source are `root:agentbox`
+  and not group-writable. The gateway reads them; the operator writes them with
+  `sudo`.
+
+**`terminal.backend: docker` was considered and rejected.** It shells out to
+the `docker` binary, so it needs the socket — and socket access is
+root-equivalent: `docker inspect` dumps every bridge credential and `docker run
+-v /:/host` is a root shell. The prerequisite is a larger hole than the one it
+patches.
+
+### What credential isolation actually rests on
+
+Two filesystem facts, not architecture:
 
 - `agentbox` is not in the `docker` group, so `docker inspect` cannot dump a
   bridge container's environment;
@@ -77,28 +102,13 @@ read an upstream credential:
   `/health` returns 200 — but an unauthenticated call returns 401, and the
   token to authenticate it is behind the two lines above.
 
-That is real isolation, but it is **unix permissions doing the work, not the
-architecture**. One `usermod -aG docker agentbox` deletes it silently. Treat
-those two properties as load-bearing and check them in `doctor`.
+One `usermod -aG docker agentbox` or one careless `chmod` deletes either, and
+neither failure would announce itself: nothing errors, the policy file still
+says the right thing, and the tier is simply no longer true.
 
-**Does not hold.** The assistant can write to `/home/agentbox/`, which means:
-
-| Policy says | Reality |
-|---|---|
-| `modify_production_gateway_config` — approval_required | `config.yaml` is writable |
-| `enable_skill_bundle_production` — approval_required | the skills directory is writable |
-| `modify_upstream_agent_source` — **always_denied** | the gateway's own tree is writable |
-
-So the builder's protected-path check, the memory review token, and every
-approval tier are enforced against *tool calls* while a shell sits beside them
-with none of it applied. The containment argument in this document — "a
-constraint holds when the model is compromised" — is true of the bridges and
-false of the gateway host.
-
-This is not a defect introduced by any recent change; it predates the policy
-model. It is recorded here rather than quietly fixed because the fix is a
-posture decision (sandbox the terminal, allowlist it, or remove the toolset)
-and belongs to the operator. See `docs/roadmap.md`.
+So `cli/agentbox doctor` verifies all five properties on every run — the three
+tiers plus these two — by asking as the gateway user. Verified to fail
+correctly by making `config.yaml` writable and watching it go red.
 
 ## Trust boundaries
 
