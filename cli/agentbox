@@ -17,8 +17,8 @@ import os
 import re
 import shutil
 import subprocess
-import time
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -458,6 +458,44 @@ def _agent_can(action: str, path: str) -> bool | None:
     return result.returncode == 0
 
 
+def connector_credentials() -> int:
+    """Check each identity's Google credential still works.
+
+    A refresh token revoked at Google leaves this box holding a dead
+    credential, and nothing notices: /health stays green because the container
+    is fine, and the first symptom is an opaque 403 during an unrelated task
+    days later. That exact failure already happened once on the shared bridge,
+    which is why the bridge grew an upstream_status probe — this extends it to
+    the per-identity bridges, which nothing was checking.
+
+    Warns rather than fails: a disconnected account is a legitimate state, not
+    a broken deployment. The point is that it should be *visible*.
+    """
+    directory = Path(env_dir())
+    for env_path in sorted(directory.glob("*-google-bridge.env")):
+        identity = env_path.name[:-len("-google-bridge.env")]
+        container = f"{identity}-google-bridge"
+        result = subprocess.run(
+            ["docker", "exec", container, "python", "-c",
+             "import json,urllib.request;"
+             "print(urllib.request.urlopen("
+             "'http://127.0.0.1:8080/ready', timeout=10).read().decode())"],
+            capture_output=True, text=True, timeout=60, check=False)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()[:120]
+            report(WARN, f"{identity}'s google bridge did not answer: {detail}")
+            continue
+        if '"ok": true' in result.stdout.lower() or '"ok":true' in result.stdout.lower():
+            report(OK, f"{identity}'s google credential is live")
+        else:
+            report(WARN, f"{identity}'s google credential looks dead — they "
+                         f"can reconnect at the portal, then run: "
+                         f"cli/agentbox identity reconnect {identity}")
+    # Always zero. A disconnected account is a legitimate state rather than a
+    # broken deployment, so this reports and never fails the run.
+    return 0
+
+
 def assistant_containment() -> int:
     """Verify the assistant still cannot rewrite what constrains it.
 
@@ -625,6 +663,7 @@ def doctor() -> int:
     bad += deploy_freshness()
     bad += bridge_readiness()
     bad += assistant_containment()
+    bad += connector_credentials()
     bad += gateway_tool_visibility()
     bad += validate()
     return 1 if bad else 0
@@ -1122,7 +1161,7 @@ def approvals_list() -> int:
         age = now - int(record.get("requested_at", now))
         print(f"{record.get('tool'):28} {record.get('capability') or '(unmapped)':28} "
               f"{age // 60}m ago")
-    print(f"\napprove with: agentbox grant <tool> --ttl 15m")
+    print("\napprove with: agentbox grant <tool> --ttl 15m")
     return 0
 
 
@@ -1464,6 +1503,126 @@ def provision_google_bridge(identity: str, refresh_token: str) -> bool:
     return True
 
 
+def portal_requests(identity: str = "") -> list[dict]:
+    """Connector requests people raised in the portal, oldest first."""
+    directory = Path(os.environ.get(
+        "AGENTBOX_PORTAL_DIR",
+        os.path.expanduser("~/.local/state/agentbox/portal"))) / "requests"
+    if not directory.is_dir():
+        return []
+    out = []
+    for entry in sorted(directory.glob("*.json")):
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        record["_path"] = str(entry)
+        if record.get("completed_at"):
+            continue
+        if identity and record.get("identity") != identity:
+            continue
+        out.append(record)
+    return out
+
+
+def _mark_request_done(record: dict) -> None:
+    path = Path(record.pop("_path", ""))
+    if not path:
+        return
+    record["completed_at"] = int(time.time())
+    record.pop("code", None)          # spent, and no reason to keep it on disk
+    try:
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def revoke_google_token(refresh_token: str) -> bool:
+    """Tell Google to invalidate the credential.
+
+    Deleting our copy is not disconnecting: the grant would still be listed in
+    the person's Google account, and anyone who had captured the token could
+    still spend it. Revoking upstream is the part that actually ends access.
+    """
+    if not refresh_token:
+        return False
+    body = urllib.parse.urlencode({"token": refresh_token}).encode()
+    request = urllib.request.Request(
+        "https://oauth2.googleapis.com/revoke", data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            return True
+    except urllib.error.HTTPError as exc:
+        # 400 invalid_token means it was already dead — the desired end state.
+        return exc.code == 400
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def identity_reconnect(name: str) -> int:
+    """Finish a reconnect the portal started.
+
+    The portal captured an authorisation code; this exchanges it with the
+    client secret, which is why the two halves exist. Codes expire in about
+    ten minutes.
+    """
+    pending = [r for r in portal_requests(name)
+               if r.get("action") == "reconnect" and r.get("code")]
+    if not pending:
+        report(WARN, f"no pending reconnect for {name}; they start one at "
+                     f"the portal under 'Your accounts'")
+        return 1
+    record = pending[-1]
+    age = int(time.time()) - int(record.get("created_at", 0))
+    if age > 600:
+        report(FAIL, f"that authorisation code is {age // 60} minutes old and "
+                     f"Google expires them at about ten. Ask {name} to press "
+                     f"Reconnect again.")
+        return 1
+    token = exchange_oauth_code(record["code"], record.get("redirect_uri", ""))
+    if not token:
+        return 1
+    if not provision_google_bridge(name, token):
+        return 1
+    _mark_request_done(record)
+    report(OK, f"reconnected {name}'s Google account")
+    report(OK, "run: cli/agentbox deploy agentbox-mcp   (to pick up routing)")
+    return 0
+
+
+def identity_disconnect(name: str) -> int:
+    """Revoke a person's Google credential and remove it from this box."""
+    env_path = Path(env_dir()) / f"{name}-google-bridge.env"
+    if not env_path.exists():
+        report(WARN, f"{name} has no Google bridge of their own; nothing to "
+                     f"disconnect")
+        return 1
+    values = read_env_file(env_path)
+    if revoke_google_token(values.get("GOOGLE_REFRESH_TOKEN", "")):
+        report(OK, "credential revoked at Google")
+    else:
+        report(WARN, "could not confirm revocation at Google; removing the "
+                     "local copy anyway, but check the account's connected "
+                     "apps by hand")
+    subprocess.run(["docker", "compose", "-p", f"{name}-google-bridge", "down"],
+                   capture_output=True, text=True, timeout=120, check=False)
+    try:
+        env_path.unlink()
+    except OSError:
+        pass
+    suffix = name.upper().replace("-", "_")
+    gateway_env = Path(env_dir()) / "agentbox-mcp.env"
+    for key in (f"GOOGLE_BRIDGE_URL_{suffix}", f"GOOGLE_BRIDGE_TOKEN_{suffix}"):
+        write_env_value(gateway_env, key, "")
+    for record in portal_requests(name):
+        if record.get("action") == "disconnect":
+            _mark_request_done(record)
+    report(OK, f"disconnected {name}'s Google account")
+    report(OK, "run: cli/agentbox deploy agentbox-mcp")
+    return 0
+
+
 def invite_complete(token_id: str) -> int:
     """Turn a submitted invite into a working identity."""
     record = _invite(token_id)
@@ -1492,7 +1651,7 @@ def invite_complete(token_id: str) -> int:
         if provision_vikunja_user(name, password):
             report(OK, f"created vikunja user '{name}'")
             print(f"      one-time password: {password}")
-            print(f"      Give her this once; she changes it on first login.")
+            print("      Give her this once; she changes it on first login.")
 
     if "google" in chosen:
         code = record.get("google_code", "")
@@ -1511,9 +1670,9 @@ def invite_complete(token_id: str) -> int:
                 print(f"      Store it: op item edit Agentbox/google-{name} "
                       f"--refresh_token=<from "
                       f"{name}-google-bridge.env>")
-                print(f"      She has no writable calendar yet — set "
-                      f"GOOGLE_ALLOWED_WRITE_CALENDAR_ID in that env file "
-                      f"if she wants one.")
+                print("      She has no writable calendar yet — set "
+                      "GOOGLE_ALLOWED_WRITE_CALENDAR_ID in that env file "
+                      "if she wants one.")
 
     record["completed_at"] = int(time.time())
     # The secret is spent; there is no reason to keep it on disk.
@@ -1941,6 +2100,12 @@ def main() -> None:
     ida.add_argument("name")
     idr = idn_sub.add_parser("remove")
     idr.add_argument("name")
+    idrc = idn_sub.add_parser("reconnect",
+                              help="finish a reconnect started in the portal")
+    idrc.add_argument("name")
+    idd = idn_sub.add_parser("disconnect",
+                             help="revoke and remove a Google connection")
+    idd.add_argument("name")
     pr = sub.add_parser("proposals", help="review code changes the assistant has proposed")
     pr_sub = pr.add_subparsers(dest="proposals_cmd", required=True)
     pr_sub.add_parser("list")
@@ -2006,7 +2171,17 @@ def main() -> None:
             sys.exit(identity_list())
         if args.identity_cmd == "add":
             sys.exit(identity_add(args.name))
-        sys.exit(identity_remove(args.name))
+        if args.identity_cmd == "reconnect":
+            sys.exit(identity_reconnect(args.name))
+        if args.identity_cmd == "disconnect":
+            sys.exit(identity_disconnect(args.name))
+        # Explicit rather than a fallthrough. `remove` deletes an identity, and
+        # reaching it by default meant any subcommand added later without a
+        # branch here would silently delete instead of erroring.
+        if args.identity_cmd == "remove":
+            sys.exit(identity_remove(args.name))
+        report(FAIL, f"unknown identity subcommand: {args.identity_cmd}")
+        sys.exit(2)
     if args.cmd == "proposals":
         if args.proposals_cmd == "list":
             sys.exit(proposals_list())

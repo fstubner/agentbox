@@ -98,6 +98,19 @@ SMTP_USER = os.environ.get("AGENTBOX_SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("AGENTBOX_SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", SMTP_USER)
 
+# A client id is not a secret, which is what makes the split below work: this
+# page can *start* Google's consent flow and receive an authorisation code, but
+# a code is useless without the client secret that exchanges it. The secret
+# stays on the operator side. Same reasoning as cli/agentbox-invite.
+GOOGLE_CLIENT_ID = os.environ.get("AGENTBOX_GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_SCOPES = os.environ.get(
+    "AGENTBOX_GOOGLE_SCOPES",
+    "https://www.googleapis.com/auth/gmail.modify "
+    "https://www.googleapis.com/auth/calendar "
+    "https://www.googleapis.com/auth/drive.file "
+    "https://www.googleapis.com/auth/drive.activity.readonly "
+    "https://www.googleapis.com/auth/contacts.readonly")
+
 # Same variable and default as cli/agentbox, deliberately. Two names for one
 # endpoint is how a portal ends up quietly pointed at nothing.
 PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://agentbox.local:8771")
@@ -411,6 +424,97 @@ def decide_memory(identity: str, role: str, proposal_id: str,
     return True, f"Memory {verb}d."
 
 
+# --- connectors ----------------------------------------------------------------
+#
+# Reconnecting is the same two-phase split as onboarding, for the same reason:
+# a LAN-reachable page must not hold the credential that mints refresh tokens.
+# This half collects consent and writes a request; `agentbox identity
+# reconnect` has the secret and is run by a human who chose to.
+#
+# Why anyone needs this at all: scopes change. Drive, Drive activity and
+# contacts were all added after Alex consented, and every one of them returns
+# ACCESS_TOKEN_SCOPE_INSUFFICIENT against a token minted before they existed.
+# Without a reconnect path the only fix is deleting an identity and starting
+# over, which also orphans their memories.
+
+
+def request_path(request_id: str) -> Path:
+    return STATE / "requests" / f"{request_id}.json"
+
+
+def save_request(record: dict) -> None:
+    path = request_path(record["id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    # Holds an authorisation code. Short-lived, but still a credential.
+    path.chmod(0o600)
+
+
+def pending_requests(identity: str = "") -> list[dict]:
+    directory = STATE / "requests"
+    if not directory.is_dir():
+        return []
+    out = []
+    for entry in sorted(directory.glob("*.json")):
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("completed_at"):
+            continue
+        if identity and record.get("identity") != identity:
+            continue
+        out.append(record)
+    return out
+
+
+def google_consent_url(state: str) -> str:
+    """Start Google's consent flow.
+
+    access_type=offline with prompt=consent because a re-consent that does not
+    force the prompt returns no refresh token — Google issues one on first
+    grant only. Reconnecting is precisely the case where the old token is the
+    thing being replaced, so silently getting none back would make this whole
+    flow a no-op that looks like it worked.
+    """
+    query = urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": f"{PUBLIC_URL.rstrip('/')}/google/callback",
+        "response_type": "code",
+        "scope": GOOGLE_SCOPES,
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state,
+    })
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{query}"
+
+
+def connector_status(identity: str) -> list[dict]:
+    """What this person has connected, from configuration on disk.
+
+    Deliberately not a live probe: the bridges have no host ports, so nothing
+    on this side of the socket can reach them. Whether the *credential* still
+    works is a different question, answered by `agentbox doctor`, which can
+    reach the containers. Saying "configured" here and meaning "healthy" would
+    be the kind of confident-but-wrong status this system keeps having to fix.
+    """
+    env_dir = Path(os.environ.get(
+        "AGENTBOX_ENV_DIR",
+        os.path.expanduser("~/.config/agent-control-plane")))
+    google_env = env_dir / f"{identity}-google-bridge.env"
+    shared = env_dir / "google-workspace-bridge.env"
+    connected = google_env.exists() or (
+        identity in admin_names() and shared.exists())
+    return [{
+        "key": "google",
+        "name": "Google (Gmail, Calendar, Drive)",
+        "connected": connected,
+        "detail": "your own account" if google_env.exists() else (
+            "the household account" if connected else "not connected"),
+    }]
+
+
 # --- delivery ------------------------------------------------------------------
 
 
@@ -485,8 +589,10 @@ def render_home(identity: str, role: str, flash: str) -> bytes:
              f"{' You are an admin.' if role == ADMIN else ''}</p>"]
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
+    nav = ["<a href='/connectors'>Your accounts</a>"]
     if role == ADMIN:
-        parts.append("<nav><a href='/admin'>Operations &rarr;</a></nav><p></p>")
+        nav.append("<a href='/admin'>Operations</a>")
+    parts.append(f"<nav>{' '.join(nav)}</nav><p></p>")
     if not reachable:
         parts.append("<p class=empty><b>The memory service is not "
                      "responding.</b> This is not the same as having nothing "
@@ -531,6 +637,45 @@ def render_signin(flash: str = "") -> bytes:
         flash=f"<div class=flash>{html.escape(flash)}</div>" if flash else ""))
 
 
+def render_connectors(identity: str, role: str, flash: str) -> bytes:
+    parts = ["<h1>Your accounts</h1>",
+             "<p class=sub>What Agentbox can reach on your behalf.</p>"]
+    if flash:
+        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
+    parts.append("<nav><a href='/'>&larr; Your memories</a></nav><p></p>")
+
+    waiting = pending_requests(identity)
+    if waiting:
+        kinds = ", ".join(sorted({str(r.get("action", "?")) for r in waiting}))
+        parts.append(
+            f"<div class=card><b>Waiting for the household admin</b>"
+            f"<p class=sub style='margin:.4rem 0 0'>You asked to {html.escape(kinds)}. "
+            f"Someone with operator access has to finish it — that step needs a "
+            f"credential this page deliberately does not hold.</p></div>")
+
+    for connector in connector_status(identity):
+        state = "Connected" if connector["connected"] else "Not connected"
+        parts.append(
+            f"<div class=card><b>{html.escape(connector['name'])}</b>"
+            f"<p class=sub style='margin:.3rem 0 .8rem'>{state} "
+            f"&mdash; {html.escape(connector['detail'])}.</p>"
+            f"<form method=post action=/connectors/start style='display:inline'>"
+            f"<input type=hidden name=connector value='{html.escape(connector['key'])}'>"
+            f"<button class=yes name=action value=reconnect>"
+            f"{'Reconnect or switch account' if connector['connected'] else 'Connect'}"
+            f"</button>"
+            + ("<button name=action value=disconnect>Disconnect</button>"
+               if connector["connected"] else "")
+            + "</form></div>")
+
+    parts.append(
+        "<footer>Reconnecting replaces the stored credential. Disconnecting "
+        "revokes it at Google and removes it from this box \u2014 your memories "
+        "are untouched either way."
+        "<br><a href='/logout'>Sign out</a></footer>")
+    return page("Your accounts \u2014 Agentbox", "".join(parts))
+
+
 def render_admin(identity: str, flash: str) -> bytes:
     parts = ["<h1>Operations</h1>",
              "<p class=sub>Admin only. Connector health and messaging setup.</p>"]
@@ -547,6 +692,21 @@ def render_admin(identity: str, flash: str) -> bytes:
 
 
 # --- server --------------------------------------------------------------------
+
+
+def _consent_state(identity: str) -> str:
+    """A state value bound to this identity and this box's session secret.
+
+    Derived rather than stored so it survives a restart mid-flow, and keyed so
+    one person's consent cannot be redirected into another's record.
+    """
+    secret = os.environ.get("AGENTBOX_PORTAL_STATE_SECRET", "")
+    if not secret:
+        # Derived from the box's own state directory rather than random, so a
+        # restart between consent and callback does not strand the user.
+        secret = _hash(str(STATE.resolve()))
+    return hmac.new(secret.encode(), f"google:{identity}".encode(),
+                    hashlib.sha256).hexdigest()
 
 
 def cookie_value(header: str, name: str) -> str:
@@ -626,6 +786,15 @@ class PortalHandler(BaseHTTPRequestHandler):
                                  "sid=; Max-Age=0; HttpOnly; SameSite=Lax; Path=/"})
             return
 
+        if parsed.path == "/connectors":
+            self._send(200, render_connectors(session["identity"],
+                                              session["role"], flash))
+            return
+
+        if parsed.path == "/google/callback":
+            self._google_callback(session, query)
+            return
+
         if parsed.path == "/admin":
             if not can(session["role"], "ops:read_health"):
                 self._send(403, page("Not allowed",
@@ -640,6 +809,74 @@ class PortalHandler(BaseHTTPRequestHandler):
                                         flash))
             return
         self._send(404, page("Not found", "<h1>Not found</h1>"))
+
+    def _connector_action(self, session, form) -> None:
+        identity, role = session["identity"], session["role"]
+        action = (form.get("action") or [""])[0]
+        connector = (form.get("connector") or [""])[0]
+        if connector != "google":
+            self._redirect("/connectors?m=Unknown+connector.")
+            return
+        if action == "reconnect":
+            if not can(role, "connector:read_own") or not GOOGLE_CLIENT_ID:
+                self._redirect("/connectors?" + urllib.parse.urlencode(
+                    {"m": "Google sign-in is not configured on this box."}))
+                return
+            self._redirect(google_consent_url(_consent_state(identity)))
+            return
+        if action == "disconnect":
+            if not can(role, "connector:disconnect_own"):
+                self._redirect("/connectors?m=Not+allowed.")
+                return
+            save_request({
+                "id": secrets.token_urlsafe(9),
+                "identity": identity,
+                "connector": "google",
+                "action": "disconnect",
+                "created_at": now(),
+                "completed_at": None,
+            })
+            self._redirect("/connectors?" + urllib.parse.urlencode(
+                {"m": "Disconnect requested. An operator will revoke the "
+                      "credential and remove it from this box."}))
+            return
+        self._redirect("/connectors?m=Unknown+action.")
+
+    def _google_callback(self, session, query) -> None:
+        """Receive Google's authorisation code and spool it for the operator.
+
+        The state is verified against this session rather than merely being
+        present. Without that, a link crafted by anyone could land their code
+        in someone else's connector record — the account whose mail Agentbox
+        then reads would be the attacker's choice, not the user's.
+        """
+        state = (query.get("state") or [""])[0]
+        expected = _consent_state(session["identity"])
+        if not state or not hmac.compare_digest(state, expected):
+            self._send(403, page("Not valid", "<h1>Sorry</h1><p>That consent "
+                                 "link did not come from this session. Start "
+                                 "again from Your accounts.</p>"))
+            return
+        code = (query.get("code") or [""])[0]
+        if not code:
+            reason = (query.get("error") or ["no code returned"])[0]
+            self._redirect("/connectors?" + urllib.parse.urlencode(
+                {"m": f"Google did not complete the connection: {reason}"}))
+            return
+        save_request({
+            "id": secrets.token_urlsafe(9),
+            "identity": session["identity"],
+            "connector": "google",
+            "action": "reconnect",
+            "code": code,
+            "redirect_uri": f"{PUBLIC_URL.rstrip('/')}/google/callback",
+            "created_at": now(),
+            "completed_at": None,
+        })
+        self._redirect("/connectors?" + urllib.parse.urlencode(
+            {"m": "Google consent received. An operator has to finish it — "
+                  "authorisation codes expire in about ten minutes, so ask "
+                  "now if you can."}))
 
     def _request_link(self, address: str) -> None:
         """Handle a sign-in request.
@@ -681,6 +918,10 @@ class PortalHandler(BaseHTTPRequestHandler):
         session = self._session()
         if not session:
             self._send(401, render_signin())
+            return
+
+        if path == "/connectors/start":
+            self._connector_action(session, form)
             return
 
         if path == "/memory/decide":

@@ -210,6 +210,51 @@ Env: `AGENTBOX_IDENTITY_EMAILS="alex:alex@example.com,sam:sam@example.com"`,
 host the portal still runs and links are minted; they just have to be handed
 over by the operator.
 
+### Reconnecting or switching a Google account
+
+Scopes change. Drive, Drive activity and contacts were all added after Alex
+first consented, and every one returns `ACCESS_TOKEN_SCOPE_INSUFFICIENT`
+against a token minted before they existed. Before this flow the only fix was
+deleting the identity and starting over, which also orphaned their memories.
+
+The person starts it themselves at the portal under **Your accounts** →
+*Reconnect or switch account*. That sends them through Google's consent screen
+and captures an authorisation code.
+
+```bash
+cli/agentbox identity reconnect sam
+```
+
+Two halves, for the same reason onboarding has two: the portal can *start*
+consent because a client id is not a secret, but exchanging the code needs the
+client secret, which does not belong on a LAN-reachable page. **Authorisation
+codes expire in about ten minutes**, so run the command while they are still
+around; `reconnect` refuses a stale code with a plain message rather than
+letting Google return something opaque.
+
+Consent is bound to the requesting identity. A callback whose `state` does not
+match is refused — otherwise a crafted link could land someone else's
+authorisation code in this person's connector record, and whose mail Agentbox
+reads would be the attacker's choice.
+
+Disconnecting:
+
+```bash
+cli/agentbox identity disconnect sam
+```
+
+This revokes the credential **at Google** before removing the local copy.
+Deleting our copy alone is not disconnecting: the grant stays listed in their
+Google account and anyone who captured the token could still spend it. If
+revocation cannot be confirmed the command says so and tells you to check the
+account's connected apps by hand, rather than reporting an access that ended
+when it did not.
+
+`doctor` now probes each identity's Google credential and warns when one looks
+dead. A revoked token used to be invisible — `/health` stays green because the
+container is fine, and the first symptom was an opaque 403 during an unrelated
+task days later.
+
 ### What a private scope does and does not protect
 
 A scope controls **what the assistant will surface to whom**. Sam's assistant
