@@ -1300,6 +1300,108 @@ def identity_remove(name: str) -> int:
     return 0
 
 
+# --- completing an invite -------------------------------------------------------
+#
+# The privileged half of onboarding. `cli/agentbox-invite` collects her answers
+# on a LAN-reachable page with no privileges at all; this runs as the operator
+# and does the things that need real authority: creating a Vikunja user inside
+# its container, minting her identity token, wiring per-identity routing.
+#
+# The split exists because Vikunja registration is disabled on this deployment,
+# so creating her account genuinely requires `vikunja user create` in the
+# container — a docker-socket privilege that must never sit behind a web form.
+
+INVITE_DIR = Path(os.environ.get(
+    "AGENTBOX_INVITE_DIR",
+    str(Path("~/.local/state/agentbox/invites").expanduser())))
+
+
+def _invite(token_id: str) -> dict | None:
+    try:
+        return json.loads((INVITE_DIR / f"{token_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def provision_vikunja_user(name: str, password: str) -> bool:
+    """Create her task account inside the Vikunja container.
+
+    Registration is disabled (VIKUNJA_SERVICE_ENABLEREGISTRATION=false), so the
+    HTTP API cannot do this — the container's own CLI can. Deliberately not
+    reachable from the onboarding page.
+    """
+    container = os.environ.get("AGENTBOX_VIKUNJA_CONTAINER", "vikunja-vikunja-1")
+    probe = subprocess.run(["docker", "ps", "--filter", f"name={container}",
+                            "--format", "{{.Names}}"],
+                           capture_output=True, text=True, timeout=20)
+    if container not in probe.stdout:
+        report(WARN, f"vikunja container '{container}' not running; "
+                     f"skipping task account")
+        return False
+    result = subprocess.run(
+        ["docker", "exec", container, "/app/vikunja/vikunja", "user", "create",
+         "--username", name, "--email", f"{name}@agentbox.local",
+         "--password", password],
+        capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[:200]
+        report(WARN, f"could not create the vikunja user: {detail}")
+        return False
+    return True
+
+
+def invite_complete(token_id: str) -> int:
+    """Turn a submitted invite into a working identity."""
+    record = _invite(token_id)
+    if not record:
+        report(FAIL, f"no invite '{token_id}' — check `agentbox-invite list`")
+        return 1
+    if not record.get("used_at"):
+        report(FAIL, "that invite has not been filled in yet")
+        return 1
+    if record.get("completed_at"):
+        report(FAIL, "that invite has already been completed")
+        return 1
+
+    name = record.get("identity", "")
+    chosen = record.get("connectors", [])
+    display = record.get("display_name", name)
+    print(f"Completing invite for '{name}' ({display})")
+    print(f"  requested: {', '.join(chosen) if chosen else 'nothing personal'}\n")
+
+    if identity_add(name) != 0:
+        return 1
+
+    if "vikunja" in chosen:
+        import secrets as _secrets
+        password = _secrets.token_urlsafe(18)
+        if provision_vikunja_user(name, password):
+            report(OK, f"created vikunja user '{name}'")
+            print(f"      one-time password: {password}")
+            print(f"      Give her this once; she changes it on first login.")
+
+    if "google" in chosen:
+        suffix = name.upper().replace("-", "_")
+        report(WARN, "google needs her consent and cannot be automated")
+        print(f"      1. Run the OAuth flow signed in as HER Google account:")
+        print(f"           services/compose/google-workspace-bridge/oauth-setup.py")
+        print(f"      2. Store the refresh token as "
+              f"op://Agentbox/google-{name}/refresh_token")
+        print(f"      3. Deploy a bridge holding only her token, then set:")
+        print(f"           GOOGLE_BRIDGE_URL_{suffix}=http://{name}-google-bridge:8080")
+        print(f"           GOOGLE_BRIDGE_TOKEN_{suffix}=<that bridge's token>")
+        print(f"      Until then she shares yours, which is wrong for mail.")
+
+    record["completed_at"] = int(time.time())
+    # The secret is spent; there is no reason to keep it on disk.
+    record.pop("secret", None)
+    path = INVITE_DIR / f"{token_id}.json"
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    report(OK, f"invite {token_id} completed")
+    print("\nFinally: cli/agentbox deploy agentbox-mcp")
+    return 0
+
+
 def env_dir() -> str:
     configured = os.environ.get("AGENTBOX_ENV_DIR")
     if configured:
@@ -1690,6 +1792,10 @@ def main() -> None:
     dep.add_argument("--dry-run", action="store_true")
     sub.add_parser("doctor")
     sub.add_parser("smoke", help="drive real workflows end to end against the running system")
+    inv = sub.add_parser("invite", help="finish onboarding somebody who used an invite link")
+    inv_sub = inv.add_subparsers(dest="invite_cmd", required=True)
+    invc = inv_sub.add_parser("complete")
+    invc.add_argument("token_id")
     idn = sub.add_parser("identity", help="manage who the assistant can act for")
     idn_sub = idn.add_subparsers(dest="identity_cmd", required=True)
     idn_sub.add_parser("list")
@@ -1753,6 +1859,8 @@ def main() -> None:
         sys.exit(doctor())
     if args.cmd == "smoke":
         sys.exit(smoke())
+    if args.cmd == "invite":
+        sys.exit(invite_complete(args.token_id))
     if args.cmd == "identity":
         if args.identity_cmd == "list":
             sys.exit(identity_list())

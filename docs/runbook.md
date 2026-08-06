@@ -63,6 +63,52 @@ because that difference is easy to get wrong silently.
 Grants can be scoped with `agentbox grant <tool> --for alex`; unscoped grants
 cover anyone, as every pre-identity grant does.
 
+### Onboarding somebody
+
+```
+cli/agentbox-invite create sam          # mints a single-use link
+cli/agentbox-invite serve               # run the page while she fills it in
+cli/agentbox invite complete <id>       # you provision, afterwards
+```
+
+She opens the link on her phone, picks a name, ticks which services she wants
+her own account for, and that is her whole involvement. She never sees Vikunja's
+login page or a terminal.
+
+**The link is a credential** — it authorises creating an identity on this box,
+which buys more than a bridge token does. Single use, expires in 24h, and a
+refusal never says whether the id or the secret was wrong. Send it directly, not
+to a group chat.
+
+**Run `serve` only while an invite is outstanding.** It binds to the LAN so a
+phone can reach it, and it refuses to start when nothing is pending.
+
+#### Why it is two commands and not one
+
+The page has no privileges at all: no docker socket, no 1Password token, no
+bridge tokens. It writes one spool file. `invite complete` does the privileged
+work as you.
+
+That split is forced, not stylistic. Registration is disabled on this Vikunja
+(`VIKUNJA_SERVICE_ENABLEREGISTRATION=false`), so creating her account needs
+`vikunja user create` *inside the container* — a docker-socket privilege. A
+LAN-reachable web page holding the docker socket could read every bridge
+credential with `docker inspect`.
+
+#### What she gets automatically, and what she cannot
+
+| | |
+|---|---|
+| Tasks | created for her — she gets a one-time password to change |
+| Memory | her private scope exists the moment her identity does |
+| The house | shared; nothing to set up |
+| **Gmail / Calendar** | **she must consent herself** |
+
+Google is the one thing that cannot be automated: we can neither create a Google
+account nor consent on her behalf. `invite complete` prints the OAuth steps
+rather than pretending. Until they are done she shares your Google bridge, which
+is correct for shared services and wrong for mail — so do them.
+
 ### Memory scopes
 
 Two planes, not per-item sharing:

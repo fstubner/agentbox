@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""Invite onboarding for a non-technical person.
+
+Alex runs `agentbox invite create sam`, sends her a link, and she fills in a
+short form on her phone. She never sees Vikunja's login page, a terminal, or
+Google Cloud Console.
+
+## Why this process is deliberately powerless
+
+The obvious design is one service that does everything: takes her answers,
+creates her Vikunja account, provisions her Google bridge, redeploys. That
+service would need the docker socket — and a LAN-reachable web page holding the
+docker socket is the worst thing that could run on this box. `docker inspect`
+reads every bridge credential; `docker run -v /:/host` is a root shell.
+
+So this is the *collecting* half and nothing else. It has no docker socket, no
+1Password token, no bridge tokens, and cannot create an identity. It writes one
+spool file. The operator then runs `agentbox invite complete`, which has the
+privileges and is run by a human who chose to.
+
+That split is not tidiness. Vikunja registration is disabled on this
+deployment, so creating her account requires `vikunja user create` *inside the
+container* — the privilege is genuinely needed, and it must not live here.
+
+## The invite token is a credential
+
+It authorises creating an identity on someone's home server. Single use,
+expiring, and compared in constant time. Treated with the same seriousness as a
+bridge token, because it buys more.
+
+Stdlib only, like everything else that runs on this host.
+"""
+from __future__ import annotations
+
+import argparse
+import hmac
+import html
+import json
+import os
+import secrets
+import sys
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+STATE = Path(os.environ.get(
+    "AGENTBOX_INVITE_DIR",
+    str(Path("~/.local/state/agentbox/invites").expanduser())))
+DEFAULT_TTL_HOURS = int(os.environ.get("AGENTBOX_INVITE_TTL_HOURS", "24"))
+BIND_HOST = os.environ.get("AGENTBOX_INVITE_HOST", "0.0.0.0")
+BIND_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))
+
+# What a person can be given their own account for, and what they cannot.
+# Whether a service is *shared* is not a per-person choice — one house has one
+# Home Assistant — so those are stated rather than offered.
+CONNECTORS = {
+    "vikunja": {
+        "label": "Tasks and lists",
+        "personal": True,
+        "note": "Your own task list. Shared projects (shopping, household) are "
+                "shared inside the app afterwards.",
+        "external": False,
+    },
+    "google": {
+        "label": "Gmail and Calendar",
+        "personal": True,
+        "note": "You sign in with Google. Agentbox never sees your password — "
+                "only a token you can revoke from your Google account.",
+        "external": True,
+    },
+    "homeassistant": {
+        "label": "The house",
+        "personal": False,
+        "note": "One home, shared by everyone. Nothing to set up.",
+        "external": False,
+    },
+    "memory": {
+        "label": "What the assistant remembers about you",
+        "personal": False,
+        "note": "Private to you by default. Nothing to set up.",
+        "external": False,
+    },
+}
+
+
+def now() -> int:
+    return int(time.time())
+
+
+def invite_path(token_id: str) -> Path:
+    return STATE / f"{token_id}.json"
+
+
+def load_invite(token_id: str) -> dict | None:
+    try:
+        return json.loads(invite_path(token_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def save_invite(record: dict) -> None:
+    STATE.mkdir(parents=True, exist_ok=True)
+    path = invite_path(record["id"])
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    # The secret is in here. Nobody but the operator reads this directory.
+    path.chmod(0o600)
+
+
+def valid_invite(token_id: str, secret: str) -> tuple[dict | None, str]:
+    """Return (record, reason). A refusal never says which part was wrong."""
+    record = load_invite(token_id)
+    generic = "This invite link is not valid. Ask for a new one."
+    if not record:
+        return None, generic
+    if not hmac.compare_digest(str(record.get("secret", "")), secret):
+        return None, generic
+    if record.get("used_at"):
+        return None, "This invite has already been used. Ask for a new one."
+    if now() > int(record.get("expires_at", 0)):
+        return None, "This invite has expired. Ask for a new one."
+    return record, ""
+
+
+# --- the page ------------------------------------------------------------------
+
+PAGE = """<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Join {household}</title>
+<style>
+ body{{font:16px/1.55 system-ui,sans-serif;max-width:34rem;margin:0 auto;
+      padding:2rem 1.25rem;color:#1a1a1a}}
+ h1{{font-size:1.5rem;margin:0 0 .25rem}}
+ .sub{{color:#666;margin:0 0 2rem}}
+ fieldset{{border:1px solid #ddd;border-radius:.5rem;padding:1rem;margin:0 0 1rem}}
+ legend{{padding:0 .4rem;font-weight:600}}
+ label{{display:block;margin:.6rem 0}}
+ input[type=text]{{width:100%;padding:.6rem;font-size:1rem;border:1px solid #bbb;
+                   border-radius:.35rem}}
+ .note{{color:#666;font-size:.875rem;margin:.15rem 0 0 1.6rem}}
+ .fixed{{color:#666;font-size:.9rem}}
+ button{{background:#1a1a1a;color:#fff;border:0;border-radius:.35rem;
+         padding:.7rem 1.2rem;font-size:1rem;cursor:pointer}}
+ .err{{background:#fdecea;border:1px solid #f5c6c2;padding:.75rem;
+       border-radius:.35rem}}
+</style>
+<h1>Join {household}</h1>
+<p class="sub">This sets up your own account on {household}'s assistant.
+Your things stay yours — the assistant can't read another person's mail or
+private notes.</p>
+{body}
+"""
+
+FORM = """<form method="post">
+<fieldset><legend>You</legend>
+<label>What should the assistant call you?
+<input type="text" name="display_name" required autofocus
+       placeholder="e.g. Sam" maxlength="40"></label>
+</fieldset>
+
+<fieldset><legend>Your own accounts</legend>
+{personal}
+</fieldset>
+
+<fieldset><legend>Already shared — nothing to do</legend>
+{shared}
+</fieldset>
+
+<button type="submit">Continue</button>
+</form>"""
+
+DONE = """<p>Thanks{name} — that's everything we need.</p>
+<p>{owner} will finish setting up your account. You'll hear from them shortly.</p>
+<p class="fixed">You can close this page.</p>"""
+
+
+def render_form(household: str) -> str:
+    personal, shared = [], []
+    for key, spec in CONNECTORS.items():
+        if spec["personal"]:
+            personal.append(
+                f'<label><input type="checkbox" name="connector" value="{key}" '
+                f'checked> {html.escape(spec["label"])}</label>'
+                f'<p class="note">{html.escape(spec["note"])}</p>')
+        else:
+            shared.append(f'<p class="fixed">{html.escape(spec["label"])} — '
+                          f'{html.escape(spec["note"])}</p>')
+    return PAGE.format(household=html.escape(household),
+                       body=FORM.format(personal="\n".join(personal),
+                                        shared="\n".join(shared)))
+
+
+class InviteHandler(BaseHTTPRequestHandler):
+    household = "the household"
+    owner = "The owner"
+
+    def log_message(self, fmt, *args):  # noqa: A003 — quieter default logging
+        # Never log the query string: the invite secret is in it.
+        sys.stderr.write(f"[invite] {self.command} "
+                         f"{urllib.parse.urlparse(self.path).path}\n")
+
+    def _send(self, status: int, body: str) -> None:
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        # This page is only ever opened directly from a link.
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _error(self, message: str) -> None:
+        self._send(400, PAGE.format(household=html.escape(self.household),
+                                    body=f'<p class="err">{html.escape(message)}</p>'))
+
+    def _credentials(self) -> tuple[str, str]:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        return (query.get("i", [""])[0].strip(), query.get("t", [""])[0].strip())
+
+    def do_GET(self) -> None:
+        if urllib.parse.urlparse(self.path).path != "/":
+            return self._send(404, PAGE.format(
+                household=html.escape(self.household),
+                body='<p class="err">Not found.</p>'))
+        token_id, secret = self._credentials()
+        record, reason = valid_invite(token_id, secret)
+        if not record:
+            return self._error(reason)
+        self._send(200, render_form(self.household))
+
+    def do_POST(self) -> None:
+        token_id, secret = self._credentials()
+        record, reason = valid_invite(token_id, secret)
+        if not record:
+            return self._error(reason)
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length > 8192:
+            return self._error("That form was unexpectedly large.")
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+
+        display_name = (form.get("display_name", [""])[0] or "").strip()[:40]
+        if not display_name:
+            return self._error("Please tell us what to call you.")
+
+        chosen = [c for c in form.get("connector", [])
+                  if c in CONNECTORS and CONNECTORS[c]["personal"]]
+
+        # Claimed before anything else is written, so a double submit cannot
+        # produce two identities from one invite.
+        record["used_at"] = now()
+        record["display_name"] = display_name
+        record["connectors"] = chosen
+        save_invite(record)
+
+        self._send(200, PAGE.format(
+            household=html.escape(self.household),
+            body=DONE.format(name=f", {html.escape(display_name)}",
+                             owner=html.escape(self.owner))))
+
+
+# --- operator commands -----------------------------------------------------------
+
+
+def cmd_create(args) -> int:
+    token_id = secrets.token_hex(8)
+    secret = secrets.token_urlsafe(32)
+    record = {
+        "id": token_id,
+        "secret": secret,
+        "identity": args.name,
+        "created_at": now(),
+        "expires_at": now() + args.ttl_hours * 3600,
+        "used_at": None,
+    }
+    save_invite(record)
+    host = args.host or "agentbox.local"
+    print(f"Invite for '{args.name}' — valid {args.ttl_hours}h, single use.\n")
+    print(f"  http://{host}:{BIND_PORT}/?i={token_id}&t={secret}\n")
+    print("This link is a credential: anyone holding it can create an identity")
+    print("on this box. Send it directly, not to a group chat.\n")
+    print("Then run the page while she fills it in:")
+    print("  cli/agentbox-invite serve")
+    print("and afterwards:")
+    print(f"  cli/agentbox invite complete {token_id}")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    pending = [r for r in _all_invites() if not r.get("used_at")
+               and now() <= int(r.get("expires_at", 0))]
+    if not pending:
+        print("No outstanding invites. Create one first:\n"
+              "  cli/agentbox-invite create <name>", file=sys.stderr)
+        return 1
+    InviteHandler.household = args.household
+    InviteHandler.owner = args.owner
+    server = ThreadingHTTPServer((BIND_HOST, BIND_PORT), InviteHandler)
+    print(f"Onboarding page on {BIND_HOST}:{BIND_PORT} — "
+          f"{len(pending)} invite(s) outstanding.")
+    print("This is reachable on your LAN so she can open it from a phone.")
+    print("Stop it (Ctrl-C) once she is done; it should not run permanently.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    return 0
+
+
+def _all_invites() -> list[dict]:
+    if not STATE.is_dir():
+        return []
+    out = []
+    for path in sorted(STATE.glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def cmd_list(args) -> int:
+    invites = _all_invites()
+    if not invites:
+        print("no invites")
+        return 0
+    for record in invites:
+        if record.get("used_at"):
+            state = f"submitted, awaiting `agentbox invite complete {record['id']}`"
+        elif now() > int(record.get("expires_at", 0)):
+            state = "expired"
+        else:
+            hours = (int(record["expires_at"]) - now()) // 3600
+            state = f"outstanding, {hours}h left"
+        print(f"  {record['id']}  {record.get('identity', '?'):<12} {state}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="agentbox-invite",
+        description="Onboard a person without giving them a terminal.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    create = sub.add_parser("create", help="mint a single-use invite link")
+    create.add_argument("name", help="identity name, e.g. sam")
+    create.add_argument("--ttl-hours", type=int, default=DEFAULT_TTL_HOURS)
+    create.add_argument("--host", default="",
+                        help="hostname she will reach this box on "
+                             "(default agentbox.local)")
+
+    serve = sub.add_parser("serve", help="run the page while she fills it in")
+    serve.add_argument("--household", default="the household")
+    serve.add_argument("--owner", default="The owner")
+
+    sub.add_parser("list", help="what is outstanding or awaiting completion")
+
+    args = parser.parse_args()
+    return {"create": cmd_create, "serve": cmd_serve,
+            "list": cmd_list}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(0)
