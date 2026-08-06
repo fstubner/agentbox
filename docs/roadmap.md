@@ -398,7 +398,18 @@ Google. Provisioning one is `scaffold` + the OAuth helper + per-identity
 routing — all of which exist as pieces and none of which is joined up. That
 joining is the work.
 
-### 14. Invite-based onboarding for a non-technical person
+### 14. Invite-based onboarding — **built**
+
+`cli/agentbox-invite` (collect) plus `agentbox invite complete`
+(provision). Verified end to end: a spent link is refused, a wrong
+secret is indistinguishable from an unknown id, and completing a test
+invite really did create a Vikunja user via the container CLI.
+
+Still manual: her Google OAuth and the per-identity bridge deploy,
+which `complete` prints instructions for rather than automating —
+consent cannot be delegated.
+
+#### Original design
 
 Asked for 2026-08-05: Alex sends Sam a link, she opens it, creates an identity
 and connects services — without visiting Vikunja, Google Cloud Console, or a
