@@ -105,7 +105,7 @@ def resolve_limit(value: Any, default: int, maximum: int) -> int:
     try:
         limit = int(value)
     except (TypeError, ValueError):
-        raise BridgeError(400, "limit must be an integer")
+        raise BridgeError(400, "limit must be an integer") from None
     if limit < 1:
         raise BridgeError(400, "limit must be positive")
     return min(limit, maximum)
@@ -179,7 +179,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         try:
             body = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            raise BridgeError(400, "invalid JSON body")
+            raise BridgeError(400, "invalid JSON body") from None
         if not isinstance(body, dict):
             raise BridgeError(400, "JSON body must be an object")
         return body
@@ -248,7 +248,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             policy_gate.check_capability(capability, subject=path,
                                          identity=identity)
         except policy_gate.PolicyDenied as exc:
-            raise BridgeError(403, str(exc))
+            raise BridgeError(403, str(exc)) from None
 
     def route_fallback(self, method: str, path: str, body: dict[str, Any] | None) -> tuple[int, Any]:
         """Override for dynamic paths (e.g. /v1/things/{id}/action).

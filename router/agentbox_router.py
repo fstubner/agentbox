@@ -123,7 +123,9 @@ def reason_check(payload: dict[str, Any]) -> dict[str, Any]:
         "Check the reasoning. Identify contradictions, missing assumptions, and the most likely correct conclusion.",
     )
     messages = [
-        {"role": "system", "content": "You are a reasoning verifier. Think carefully, then give a concise final answer."},
+        {"role": "system",
+         "content": "You are a reasoning verifier. Think carefully, then "
+                    "give a concise final answer."},
         {"role": "user", "content": f"{instruction}\n\n--- INPUT ---\n{text}"},
     ]
     return chat(

@@ -18,19 +18,7 @@ line-length = 120
 # recorded twice about checks that are permanently red. The real security
 # properties are asserted in tests/ instead, where they can be specific.
 select = ["E", "W", "F", "I", "B", "PIE", "UP"]
-ignore = [
-    # Raising inside an `except` without `from` is deliberate throughout the
-    # bridges: an upstream error message routinely quotes the input that caused
-    # it, and chaining it would carry that into a response.
-    "B904",
-    # 21 lines exceed 120, all of them single-line tool-schema dicts in the
-    # google integration and the bridge that serves it. Mechanically wrapping
-    # them was tried and made the schemas harder to read, not easier — a schema
-    # is one object and splitting it across six lines obscures that. Left as a
-    # known debt rather than pretended away: worth reformatting properly when
-    # those schemas are next edited by hand.
-    "E501",
-]
+ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 # These modules live in containers and are loaded by path, so the tests must

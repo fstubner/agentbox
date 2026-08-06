@@ -209,7 +209,7 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
             raise PolicyDenied(
                 f"'{tool}' has a single-use grant but the consumption record at "
                 f"{store} is not writable, so it cannot be enforced. Refusing "
-                f"rather than treating it as unlimited.")
+                f"rather than treating it as unlimited.") from None
         return True
     return False
 

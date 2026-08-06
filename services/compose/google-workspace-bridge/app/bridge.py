@@ -14,6 +14,10 @@ from bridge_base import BridgeError, BridgeHandler, project_fields, resolve_limi
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
+
+# Named once so the call sites fit on a line and read as intent rather than URL.
+GMAIL_API = "https://gmail.googleapis.com/gmail/v1"
+CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 BRIDGE_TOKEN = os.environ.get("GOOGLE_BRIDGE_TOKEN", "")
 ALLOWED_WRITE_CALENDAR_ID = os.environ.get("GOOGLE_ALLOWED_WRITE_CALENDAR_ID", "")
 OWNED_LABEL_PREFIX = os.environ.get("GOOGLE_OWNED_LABEL_PREFIX", "agentbox/")
@@ -74,7 +78,7 @@ def google_json(method, url, payload=None):
             detail = json.loads(raw)
         except json.JSONDecodeError:
             detail = raw[:500]
-        raise BridgeError(exc.code, {"google_error": detail})
+        raise BridgeError(exc.code, {"google_error": detail}) from None
 
 
 def google_delete(url):
@@ -90,7 +94,7 @@ def google_delete(url):
             detail = json.loads(raw)
         except json.JSONDecodeError:
             detail = raw[:500]
-        raise BridgeError(exc.code, {"google_error": detail})
+        raise BridgeError(exc.code, {"google_error": detail}) from None
 
 
 def decode_b64url(value):
@@ -137,7 +141,9 @@ def line_candidates(text, limit=160):
     lines = [line.strip(" -•\t") for line in compact.splitlines()]
     result = []
     seen = set()
-    boilerplate = re.compile(r"(?i)(unsubscribe|privacy policy|terms|manage preferences|view in browser|copyright|all rights reserved|do not reply)")
+    boilerplate = re.compile(
+        r"(?i)(unsubscribe|privacy policy|terms|manage preferences"
+        r"|view in browser|copyright|all rights reserved|do not reply)")
     for line in lines:
         if len(line) < 4 or len(line) > 180:
             continue
@@ -167,7 +173,10 @@ def gmail_read(body):
     if not message_id:
         raise BridgeError(400, "message_id is required")
     fmt = urllib.parse.quote(str(body.get("format", "full")))
-    message = google_json("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{urllib.parse.quote(message_id)}?format={fmt}") or {}
+    message = google_json(
+        "GET",
+        f"{GMAIL_API}/users/me/messages/"
+        f"{urllib.parse.quote(message_id)}?format={fmt}") or {}
     payload = message.get("payload", {})
     headers = header_map(payload)
     parts = extract_parts(payload)
@@ -264,7 +273,10 @@ def gmail_modify(body):
         payload = {"addLabelIds": [str(x) for x in label_ids]}
     else:
         raise BridgeError(400, "allowed actions: mark_read, archive, add_labels")
-    return google_json("POST", f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{urllib.parse.quote(message_id)}/modify", payload) or {}
+    return google_json(
+        "POST",
+        f"{GMAIL_API}/users/me/messages/"
+        f"{urllib.parse.quote(message_id)}/modify", payload) or {}
 
 
 
@@ -332,7 +344,10 @@ def calendar_events(body, handler=None):
     for key in ("timeMin", "timeMax", "q"):
         if body.get(key):
             params[key] = str(body[key])
-    result = google_json("GET", f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events?{urllib.parse.urlencode(params)}") or {}
+    result = google_json(
+        "GET",
+        f"{CALENDAR_API}/calendars/{calendar_id}"
+        f"/events?{urllib.parse.urlencode(params)}") or {}
     if view != "lean" or not isinstance(result, dict):
         return result
     lean = {k: result[k] for k in LEAN_ENVELOPE_FIELDS if k in result}
@@ -372,7 +387,13 @@ def calendar_create_event(body):
         if event.get(field):
             raise BridgeError(403, f"'{field}' is not permitted: creating an event may not "
                                    f"notify other people. Ask the operator to invite attendees.")
-    return google_json("POST", f"https://www.googleapis.com/calendar/v3/calendars/{urllib.parse.quote(calendar_id, safe='')}/events?sendUpdates=none", event) or {}
+    return google_json(
+        "POST",
+        f"{CALENDAR_API}/calendars/"
+        f"{urllib.parse.quote(calendar_id, safe='')}"
+        # sendUpdates=none is the constraint, not a default: it is what stops
+        # an injected instruction turning an event into an email to anyone.
+        f"/events?sendUpdates=none", event) or {}
 
 
 SCHEMA = {"service": "google-workspace-bridge", "tools": [
