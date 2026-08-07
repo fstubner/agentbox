@@ -1,0 +1,43 @@
+# Speech output through the household's Bluetooth speakers.
+#
+# Runs as the agentbox user rather than the operator: it needs the `audio`
+# group for bluealsa's D-Bus policy, and it holds no credential worth
+# protecting — the worst it can do is make a noise, which is exactly why the
+# quiet-hours clamp lives inside it rather than in a policy tier.
+#
+# Install:
+#   sudo cp cli/agentbox-speaker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now agentbox-speaker
+
+[Unit]
+Description=Agentbox speech output
+After=bluealsa.service network-online.target
+Wants=bluealsa.service
+
+[Service]
+Type=simple
+User=agentbox
+Group=agentbox
+SupplementaryGroups=audio
+
+# name:MAC. The assistant asks for "kitchen" and never learns an address.
+Environment=AGENTBOX_SPEAKERS=kitchen:AA:BB:CC:00:00:01,study:AA:BB:CC:00:00:02
+Environment=AGENTBOX_QUIET_HOURS=22:00-07:00
+EnvironmentFile=-/etc/agentbox/speaker.env
+
+# Installed to /usr/local/bin rather than run from the checkout: this runs as
+# `agentbox`, and that user cannot traverse the operator's home — which is the
+# credential isolation working, not an obstacle to route around. Re-install
+# after changing the script:
+#   sudo install -m 0755 cli/agentbox-speaker /usr/local/bin/agentbox-speaker
+ExecStart=/usr/local/bin/agentbox-speaker serve --host 0.0.0.0 --port 8772
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

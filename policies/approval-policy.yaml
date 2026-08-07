@@ -44,6 +44,7 @@ tiers:
     - create_agent_calendar_event    # agent calendar only; attendees refused
     - drive_read                     # see the note below on which scope was granted
     - drive_write_own_folder         # the agent's own Drive folder only
+    - speak_aloud                    # quiet hours enforced in the speaker service
 
     # drive_read is `allowed` for the same reason personal_data_read is: the
     # real control is not an approval prompt but which OAuth scope was granted
@@ -57,6 +58,12 @@ tiers:
     # text formats, and there is no delete and no sharing — a permission change
     # is how a private document quietly becomes a public link, so it is absent
     # rather than gated.
+
+    # speak_aloud is `allowed` because the thing that makes 3am speech
+    # impossible is a clamp in the process holding the speaker, not this tier.
+    # Gating it here would be the weaker half of the pair: an approval only
+    # helps if a human reads carefully, and the whole point is that nobody is
+    # reading carefully at 3am.
 
   approval_required:
     # Operator / development
@@ -100,6 +107,10 @@ tools:
   update_task: task_management
   complete_task: task_management
   add_task_comment: task_management
+
+  # speaker
+  speak_aloud: speak_aloud
+  list_speakers: home_read_state
 
   # google-workspace (drive)
   search_drive: drive_read
