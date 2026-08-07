@@ -42,6 +42,12 @@ services:
       # Mounted read-only: connecting to a socket is not a filesystem write, so
       # this costs nothing and stops the container creating files in /run/dbus.
       - /run/dbus:/run/dbus:ro
+    # The Zigbee radio, mapped by its stable by-id path rather than
+    # /dev/ttyUSB0 — the numbered name is assigned in probe order and will
+    # move the first time another serial device is plugged in, silently
+    # pointing Home Assistant at the wrong hardware.
+    devices:
+      - "${AGENTBOX_ZIGBEE_DEVICE:-/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_da0a97b12e53ef1196672de0174bec31-if00-port0}:/dev/ttyZIGBEE"
     cpus: "2.00"
     mem_limit: 2048m
     pids_limit: 512
