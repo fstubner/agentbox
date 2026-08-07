@@ -21,7 +21,13 @@ Group=agentbox
 SupplementaryGroups=audio
 
 # name:MAC. The assistant asks for "kitchen" and never learns an address.
-Environment=AGENTBOX_SPEAKERS=kitchen:AA:BB:CC:00:00:01,study:AA:BB:CC:00:00:02
+#
+# These names are the assistant's entire model of where sound comes out, and
+# nothing can verify them: Bluetooth carries a MAC and an advertised name, and
+# "Echo-7UP" is an Amazon-generated string, not a location. They were wrong
+# once — set from a guess, and the first test spoke in the wrong room. Only a
+# person who has heard both can confirm this mapping.
+Environment=AGENTBOX_SPEAKERS=kitchen:AA:BB:CC:00:00:02,pc_room:AA:BB:CC:00:00:01
 Environment=AGENTBOX_QUIET_HOURS=22:00-07:00
 EnvironmentFile=-/etc/agentbox/speaker.env
 
