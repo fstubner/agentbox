@@ -1,0 +1,87 @@
+# Eufy Security: the reverse-engineered half, isolated from everything.
+#
+# Two containers on a private network with no host ports. eufy-security-ws
+# holds the Eufy account credential and speaks Eufy's undocumented protocols;
+# eufy-bridge holds the policy surface and is the only thing the gateway talks
+# to. Neither is reachable from the LAN.
+#
+# The alternative — a HACS integration inside Home Assistant — would put
+# unreviewed third-party code in the container that has host networking, a
+# system D-Bus socket, NET_ADMIN, NET_RAW and a Bluetooth radio. Same
+# functionality, far worse placement.
+services:
+  eufy-security-ws:
+    image: bropat/eufy-security-ws:latest
+    container_name: eufy-security-ws
+    environment:
+      USERNAME: "${EUFY_USERNAME:?set EUFY_USERNAME}"
+      PASSWORD: "${EUFY_PASSWORD:?set EUFY_PASSWORD}"
+      COUNTRY: "${EUFY_COUNTRY:-GB}"
+      # Trust this container least of anything here: it is reverse-engineered
+      # code talking to a vendor cloud. Debug logging off so a credential
+      # cannot end up in a log file nobody reads.
+      DEBUG: ""
+    volumes:
+      - "${AGENTBOX_STATE_DIR:-${HOME}/.local/state/agentbox}/eufy:/data"
+    networks:
+      eufy:
+    # No ports: the gateway reaches this only through eufy-bridge.
+    cpus: "1.00"
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    labels:
+      agentbox.service: eufy-security-ws
+      agentbox.exposure: private
+
+  eufy-bridge:
+    build:
+      context: ../../..
+      dockerfile: services/compose/eufy-bridge/Dockerfile
+    image: agentbox/eufy-bridge:local
+    container_name: eufy-bridge
+    depends_on:
+      - eufy-security-ws
+    environment:
+      EUFY_WS_URL: "ws://eufy-security-ws:3000"
+      EUFY_BRIDGE_TOKEN: "${EUFY_BRIDGE_TOKEN:?set EUFY_BRIDGE_TOKEN}"
+      # Empty by default. Two of these cameras are indoors, and a missing
+      # config must mean less access rather than more.
+      EUFY_VIEWABLE_CAMERAS: "${EUFY_VIEWABLE_CAMERAS:-}"
+      BRIDGE_HOST: "0.0.0.0"
+      BRIDGE_PORT: "8080"
+      BRIDGE_LOG_FILE: "/logs/eufy-bridge.jsonl"
+    volumes:
+      - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
+      - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
+      - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
+    networks:
+      eufy:
+      default:
+    cpus: "0.50"
+    mem_limit: 160m
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    labels:
+      agentbox.service: eufy-bridge
+      agentbox.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
+
+networks:
+  eufy:
+    internal: true
