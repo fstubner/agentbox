@@ -1,0 +1,31 @@
+
+# One script per room, so each can be assigned to its Home Assistant area and
+# referenced by name. This is what makes the speakers appear somewhere a person
+# can point at, which a bare rest_command does not.
+announce_kitchen:
+  alias: Announce in the kitchen
+  mode: queued
+  fields:
+    message:
+      description: What to say
+      example: The washing machine has finished
+      required: true
+  sequence:
+    - action: rest_command.agentbox_speak
+      data:
+        text: "{{ message }}"
+        speaker: kitchen
+
+announce_pc_room:
+  alias: Announce in the PC room
+  mode: queued
+  fields:
+    message:
+      description: What to say
+      example: The washing machine has finished
+      required: true
+  sequence:
+    - action: rest_command.agentbox_speak
+      data:
+        text: "{{ message }}"
+        speaker: pc_room

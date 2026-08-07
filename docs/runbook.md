@@ -210,6 +210,33 @@ Env: `AGENTBOX_IDENTITY_EMAILS="alex:alex@example.com,sam:sam@example.com"`,
 host the portal still runs and links are minted; they just have to be handed
 over by the operator.
 
+### Speakers, and why they are not Home Assistant devices
+
+The Echoes are paired to the *host* over Bluetooth A2DP. There is no Home
+Assistant integration for a Bluetooth speaker — HA's Bluetooth support is for
+BLE sensors, not audio sinks — so no `media_player` entity exists or can be
+made to exist.
+
+What does exist is `cli/agentbox-speaker` on the host, reached two ways:
+
+- the assistant, through the `speak_aloud` tool
+- Home Assistant, through `rest_command.agentbox_speak` and the
+  `script.announce_*` wrappers (see `docs/reference/ha-announce-scripts.yaml`)
+
+Both land on the same quiet-hours clamp. An automation firing at 3am is refused
+for the same reason a tool call is — which is the argument for putting that
+clamp in the service rather than in `approval-policy.yaml`, since a policy file
+governs only one of these two callers.
+
+The per-room scripts exist so each can be assigned a Home Assistant **area**,
+which is the only place a room name can live for a device HA cannot see.
+Assign them under Settings → Areas.
+
+Speaker names are unverifiable by anything but a person. Bluetooth carries a
+MAC and an advertised name, and `Echo-7UP` is an Amazon string, not a location.
+They were wrong once, set from a guess, and the first test spoke in the wrong
+room.
+
 ### Signing in to the portal
 
 ```bash
