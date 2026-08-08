@@ -343,3 +343,27 @@ def test_decide_memory_refuses_an_agent_session(portal, monkeypatch):
 def test_agent_endpoint_is_absent_when_unconfigured(portal):
     """A capability nobody configured should not exist."""
     assert portal.AGENT_TOKEN == ""
+
+
+def test_startup_warns_when_links_cannot_be_delivered(portal):
+    """The only place this failure can surface.
+
+    The sign-in page must answer identically for registered and unregistered
+    addresses, or it enumerates the household — so it cannot report that
+    delivery failed. Somebody is told a link is on its way and nothing arrives.
+    The portal ran for a day like this.
+    """
+    import inspect
+    source = inspect.getsource(portal.cmd_serve)
+    assert "IDENTITY_EMAILS and not SMTP_HOST" in source
+    assert "never sent" in source
+
+
+def test_delivery_failure_is_never_revealed_to_the_browser(portal):
+    """The other half of the same design: the operator learns, the visitor
+    does not."""
+    import inspect
+    source = inspect.getsource(portal.PortalHandler._request_link)
+    assert "sys.stderr.write" in source
+    # One response string, regardless of outcome.
+    assert source.count("told = ") == 1

@@ -44,6 +44,19 @@ Environment=AGENTBOX_ADMINS=alex
 # where a magic link is sent, and the link is useless in another browser.
 Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 
+# Delivery for sign-in links. Without a host here, links are minted and never
+# sent — and the sign-in page cannot say so, because answering differently for
+# a registered address would reveal who lives here. `agentbox doctor` warns
+# instead.
+#
+# Gmail needs an app password (myaccount.google.com/apppasswords), not the
+# account password, and that needs 2FA switched on. Put it in the env file
+# below rather than here:
+#   AGENTBOX_SMTP_HOST=smtp.gmail.com
+#   AGENTBOX_SMTP_USER=you@gmail.com
+#   AGENTBOX_SMTP_PASSWORD=<app password>
+EnvironmentFile=-%h/.config/agent-control-plane/portal-smtp.env
+
 # The address links point at, and the base of the Google redirect URI.
 # Loopback by default because Google refuses .local and bare LAN hostnames
 # outright; `agentbox validate` fails if this is set to something the console

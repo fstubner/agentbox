@@ -458,6 +458,35 @@ def _agent_can(action: str, path: str) -> bool | None:
     return result.returncode == 0
 
 
+def portal_email_delivery() -> int:
+    """Warn when the portal can mint sign-in links but cannot deliver them.
+
+    This failure is invisible by construction. The sign-in page must answer
+    identically for a registered and an unregistered address, or it becomes a
+    way to enumerate who lives here — so it cannot report that delivery failed.
+    Somebody asks for a link, is told one is on its way, and nothing arrives.
+
+    Found the hard way: the portal ran for a day with addresses configured and
+    no SMTP host.
+    """
+    unit_env = {}
+    result = subprocess.run(
+        ["systemctl", "--user", "show", "agentbox-portal", "-p", "Environment"],
+        capture_output=True, text=True, timeout=20, check=False)
+    for chunk in (result.stdout or "").replace("Environment=", "").split():
+        key, _, value = chunk.partition("=")
+        unit_env[key] = value
+    if not unit_env.get("AGENTBOX_IDENTITY_EMAILS"):
+        return 0
+    if unit_env.get("AGENTBOX_SMTP_HOST"):
+        report(OK, "portal can deliver sign-in links by email")
+        return 0
+    report(WARN, "portal has addresses configured but no AGENTBOX_SMTP_HOST — "
+                 "sign-in links are minted and never sent, and the page cannot "
+                 "say so. Use: cli/agentbox-portal link <name>")
+    return 0
+
+
 def portal_redirect_uri() -> int:
     """Fail early if the portal's OAuth redirect is one Google will refuse.
 
@@ -692,6 +721,7 @@ def doctor() -> int:
     bad += assistant_containment()
     bad += connector_credentials()
     bad += portal_redirect_uri()
+    bad += portal_email_delivery()
     bad += gateway_tool_visibility()
     bad += validate()
     return 1 if bad else 0

@@ -1177,6 +1177,15 @@ def cmd_serve(args) -> int:
     STATE.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer((args.host, args.port), PortalHandler)
     print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
+    # Said loudly at startup because it cannot be said at the point of failure.
+    # The sign-in page answers identically whether or not delivery worked —
+    # anything else would reveal which addresses are registered — so an
+    # unconfigured SMTP host produces a link nobody receives and a page that
+    # looks like it worked. This is the only place a human finds out.
+    if IDENTITY_EMAILS and not SMTP_HOST:
+        print("[warn] addresses are configured but AGENTBOX_SMTP_HOST is not: "
+              "sign-in links will be minted and never sent. Use "
+              "`agentbox-portal link <name>` until SMTP is set.", file=sys.stderr)
     print(f"[..] admins: {', '.join(sorted(admin_names())) or 'none'}",
           file=sys.stderr)
     try:
