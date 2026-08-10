@@ -458,6 +458,80 @@ def _agent_can(action: str, path: str) -> bool | None:
     return result.returncode == 0
 
 
+RULES_DIR = Path(os.environ.get(
+    "AGENTBOX_RULES_DIR",
+    os.path.expanduser("~/.local/state/agentbox/policy-state/rules")))
+
+
+def _rules() -> list[dict]:
+    out = []
+    if not RULES_DIR.is_dir():
+        return out
+    for path in sorted(RULES_DIR.glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        record["_path"] = str(path)
+        out.append(record)
+    return out
+
+
+def rules_list() -> int:
+    """Show standing rules and what each one actually does.
+
+    Printed in full rather than summarised. A rule is the assistant's only way
+    to cause something to happen when nobody is watching, so the person
+    deciding needs to read the whole thing, not a description of it.
+    """
+    found = _rules()
+    if not found:
+        print("no rules")
+        return 0
+    for record in found:
+        state = "ACTIVE " if record.get("active") else "inactive"
+        print(f"[{state}] {record.get('name')}  (as {record.get('identity')})")
+        if record.get("description"):
+            print(f"          {record['description']}")
+        when = record.get("when", {})
+        print(f"          when: {when}")
+        for predicate in record.get("if") or []:
+            print(f"          if:   {predicate}")
+        for action in record.get("do") or []:
+            print(f"          do:   {action.get('tool')} {action.get('args')}")
+        print()
+    print("activate with: cli/agentbox rules approve <name>")
+    return 0
+
+
+def rules_decide(name: str, activate: bool) -> int:
+    for record in _rules():
+        if record.get("name") != name:
+            continue
+        path = Path(record.pop("_path"))
+        record["active"] = activate
+        record["decided_at"] = int(time.time())
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        report(OK, f"{'activated' if activate else 'deactivated'} rule "
+                   f"'{name}'")
+        if activate:
+            report(WARN, "this rule now runs unattended, as "
+                         f"{record.get('identity')}, until deactivated")
+        return 0
+    report(FAIL, f"no rule named '{name}'")
+    return 1
+
+
+def rules_remove(name: str) -> int:
+    for record in _rules():
+        if record.get("name") == name:
+            Path(record["_path"]).unlink()
+            report(OK, f"removed rule '{name}'")
+            return 0
+    report(FAIL, f"no rule named '{name}'")
+    return 1
+
+
 def portal_email_delivery() -> int:
     """Warn when the portal can mint sign-in links but cannot deliver them.
 
@@ -2205,6 +2279,12 @@ def main() -> None:
     idd = idn_sub.add_parser("disconnect",
                              help="revoke and remove a Google connection")
     idd.add_argument("name")
+    rul = sub.add_parser("rules", help="standing rules the assistant proposed")
+    rul_sub = rul.add_subparsers(dest="rules_cmd", required=True)
+    rul_sub.add_parser("list")
+    for verb in ("approve", "reject", "remove"):
+        pr_ = rul_sub.add_parser(verb)
+        pr_.add_argument("name")
     con = sub.add_parser("connectors",
                          help="complete connector requests raised in the portal")
     con_sub = con.add_subparsers(dest="connectors_cmd", required=True)
@@ -2287,6 +2367,14 @@ def main() -> None:
             sys.exit(identity_remove(args.name))
         report(FAIL, f"unknown identity subcommand: {args.identity_cmd}")
         sys.exit(2)
+    if args.cmd == "rules":
+        if args.rules_cmd == "list":
+            sys.exit(rules_list())
+        if args.rules_cmd == "approve":
+            sys.exit(rules_decide(args.name, True))
+        if args.rules_cmd == "reject":
+            sys.exit(rules_decide(args.name, False))
+        sys.exit(rules_remove(args.name))
     if args.cmd == "connectors":
         sys.exit(connectors_sync(args.quiet))
     if args.cmd == "proposals":

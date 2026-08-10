@@ -36,6 +36,7 @@ tiers:
     - task_management                # the assistant's own workspace; reversible, nothing deletes
     - personal_data_read             # gmail/calendar reads — see the note below
     - propose_memory_for_review      # inert until an operator approves it
+    - propose_rule_for_review        # inert until an operator activates it
     - home_read_state                # sensor/entity state from Home Assistant
     - home_control_comfort           # lights, scenes, media — allowlisted entities only
     - home_view_camera               # one frame, on request, from an allowlisted camera
@@ -107,6 +108,10 @@ tools:
   update_task: task_management
   complete_task: task_management
   add_task_comment: task_management
+
+  # rules
+  propose_rule: propose_rule_for_review
+  list_rules: home_read_state
 
   # speaker
   speak_aloud: speak_aloud

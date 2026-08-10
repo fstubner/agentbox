@@ -62,6 +62,7 @@ from integrations import (
     google,
     homeassistant,
     memory,
+    rulebook,
     speaker,
     vikunja,
 )
@@ -74,6 +75,7 @@ INTEGRATIONS = {
     "builder": builder,
     "homeassistant": homeassistant,
     "speaker": speaker,
+    "rulebook": rulebook,
 }
 
 
