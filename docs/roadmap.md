@@ -272,7 +272,13 @@ elicitation handling at all. Until then approval runs out of band through
 
 ## Also outstanding, smaller
 
-- **No end-to-end test.** All tests are unit-level against fixtures; nothing
+- **End-to-end tests exist as of 2026-08-08** (`tests/test_integration.py`),
+  aimed at seams rather than units: every session bug was two components that
+  each worked and disagreed with each other, and a fixture on both sides of a
+  seam passes while the seam is broken. They skip when the system is not
+  running, so CI stays green on a machine with no containers. What remains
+  untested is *duration* — nothing yet proves a week of real use.
+- **Superseded:** All tests are unit-level against fixtures; nothing
   exercises MCP → bridge → upstream against the running system.
 - **Backup is not scheduled.** `agentbox backup` works and is restore-verified;
   nothing runs it.
