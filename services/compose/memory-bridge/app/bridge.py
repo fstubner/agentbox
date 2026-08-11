@@ -114,8 +114,24 @@ def resolve_scope(body: dict[str, Any], identity: str) -> str:
     return requested
 
 
-def visible_scopes(identity: str) -> set[str]:
-    """What this identity may read: their own plane plus the household one."""
+# The operator's review path. Presenting the review token means "I am the human
+# who administers this box", and that person must see every proposal — they are
+# the only one who can approve any of them.
+#
+# This is not a privacy regression, because the privacy was never there: the
+# operator can read /data/memory.json with one docker exec, and a scope that
+# claimed otherwise would have been theatre. What a scope actually controls is
+# **what the assistant can surface to whom** — Sam's assistant cannot read
+# Alex's private memories, which is the property that matters and the one that
+# holds.
+#
+# Until this existed, a private proposal was unreachable by the only account
+# that could approve it: write-only memory that failed silently, because an
+# empty list looks exactly like an empty queue.
+def visible_scopes(identity: str, operator: bool = False) -> set[str] | None:
+    """Scopes readable here. None means unrestricted (operator review)."""
+    if operator:
+        return None
     return {identity, HOUSEHOLD} if identity else {HOUSEHOLD}
 
 
@@ -139,7 +155,20 @@ def clean_memory(body: dict[str, Any], status: str,
     }
 
 
-def visible_to(items: list[dict[str, Any]], identity: str) -> list[dict[str, Any]]:
+def is_operator(handler) -> bool:
+    """Whether this request carries the operator's review credential.
+
+    The same token that authorises approving a proposal, so seeing the queue
+    and acting on it are one permission rather than two that can drift apart.
+    """
+    if handler is None or not REVIEW_TOKEN:
+        return False
+    provided = handler.headers.get(REVIEW_HEADER, "")
+    return bool(provided) and hmac.compare_digest(provided, REVIEW_TOKEN)
+
+
+def visible_to(items: list[dict[str, Any]], identity: str,
+               operator: bool = False) -> list[dict[str, Any]]:
     """Drop anything outside this identity's planes.
 
     Filtered here, in the process holding the store, rather than by the caller.
@@ -151,8 +180,10 @@ def visible_to(items: list[dict[str, Any]], identity: str) -> list[dict[str, Any
     vanishing — losing them silently would be worse than over-sharing between
     two people who already share a house.
     """
-    return [i for i in items
-            if i.get("scope", HOUSEHOLD) in visible_scopes(identity)]
+    scopes = visible_scopes(identity, operator)
+    if scopes is None:
+        return list(items)
+    return [i for i in items if i.get("scope", HOUSEHOLD) in scopes]
 
 
 def filter_items(items: list[dict[str, Any]], query: dict[str, Any]) -> list[dict[str, Any]]:
@@ -212,8 +243,11 @@ def list_proposals(handler, body):
     limit = resolve_limit(first(query_of(handler), "limit", ""), default=50, maximum=200)
     with _LOCK:
         store = load_store()
-    items = visible_to(filter_items(store["proposals"], {}), identity_of(handler))
-    return 200, {"proposals": items[:limit], "total": len(items)}
+    operator = is_operator(handler)
+    items = visible_to(filter_items(store["proposals"], {}),
+                       identity_of(handler), operator)
+    return 200, {"proposals": items[:limit], "total": len(items),
+                 "as_operator": operator}
 
 
 def create_proposal(handler, body):
@@ -252,9 +286,11 @@ def list_memories(handler, body):
     with _LOCK:
         store = load_store()
     identity = identity_of(handler)
-    items = visible_to(filter_items(store["memories"], {}), identity)
+    operator = is_operator(handler)
+    items = visible_to(filter_items(store["memories"], {}), identity, operator)
+    scopes = visible_scopes(identity, operator)
     return 200, {"memories": items[:limit], "total": len(items),
-                 "scopes_visible": sorted(visible_scopes(identity))}
+                 "scopes_visible": "all" if scopes is None else sorted(scopes)}
 
 
 def approve_proposal(handler, proposal_id: str):

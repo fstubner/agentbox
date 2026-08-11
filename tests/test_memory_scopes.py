@@ -177,3 +177,40 @@ def test_whoami_reports_single_operator_honestly(mem):
     _, payload = mem.whoami(Handler(""), None)
     assert payload["identity"] is None
     assert payload["mode"] == "single-operator"
+
+
+def test_operator_review_sees_every_scope(mem):
+    """The reviewer must see what they are the only one able to approve.
+
+    Regression: scoping shipped with the operator treated as an ordinary
+    unidentified caller, so visible_scopes("") returned {household} and every
+    private proposal was invisible to the only account that could approve it.
+    Private memory was write-only, and silently — an unreachable queue and an
+    empty one both render as no rows.
+    """
+    items = [{"scope": "alex", "statement": "a"},
+             {"scope": "sam", "statement": "b"},
+             {"scope": "household", "statement": "c"}]
+
+    assert len(mem.visible_to(items, "", operator=True)) == 3
+    assert mem.visible_scopes("alex", operator=True) is None
+
+    # Without the review credential nothing changes: scope still constrains.
+    assert len(mem.visible_to(items, "alex")) == 2
+    assert len(mem.visible_to(items, "")) == 1
+
+
+def test_operator_flag_comes_from_the_review_token_not_a_header(mem):
+    """Claiming to be the operator must require the operator's secret.
+
+    If a plain header conferred it, the assistant could set it and read every
+    identity's private memory — the isolation would be a naming convention.
+    """
+    import inspect
+    source = inspect.getsource(mem.is_operator)
+    assert "compare_digest" in source and "REVIEW_TOKEN" in source
+
+    class Fake:
+        headers = {"X-Agentbox-Operator": "true", "X-Memory-Review-Token": "wrong"}
+
+    assert mem.is_operator(Fake()) is False

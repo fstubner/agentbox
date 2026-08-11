@@ -1597,17 +1597,32 @@ def memory_request(method: str, path: str, payload: dict | None = None) -> Any:
         return None
 
 
-def memory_list() -> int:
-    payload = memory_request("GET", "/v1/proposals")
+def memory_list(identity: str = "") -> int:
+    """What the assistant has proposed, across every identity.
+
+    Scope is shown on each line rather than filtered out. A proposal the
+    operator cannot see is one nobody can approve — private memory was
+    write-only until this was fixed, and silently so, because an empty queue
+    and an unreachable one look identical.
+    """
+    payload = memory_request("GET", "/v1/proposals?limit=200")
     if payload is None:
         return 1
     proposals = payload.get("proposals", [])
+    if identity:
+        proposals = [p for p in proposals
+                     if p.get("scope", "household") == identity]
     if not proposals:
-        print("no pending proposals")
+        print(f"no pending proposals{f' for {identity}' if identity else ''}")
         return 0
     for item in proposals:
-        print(f"{item.get('id')}  [{item.get('sensitivity', '?')}]  {item.get('statement', '')}")
-    print(f"\n{len(proposals)} pending — approve with: agentbox memory approve <id>")
+        scope = item.get("scope", "household")
+        print(f"{item['id']}  [{scope}]  {item.get('statement', '')}")
+    print(f"\n{len(proposals)} pending — approve with: "
+          f"cli/agentbox memory approve <id>")
+    if not payload.get("as_operator"):
+        report(WARN, "listed without the operator review token, so private "
+                     "proposals are hidden — check MEMORY_REVIEW_TOKEN")
     return 0
 
 
@@ -1966,7 +1981,9 @@ def main() -> None:
     rv.add_argument("tool", nargs="?")
     mem = sub.add_parser("memory", help="review memory proposals (operator only)")
     mem_sub = mem.add_subparsers(dest="mem_cmd", required=True)
-    mem_sub.add_parser("list")
+    meml = mem_sub.add_parser("list")
+    meml.add_argument("--identity", default="",
+                      help="show only this identity's scope")
     approve = mem_sub.add_parser("approve")
     approve.add_argument("proposal_id")
     reject = mem_sub.add_parser("reject")
@@ -2013,7 +2030,7 @@ def main() -> None:
         sys.exit(grants_list() if args.grants_cmd == "list" else grants_revoke(args.tool))
     if args.cmd == "memory":
         if args.mem_cmd == "list":
-            sys.exit(memory_list())
+            sys.exit(memory_list(args.identity))
         sys.exit(memory_decide(args.mem_cmd, args.proposal_id, getattr(args, "reason", "")))
 
 

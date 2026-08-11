@@ -162,6 +162,28 @@ and which scopes it can read. It is `allowed` and ungated, because being unsure
 is what causes the cross-account mistakes it prevents. Memories written before
 scopes existed have none and read as household.
 
+### What a private scope does and does not protect
+
+A scope controls **what the assistant will surface to whom**. Sam's assistant
+cannot read Alex's private memories, and that is the property worth having:
+it is what stops one account's context leaking into another's conversation.
+
+A scope does **not** hide anything from the operator. Whoever administers this
+box can read `/data/memory.json` with one `docker exec`, so a review UI that
+withheld rows from them would be theatre and not privacy. The operator's
+review token therefore lists every scope.
+
+That is not merely a philosophical position. Until 2026-08-06 the operator was
+treated as an ordinary unidentified caller, so `visible_scopes("")` returned
+`{household}` and **every private proposal was invisible to the only account
+able to approve it**. Private memory was write-only: four of Alex's proposals
+had accumulated unreachable. The failure was silent, because an unreachable
+queue and an empty one both render as no rows.
+
+If you want privacy *from* the operator, this platform is the wrong shape for
+it — that needs per-identity encryption at rest with keys the operator does not
+hold, which is not built.
+
 `identity remove` does **not** delete that person's memories. They stay scoped
 to the removed name and become unreachable; deleting them is a separate,
 deliberate act.
