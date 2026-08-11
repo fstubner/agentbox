@@ -1,0 +1,754 @@
+#!/usr/bin/env python3
+"""Per-identity self-service, and the operations plane for the operator.
+
+Two audiences, one process, one authorisation model:
+
+- **Members** review the memories the assistant proposed about *them*, and
+  connect or disconnect their own accounts. Sam should never need a terminal
+  to say "no, don't remember that" or "use my other Google account".
+- **Admins** additionally see connector health and set up the messaging apps
+  the gateway talks through.
+
+## Why this exists at all
+
+Private memory proposals used to be approvable by nobody. The review token is
+the only route to approval, the operator CLI is the only holder of it, and
+having Alex approve Sam's *private* memories would defeat the point of them
+being private. The queue was therefore unreachable by design once more than one
+person existed. A self-service surface is not a convenience here; it is the
+missing half of the review gate.
+
+## Magic links
+
+You type your email address, a link arrives, opening it signs you in. No
+password to choose, forget, or reuse — which matters when the people using this
+are a household rather than a company.
+
+The link is single-use, expires in ten minutes, is stored only as a hash so
+this directory leaking yields nothing usable, is compared in constant time, and
+is rate-limited per address.
+
+### Why the link is also bound to your browser
+
+Ordinarily a magic link is a bearer token: whoever holds it is you. That is a
+bad fit *here specifically*, because *the assistant can read the inbox the link
+is sent to*. It has search_gmail and read_gmail on Alex's account. A
+prompt-injected model could search for the message, follow the link, sign in as
+Alex, and approve its own memory proposals — and the review gate is its only
+route to durable memory, so self-approval collapses it entirely.
+
+Blocking that by hiding the sender from the assistant's Gmail queries would be
+an allowlist the assistant could reason its way around. Instead the link is
+constrained: requesting one sets a nonce cookie, and redemption requires that
+cookie. The link works in the browser that asked for it and nowhere else.
+
+Whoever merely *reads* the link cannot use it. That holds for email, for
+Discord, for a screenshot in a chat log — any channel, including ones added
+later, rather than a defence aimed at one of them. Discord is just how you talk
+to the assistant; it is not part of the trust path.
+
+Nothing here is an MCP tool. The assistant cannot mint a link, list links, or
+reach this port.
+
+## Roles
+
+Two, not an engine. `admin` and `member`, deny by default, resolved from
+AGENTBOX_ADMINS. A general RBAC system would be a second policy vocabulary
+sitting next to approval-policy.yaml, and two policy systems disagree about
+who may do what — usually at the moment it matters.
+
+Stdlib only, like everything else on this host.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import html
+import json
+import os
+import secrets
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+STATE = Path(os.environ.get(
+    "AGENTBOX_PORTAL_DIR",
+    os.path.expanduser("~/.local/state/agentbox/portal")))
+LINK_TTL_SECONDS = int(os.environ.get("AGENTBOX_PORTAL_LINK_TTL", "600"))
+# Sessions outlive the link but not by much. This page can revoke credentials
+# and delete memories, so a forgotten open tab is a real exposure.
+SESSION_TTL_SECONDS = int(os.environ.get("AGENTBOX_PORTAL_SESSION_TTL", "1800"))
+# A link is a credential. Minting them without limit turns a leaked identity
+# name into an unbounded supply of guesses at the delivery channel.
+MAX_LINKS_PER_HOUR = int(os.environ.get("AGENTBOX_PORTAL_MAX_LINKS", "5"))
+
+# identity -> email, as "alex:alex@example.com,sam:sam@example.com".
+# Addresses live beside the identity list rather than in it so that adding an
+# address never risks disturbing an authentication token.
+IDENTITY_EMAILS = os.environ.get("AGENTBOX_IDENTITY_EMAILS", "")
+
+SMTP_HOST = os.environ.get("AGENTBOX_SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("AGENTBOX_SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("AGENTBOX_SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("AGENTBOX_SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", SMTP_USER)
+
+# Same variable and default as cli/agentbox, deliberately. Two names for one
+# endpoint is how a portal ends up quietly pointed at nothing.
+PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://agentbox.local:8771")
+MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
+                                   "http://127.0.0.1:3471")
+
+ADMIN = "admin"
+MEMBER = "member"
+
+# What each role may do. Enumerated rather than computed: a capability that
+# nobody granted should be absent, not merely unreachable by the current UI.
+# Deny by default — an action missing from this table is refused.
+ROLE_CAPABILITIES = {
+    MEMBER: frozenset({
+        "memory:read_own",
+        "memory:decide_own",
+        "connector:read_own",
+        "connector:disconnect_own",
+    }),
+    ADMIN: frozenset({
+        "memory:read_own",
+        "memory:decide_own",
+        "memory:decide_household",
+        "connector:read_own",
+        "connector:disconnect_own",
+        "ops:read_health",
+        "ops:stage_messaging_credential",
+    }),
+}
+
+
+def now() -> int:
+    return int(time.time())
+
+
+# --- identities and roles ------------------------------------------------------
+
+
+def admin_names() -> set[str]:
+    """Identities with the admin role.
+
+    Empty means nobody is an admin, which is the correct failure direction: a
+    misread env file should remove privilege, never hand it out.
+    """
+    raw = os.environ.get("AGENTBOX_ADMINS", "")
+    return {n.strip() for n in raw.split(",") if n.strip()}
+
+
+def email_map() -> dict[str, str]:
+    """Lowercased email -> identity."""
+    mapping: dict[str, str] = {}
+    for pair in IDENTITY_EMAILS.split(","):
+        name, _, address = pair.partition(":")
+        if name.strip() and address.strip():
+            mapping[address.strip().lower()] = name.strip()
+    return mapping
+
+
+def identity_for_email(address: str) -> str:
+    return email_map().get(address.strip().lower(), "")
+
+
+def role_of(identity: str) -> str:
+    return ADMIN if identity in admin_names() else MEMBER
+
+
+def can(role: str, capability: str) -> bool:
+    """Whether `role` may exercise `capability`. Unknown role -> nothing."""
+    return capability in ROLE_CAPABILITIES.get(role, frozenset())
+
+
+def require(role: str, capability: str) -> None:
+    if not can(role, capability):
+        raise PermissionError(capability)
+
+
+# --- magic links ---------------------------------------------------------------
+
+
+def _hash(secret: str) -> str:
+    """Links are stored hashed, so reading this directory yields nothing usable.
+
+    A plain SHA-256 rather than a password KDF on purpose: these secrets are
+    32 bytes from secrets.token_urlsafe, not human-chosen, so there is no
+    dictionary to stretch against and no benefit worth the latency.
+    """
+    return hashlib.sha256(secret.encode()).hexdigest()
+
+
+def link_path(link_id: str) -> Path:
+    return STATE / "links" / f"{link_id}.json"
+
+
+def _recent_link_count(identity: str) -> int:
+    directory = STATE / "links"
+    if not directory.is_dir():
+        return 0
+    cutoff = now() - 3600
+    count = 0
+    for entry in directory.glob("*.json"):
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("identity") == identity and \
+                int(record.get("created_at", 0)) > cutoff:
+            count += 1
+    return count
+
+
+def mint_link(identity: str, base_url: str,
+              request_nonce: str = "") -> tuple[str, str]:
+    """Create a single-use login link. Returns (url, link_id).
+
+    `request_nonce` binds the link to the browser that asked for it: the same
+    value is set as a cookie, and redemption requires both. Someone who reads
+    the link — including an assistant with access to the inbox it was sent to —
+    holds only half of what is needed.
+
+    An empty nonce is accepted for operator-issued links (`portal link`), where
+    the operator hands the URL over directly and there is no browser to bind to.
+
+    Raises RuntimeError past the hourly cap rather than issuing quietly, so a
+    flood is visible to whoever triggered it.
+    """
+    if _recent_link_count(identity) >= MAX_LINKS_PER_HOUR:
+        raise RuntimeError(
+            f"{identity} has already been sent {MAX_LINKS_PER_HOUR} links in "
+            f"the last hour; refusing to mint another")
+    link_id = secrets.token_urlsafe(9)
+    secret = secrets.token_urlsafe(32)
+    record = {
+        "id": link_id,
+        "identity": identity,
+        # The hash, never the secret. This file is not a login.
+        "secret_hash": _hash(secret),
+        # Hashed for the same reason the secret is: this file is not a login.
+        "nonce_hash": _hash(request_nonce) if request_nonce else "",
+        "created_at": now(),
+        "expires_at": now() + LINK_TTL_SECONDS,
+        "used_at": None,
+    }
+    path = link_path(link_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    path.chmod(0o600)
+    query = urllib.parse.urlencode({"id": link_id, "k": secret})
+    return f"{base_url.rstrip('/')}/login?{query}", link_id
+
+
+def redeem_link(link_id: str, secret: str,
+                request_nonce: str = "") -> tuple[str, str]:
+    """Consume a link, returning (identity, ""). On failure ("", reason).
+
+    Marks the link used *before* returning, so two concurrent redemptions of a
+    stolen link cannot both succeed.
+    """
+    generic = "This link is not valid. Ask for a new one."
+    path = link_path(link_id)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "", generic
+    if not hmac.compare_digest(str(record.get("secret_hash", "")),
+                               _hash(secret)):
+        return "", generic
+    # The browser binding. A link requested through the sign-in form carries a
+    # nonce hash, and only the browser holding the matching cookie may spend it.
+    expected = str(record.get("nonce_hash", ""))
+    if expected and not hmac.compare_digest(expected, _hash(request_nonce)):
+        return "", ("This link must be opened in the browser that asked for "
+                    "it. Request a new one from this device.")
+    if record.get("used_at"):
+        return "", "This link has already been used. Ask for a new one."
+    if now() > int(record.get("expires_at", 0)):
+        return "", "This link has expired. Ask for a new one."
+    record["used_at"] = now()
+    try:
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except OSError:
+        # Single-use that cannot be enforced is not single-use. Refuse rather
+        # than hand out a link that stays live — the same reasoning as an
+        # unwritable grant-consumption record in policy_gate.
+        return "", generic
+    return str(record.get("identity", "")), ""
+
+
+# --- sessions ------------------------------------------------------------------
+
+
+def session_path(sid: str) -> Path:
+    return STATE / "sessions" / f"{sid}.json"
+
+
+def new_session(identity: str) -> str:
+    sid = secrets.token_urlsafe(24)
+    record = {"identity": identity, "role": role_of(identity),
+              "expires_at": now() + SESSION_TTL_SECONDS}
+    path = session_path(_hash(sid))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record), encoding="utf-8")
+    path.chmod(0o600)
+    return sid
+
+
+def load_session(sid: str) -> dict | None:
+    """Resolve a cookie to (identity, role), or None.
+
+    The role is recomputed from the current admin list rather than trusted from
+    the stored record: removing someone from AGENTBOX_ADMINS must take effect
+    immediately, not whenever their session happens to expire.
+    """
+    if not sid:
+        return None
+    try:
+        record = json.loads(session_path(_hash(sid)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if now() > int(record.get("expires_at", 0)):
+        return None
+    identity = str(record.get("identity", ""))
+    if not identity:
+        return None
+    return {"identity": identity, "role": role_of(identity)}
+
+
+def end_session(sid: str) -> None:
+    try:
+        session_path(_hash(sid)).unlink()
+    except OSError:
+        pass
+
+
+# --- memory bridge -------------------------------------------------------------
+
+
+def memory_call(method: str, path: str, payload: dict | None = None) -> dict | None:
+    """Talk to memory-bridge with the review credential.
+
+    The portal holds the review token, which authorises approving *anything*.
+    Scope enforcement therefore happens here, before the call — see
+    decide_memory. A member session must never be able to reach another
+    identity's proposal, and the bridge cannot tell one caller from another.
+    """
+    token = os.environ.get("MEMORY_BRIDGE_TOKEN", "")
+    review = os.environ.get("MEMORY_REVIEW_TOKEN", "")
+    if not token:
+        return None
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    if review:
+        headers["X-Memory-Review-Token"] = review
+    data = json.dumps(payload).encode() if payload is not None else None
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(MEMORY_BRIDGE_URL + path, data=data,
+                                     method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+class BridgeUnreachable(Exception):
+    """The memory service did not answer.
+
+    A distinct condition from an empty queue, and it has to stay distinct. The
+    defect this portal was built to fix was a queue that rendered as no rows;
+    reporting "nothing waiting" when the service is down reproduces exactly
+    that failure one layer up.
+    """
+
+
+def own_proposals(identity: str, role: str) -> list[dict]:
+    """Proposals this session may act on.
+
+    A member sees their own scope only. An admin additionally sees household,
+    because a household memory affects everyone and somebody has to decide it —
+    but not another member's private scope, which is theirs to judge.
+    """
+    payload = memory_call("GET", "/v1/proposals?limit=200")
+    if payload is None:
+        raise BridgeUnreachable
+    allowed = {identity}
+    if can(role, "memory:decide_household"):
+        allowed.add("household")
+    return [p for p in payload.get("proposals", [])
+            if p.get("scope", "household") in allowed]
+
+
+def decide_memory(identity: str, role: str, proposal_id: str,
+                  approve: bool) -> tuple[bool, str]:
+    """Approve or reject one proposal, refusing anything out of scope.
+
+    The scope check re-reads the proposal rather than trusting a form field.
+    An id posted from a crafted form is an argument, and an argument must never
+    decide whose memory is being touched — the same rule that keeps identity
+    bound to the session credential everywhere else in this system.
+    """
+    require(role, "memory:decide_own")
+    try:
+        visible = {p.get("id"): p for p in own_proposals(identity, role)}
+    except BridgeUnreachable:
+        return False, "The memory service did not respond. Nothing changed."
+    if proposal_id not in visible:
+        return False, "That proposal is not yours to decide."
+    verb = "approve" if approve else "reject"
+    result = memory_call("POST", f"/v1/proposals/{proposal_id}/{verb}", {})
+    if result is None:
+        return False, "The memory service did not respond. Nothing changed."
+    return True, f"Memory {verb}d."
+
+
+# --- delivery ------------------------------------------------------------------
+
+
+def send_link_email(address: str, url: str) -> tuple[bool, str]:
+    """Email a login link. Returns (sent, detail).
+
+    Never raises into the request: a delivery failure must not be reported to
+    the browser differently from a success, or the page becomes an oracle for
+    which addresses are registered.
+    """
+    if not SMTP_HOST:
+        return False, "no SMTP host configured"
+    import email.message
+    import smtplib
+    message = email.message.EmailMessage()
+    message["Subject"] = "Your Agentbox sign-in link"
+    message["From"] = SMTP_FROM or SMTP_USER
+    message["To"] = address
+    message.set_content(
+        f"Open this link to sign in to Agentbox:\n\n{url}\n\n"
+        f"It works once, expires in {LINK_TTL_SECONDS // 60} minutes, and only "
+        f"in the browser you requested it from.\n\n"
+        f"If you did not ask for this, you can ignore it \u2014 on its own the "
+        f"link is not enough to sign in as you.\n")
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+            smtp.starttls()
+            if SMTP_USER:
+                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.send_message(message)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{type(exc).__name__}"
+    return True, ""
+
+
+# --- pages ---------------------------------------------------------------------
+
+STYLE = """
+ body{font:16px/1.55 system-ui,sans-serif;max-width:38rem;margin:0 auto;
+      padding:2rem 1.25rem;color:#1a1a1a}
+ h1{font-size:1.4rem;margin:0 0 .2rem}
+ .sub{color:#666;margin:0 0 1.75rem}
+ .card{border:1px solid #ddd;border-radius:.5rem;padding:1rem;margin:0 0 .75rem}
+ .scope{display:inline-block;font-size:.75rem;background:#eef;color:#334;
+        border-radius:.25rem;padding:.1rem .4rem;margin-bottom:.4rem}
+ .stmt{margin:0 0 .75rem}
+ button{font:inherit;padding:.45rem .9rem;border-radius:.35rem;cursor:pointer;
+        border:1px solid #bbb;background:#fff;margin-right:.4rem}
+ button.yes{background:#1a7f37;border-color:#1a7f37;color:#fff}
+ .flash{background:#eef7ee;border:1px solid #cde3cd;padding:.6rem .8rem;
+        border-radius:.35rem;margin:0 0 1rem}
+ .empty{color:#666}
+ nav a{margin-right:1rem}
+ footer{margin-top:2.5rem;color:#888;font-size:.85rem}
+"""
+
+
+def page(title: str, body: str) -> bytes:
+    return (f"<!doctype html><meta charset=utf-8>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>{html.escape(title)}</title><style>{STYLE}</style>"
+            f"{body}").encode()
+
+
+def render_home(identity: str, role: str, flash: str) -> bytes:
+    try:
+        proposals, reachable = own_proposals(identity, role), True
+    except BridgeUnreachable:
+        proposals, reachable = [], False
+    parts = [f"<h1>Hello, {html.escape(identity)}</h1>",
+             f"<p class=sub>What {'Agentbox'} would like to remember about you."
+             f"{' You are an admin.' if role == ADMIN else ''}</p>"]
+    if flash:
+        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
+    if role == ADMIN:
+        parts.append("<nav><a href='/admin'>Operations &rarr;</a></nav><p></p>")
+    if not reachable:
+        parts.append("<p class=empty><b>The memory service is not "
+                     "responding.</b> This is not the same as having nothing "
+                     "waiting — there may be proposals here that cannot be "
+                     "shown. Tell whoever runs this box.</p>")
+    elif not proposals:
+        parts.append("<p class=empty>Nothing waiting. The assistant proposes a "
+                     "memory when it notices something worth keeping; it cannot "
+                     "save one until you say yes.</p>")
+    for item in proposals:
+        scope = html.escape(str(item.get("scope", "household")))
+        label = "private to you" if scope == identity else scope
+        parts.append(
+            f"<div class=card><span class=scope>{html.escape(label)}</span>"
+            f"<p class=stmt>{html.escape(str(item.get('statement', '')))}</p>"
+            f"<form method=post action=/memory/decide>"
+            f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
+            f"<button class=yes name=verb value=approve>Remember this</button>"
+            f"<button name=verb value=reject>Forget it</button></form></div>")
+    parts.append("<footer>Only you can approve a memory in your own private "
+                 "scope — not the assistant, and not the household admin."
+                 "<br><a href='/logout'>Sign out</a></footer>")
+    return page(f"{identity} — Agentbox", "".join(parts))
+
+
+SIGNIN = """<h1>Agentbox</h1>
+<p class=sub>Sign in with your email address.</p>
+{flash}
+<form method=post action=/request>
+  <p><input type=email name=email required placeholder="you@example.com"
+     style="width:100%;padding:.6rem;font-size:1rem;border:1px solid #bbb;
+            border-radius:.35rem"></p>
+  <button class=yes type=submit>Email me a link</button>
+</form>
+<footer>The link works once, expires in {minutes} minutes, and only in this
+browser. Opening it somewhere else will not sign anyone in.</footer>"""
+
+
+def render_signin(flash: str = "") -> bytes:
+    return page("Sign in \u2014 Agentbox", SIGNIN.format(
+        minutes=LINK_TTL_SECONDS // 60,
+        flash=f"<div class=flash>{html.escape(flash)}</div>" if flash else ""))
+
+
+def render_admin(identity: str, flash: str) -> bytes:
+    parts = ["<h1>Operations</h1>",
+             "<p class=sub>Admin only. Connector health and messaging setup.</p>"]
+    if flash:
+        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
+    parts.append("<nav><a href='/'>&larr; Your memories</a></nav><p></p>")
+    parts.append(
+        "<div class=card><b>Connector health</b>"
+        "<p class=sub style='margin:.4rem 0 0'>Revoking access at Google leaves "
+        "this box holding a dead refresh token; without a check the first "
+        "symptom is a confusing tool failure days later.</p></div>")
+    parts.append("<footer><a href='/logout'>Sign out</a></footer>")
+    return page("Operations — Agentbox", "".join(parts))
+
+
+# --- server --------------------------------------------------------------------
+
+
+def cookie_value(header: str, name: str) -> str:
+    for part in header.split(";"):
+        key, _, value = part.strip().partition("=")
+        if key == name:
+            return value
+    return ""
+
+
+class PortalHandler(BaseHTTPRequestHandler):
+    server_version = "agentbox-portal"
+
+    def log_message(self, fmt, *args):  # noqa: A002
+        sys.stderr.write(f"[portal] {fmt % args}\n")
+
+    def _send(self, code: int, body: bytes, headers: dict | None = None) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        # This page shows private memories and can revoke credentials. It has
+        # no business being framed, sniffed, or leaked through a referrer.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _session(self) -> dict | None:
+        return load_session(cookie_value(self.headers.get("Cookie", ""), "sid"))
+
+    def _redirect(self, location: str, headers: dict | None = None) -> None:
+        self.send_response(303)
+        self.send_header("Location", location)
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        flash = (query.get("m") or [""])[0][:120]
+
+        if parsed.path == "/login":
+            identity, reason = redeem_link(
+                (query.get("id") or [""])[0], (query.get("k") or [""])[0],
+                cookie_value(self.headers.get("Cookie", ""), "req"))
+            if not identity:
+                self._send(403, page("Not valid", f"<h1>Sorry</h1>"
+                                     f"<p>{html.escape(reason)}</p>"))
+                return
+            sid = new_session(identity)
+            # The request nonce has done its job; leaving it set would let a
+            # later link be spent from this browser without a fresh request.
+            # HttpOnly so a script cannot read it; SameSite=Lax so another site
+            # cannot drive a POST here with the user's cookie attached.
+            self.send_response(303)
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie",
+                             f"sid={sid}; HttpOnly; SameSite=Lax; Path=/")
+            self.send_header("Set-Cookie",
+                             "req=; Max-Age=0; HttpOnly; SameSite=Lax; Path=/")
+            self.end_headers()
+            return
+
+        session = self._session()
+        if not session:
+            self._send(401, render_signin(flash))
+            return
+
+        if parsed.path == "/logout":
+            end_session(cookie_value(self.headers.get("Cookie", ""), "sid"))
+            self._redirect("/", {"Set-Cookie":
+                                 "sid=; Max-Age=0; HttpOnly; SameSite=Lax; Path=/"})
+            return
+
+        if parsed.path == "/admin":
+            if not can(session["role"], "ops:read_health"):
+                self._send(403, page("Not allowed",
+                                     "<h1>Not allowed</h1><p>Operations is "
+                                     "admin only.</p>"))
+                return
+            self._send(200, render_admin(session["identity"], flash))
+            return
+
+        if parsed.path == "/":
+            self._send(200, render_home(session["identity"], session["role"],
+                                        flash))
+            return
+        self._send(404, page("Not found", "<h1>Not found</h1>"))
+
+    def _request_link(self, address: str) -> None:
+        """Handle a sign-in request.
+
+        The answer is identical whether or not the address is registered, and
+        whether or not delivery succeeded. Anything else turns this form into a
+        way to enumerate who lives here.
+        """
+        told = ("If that address belongs to someone here, a sign-in link is on "
+                "its way. It will only work in this browser.")
+        identity = identity_for_email(address)
+        nonce = secrets.token_urlsafe(24)
+        if identity:
+            try:
+                url, _ = mint_link(identity, PUBLIC_URL, request_nonce=nonce)
+                sent, detail = send_link_email(address, url)
+                if not sent:
+                    # Visible to the operator, never to the browser.
+                    sys.stderr.write(
+                        f"[portal] link for {identity} not delivered: {detail}\n")
+            except RuntimeError as exc:
+                sys.stderr.write(f"[portal] {exc}\n")
+        self.send_response(303)
+        self.send_header("Location", "/?" + urllib.parse.urlencode({"m": told}))
+        self.send_header("Set-Cookie",
+                         f"req={nonce}; HttpOnly; SameSite=Lax; Path=/; "
+                         f"Max-Age={LINK_TTL_SECONDS}")
+        self.end_headers()
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode())
+        path = urllib.parse.urlparse(self.path).path
+
+        if path == "/request":
+            self._request_link((form.get("email") or [""])[0])
+            return
+
+        session = self._session()
+        if not session:
+            self._send(401, render_signin())
+            return
+
+        if path == "/memory/decide":
+            try:
+                _, message = decide_memory(
+                    session["identity"], session["role"],
+                    (form.get("id") or [""])[0],
+                    (form.get("verb") or [""])[0] == "approve")
+            except PermissionError:
+                message = "Not allowed."
+            self._redirect("/?" + urllib.parse.urlencode({"m": message}))
+            return
+        self._send(404, page("Not found", "<h1>Not found</h1>"))
+
+
+# --- commands ------------------------------------------------------------------
+
+
+def cmd_link(args) -> int:
+    """Mint a login link and print it.
+
+    Printing rather than sending, for now: delivery needs the portal's own
+    Discord application (see the module docstring), and until that token exists
+    a link handed over by the operator is honest about who is delivering it.
+    """
+    try:
+        url, link_id = mint_link(args.identity, args.base_url)
+    except RuntimeError as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 1
+    minutes = LINK_TTL_SECONDS // 60
+    print(url)
+    print(f"\n[ok] link {link_id} for {args.identity} — single use, "
+          f"expires in {minutes} minutes", file=sys.stderr)
+    return 0
+
+
+def cmd_serve(args) -> int:
+    STATE.mkdir(parents=True, exist_ok=True)
+    server = ThreadingHTTPServer((args.host, args.port), PortalHandler)
+    print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
+    print(f"[..] admins: {', '.join(sorted(admin_names())) or 'none'}",
+          file=sys.stderr)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Agentbox self-service portal")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    link = sub.add_parser("link", help="mint a single-use login link")
+    link.add_argument("identity")
+    link.add_argument("--base-url", default=os.environ.get(
+        "AGENTBOX_PORTAL_URL", "http://agentbox.local:8771"))
+    link.set_defaults(func=cmd_link)
+
+    serve = sub.add_parser("serve", help="run the portal")
+    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--port", type=int, default=8771)
+    serve.set_defaults(func=cmd_serve)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

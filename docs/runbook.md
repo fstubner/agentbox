@@ -162,6 +162,54 @@ and which scopes it can read. It is `allowed` and ungated, because being unsure
 is what causes the cross-account mistakes it prevents. Memories written before
 scopes existed have none and read as household.
 
+### The portal: how people manage their own memories and accounts
+
+`cli/agentbox-portal serve` runs a self-service page. Members review the
+memories the assistant proposed **about them** and manage their own
+connectors; admins additionally get operations.
+
+```bash
+cli/agentbox-portal link sam --base-url http://agentbox.local:8771
+```
+
+Ordinarily people sign in themselves: they type their email address and a link
+arrives. `portal link` is the operator's fallback for someone whose email is
+not yet configured.
+
+Roles are two — `admin` and `member` — resolved from `AGENTBOX_ADMINS`, deny by
+default, with the capability table in the portal source. Not a general RBAC
+engine: a second policy vocabulary next to `approval-policy.yaml` would be two
+systems that disagree about who may do what, usually when it matters. An empty
+`AGENTBOX_ADMINS` makes nobody an admin, which is the correct direction for a
+misread env file to fail in.
+
+An admin decides `household` proposals, because those affect everyone and
+somebody must. An admin does **not** decide another member's private scope.
+Admin is not a master key over someone else's memories.
+
+#### Why a login link is bound to one browser
+
+A magic link is normally a bearer token — whoever holds it is you. That is a
+bad fit here specifically, because **the assistant can read the inbox the link
+is delivered to**. It holds `search_gmail` and `read_gmail` on Alex's account.
+A prompt-injected model could search for the message, follow the link, and
+approve its own memory proposals, defeating the review gate that is its only
+route to durable memory.
+
+Hiding the sender from the assistant's Gmail queries would be an allowlist the
+model could reason its way around. So the link is constrained instead:
+requesting one sets a nonce cookie, and redemption requires it. The link works
+in the browser that asked for it and nowhere else.
+
+Whoever merely *reads* the link cannot use it — email, Discord, a screenshot in
+a chat log, or a channel added later. Verified over HTTP: an interceptor
+holding the exact URL gets 403; the requesting browser signs in.
+
+Env: `AGENTBOX_IDENTITY_EMAILS="alex:alex@example.com,sam:sam@example.com"`,
+`AGENTBOX_ADMINS=alex`, and `AGENTBOX_SMTP_*` for delivery. Without an SMTP
+host the portal still runs and links are minted; they just have to be handed
+over by the operator.
+
 ### What a private scope does and does not protect
 
 A scope controls **what the assistant will surface to whom**. Sam's assistant
