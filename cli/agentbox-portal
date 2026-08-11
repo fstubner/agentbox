@@ -850,18 +850,50 @@ def render_admin(identity: str, flash: str,
 # --- server --------------------------------------------------------------------
 
 
-def _consent_state(identity: str) -> str:
-    """A state value bound to this identity and this box's session secret.
+def _state_secret() -> str:
+    """The key the consent state is derived from. Random, persisted, 0600.
 
-    Derived rather than stored so it survives a restart mid-flow, and keyed so
-    one person's consent cannot be redirected into another's record.
+    This used to fall back to a hash of the STATE directory *path* — a value
+    anyone who can guess `~/.local/state/agentbox/portal` can compute. The
+    consent state is the only thing standing between a crafted callback link
+    and someone else's authorisation code landing in your reconnect record
+    (SameSite=Lax still sends the session cookie on a top-level GET, and the
+    callback is a GET), so it must be underivable, not merely per-identity.
+
+    Persisted to disk rather than derived, which keeps the property the
+    derivation was for: a restart between consent and callback does not strand
+    the user, because the file is still there. O_EXCL so two concurrent first
+    requests cannot mint two different secrets.
     """
     secret = os.environ.get("AGENTBOX_PORTAL_STATE_SECRET", "")
-    if not secret:
-        # Derived from the box's own state directory rather than random, so a
-        # restart between consent and callback does not strand the user.
-        secret = _hash(str(STATE.resolve()))
-    return hmac.new(secret.encode(), f"google:{identity}".encode(),
+    if secret:
+        return secret
+    path = STATE / "state-secret"
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    minted = secrets.token_urlsafe(32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path.read_text(encoding="utf-8").strip()
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(minted)
+    return minted
+
+
+def _consent_state(identity: str) -> str:
+    """A state value bound to this identity and this box's own secret.
+
+    Keyed per identity so one person's consent cannot be redirected into
+    another's record, and keyed on a random secret so nobody off the box can
+    compute a valid state at all.
+    """
+    return hmac.new(_state_secret().encode(), f"google:{identity}".encode(),
                     hashlib.sha256).hexdigest()
 
 
@@ -1175,6 +1207,11 @@ def cmd_link(args) -> int:
 
 def cmd_serve(args) -> int:
     STATE.mkdir(parents=True, exist_ok=True)
+    # Mint the consent-state secret now, not on the first reconnect click. If
+    # this directory is unwritable the process should fail here at startup,
+    # where systemd shows it — not as a 500 halfway through someone's OAuth
+    # flow days later.
+    _state_secret()
     server = ThreadingHTTPServer((args.host, args.port), PortalHandler)
     print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
     # Said loudly at startup because it cannot be said at the point of failure.

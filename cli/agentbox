@@ -523,6 +523,13 @@ def rules_decide(name: str, activate: bool) -> int:
         if activate:
             report(WARN, "this rule now runs unattended, as "
                          f"{record.get('identity')}, until deactivated")
+            # Say so at the moment of approval, not in a document. An approved
+            # rule that silently never fires is exactly the confident-but-wrong
+            # state this system keeps having to hunt down.
+            report(WARN, "nothing feeds rules events yet (the evaluator's "
+                         "event source is still to build — docs/roadmap.md "
+                         "item 11), so this rule is recorded but will NOT "
+                         "fire until that lands")
         return 0
     report(FAIL, f"no rule named '{name}'")
     return 1

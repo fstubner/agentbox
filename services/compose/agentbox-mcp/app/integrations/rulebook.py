@@ -121,4 +121,10 @@ def dispatch(name, args):
 
     return {"stored": checked["name"], "active": False,
             "next": "A person must run `agentbox rules approve "
-                    f"{checked['name']}` before this ever fires."}
+                    f"{checked['name']}` before this ever fires.",
+            # Honest about the platform's own state, not just the rule's. Tell
+            # the author now, while it can relay that to the person asking,
+            # rather than letting both believe an approved rule is live.
+            "caveat": "No event source feeds rules yet, so even an approved "
+                      "rule will not fire until the evaluator lands. Say so "
+                      "if someone asks for automation that matters."}

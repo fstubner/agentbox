@@ -59,11 +59,36 @@ def test_consent_state_is_bound_to_the_identity(portal):
 
 
 def test_consent_state_survives_a_restart(portal, tmp_path, monkeypatch):
-    """Derived, not stored: a restart between consent and callback would
-    otherwise strand the user mid-flow with no way back."""
+    """Persisted, so a restart between consent and callback does not strand
+    the user mid-flow with no way back."""
     first = portal._consent_state("sam")
     reloaded = _load("agentbox_portal2", "agentbox-portal")
     assert reloaded._consent_state("sam") == first
+
+
+def test_consent_state_is_not_derivable_from_the_path(portal):
+    """The state used to fall back to a hash of the STATE directory path,
+    which anyone who can guess `~/.local/state/agentbox/portal` can compute.
+    A computable state turns the callback into a code-injection route: Lax
+    cookies ride along on a top-level GET, so a crafted link clicked by a
+    signed-in member would land an attacker's authorisation code — and later
+    an attacker's mailbox — in that member's reconnect record.
+    """
+    import hashlib
+    import hmac
+    old_derivation = hmac.new(
+        hashlib.sha256(str(portal.STATE.resolve()).encode()).hexdigest().encode(),
+        b"google:sam", hashlib.sha256).hexdigest()
+    assert portal._consent_state("sam") != old_derivation
+
+
+def test_state_secret_is_random_persisted_and_private(portal):
+    secret = portal._state_secret()
+    path = portal.STATE / "state-secret"
+    assert path.exists()
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert portal._state_secret() == secret          # stable across calls
+    assert len(secret) >= 32                          # actual entropy, not a stub
 
 
 def test_consent_url_forces_a_fresh_refresh_token(portal):
