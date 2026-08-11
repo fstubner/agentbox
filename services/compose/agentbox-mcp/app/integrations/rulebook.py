@@ -73,15 +73,23 @@ def _known_identities():
 
 def dispatch(name, args):
     if name == "list_rules":
+        # Active is derived from the operator's approval record on the
+        # read-only mount, never from the rule file: the file lives on this
+        # container's writable mount, and nothing written there may confer
+        # authority — including the appearance of it in a listing.
+        import evaluator
+        approved = evaluator.approvals()
         found = []
         for path in sorted(STORE.glob("*.json")) if STORE.is_dir() else []:
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            active = approved.get(str(record.get("name"))) == \
+                evaluator.fingerprint(record)
             found.append({"name": record.get("name"),
                           "identity": record.get("identity"),
-                          "active": bool(record.get("active")),
+                          "active": active,
                           "description": record.get("description", "")})
         return {"rules": found, "total": len(found),
                 "note": "inactive rules never fire; a person activates them "
@@ -103,28 +111,38 @@ def dispatch(name, args):
         # assistant can read this and try again now.
         raise ToolError(str(exc)) from None
 
-    checked["active"] = False
     checked["proposed_at"] = int(time.time())
     try:
         STORE.mkdir(parents=True, exist_ok=True)
         path = STORE / f"{checked['name']}.json"
-        if path.exists():
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            if existing.get("active"):
-                raise ToolError(
-                    f"'{checked['name']}' is already active. Rules are not "
-                    f"edited in place — propose a differently named rule and "
-                    f"ask for the old one to be retired.")
+        # Checked against the operator's approval record, not a flag in the
+        # file. Overwriting an approved rule would not grant anything — the
+        # fingerprint pin means the replacement simply never fires — but it
+        # would silently kill something a person chose to have running, which
+        # is its own kind of harm.
+        import evaluator
+        if checked["name"] in evaluator.approvals():
+            raise ToolError(
+                f"'{checked['name']}' is active. Rules are not edited in "
+                f"place — propose a differently named rule and ask for the "
+                f"old one to be retired.")
         path.write_text(json.dumps(checked, indent=2), encoding="utf-8")
     except OSError as exc:
         raise ToolError(f"could not store the rule: {type(exc).__name__}") from None
 
-    return {"stored": checked["name"], "active": False,
-            "next": "A person must run `agentbox rules approve "
-                    f"{checked['name']}` before this ever fires.",
-            # Honest about the platform's own state, not just the rule's. Tell
-            # the author now, while it can relay that to the person asking,
-            # rather than letting both believe an approved rule is live.
-            "caveat": "No event source feeds rules yet, so even an approved "
-                      "rule will not fire until the evaluator lands. Say so "
-                      "if someone asks for automation that matters."}
+    import evaluator
+    source = checked["when"].get("source", "")
+    live = source in evaluator.LIVE_SOURCES
+    result = {"stored": checked["name"], "active": False,
+              "next": "A person must run `agentbox rules approve "
+                      f"{checked['name']}` before this ever fires."}
+    if not live:
+        # Honest about the platform's own state, not just the rule's. Tell
+        # the author now, while it can relay that to the person asking,
+        # rather than letting both believe an approved rule is live.
+        result["caveat"] = (
+            f"'{source}' events are not wired up yet (live sources: "
+            f"{', '.join(evaluator.LIVE_SOURCES)}). Even once approved, this "
+            f"rule cannot fire until that source lands — say so if someone "
+            f"is counting on it.")
+    return result

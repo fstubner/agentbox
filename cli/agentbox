@@ -467,10 +467,47 @@ def _agent_can(action: str, path: str) -> bool | None:
 RULES_DIR = Path(os.environ.get(
     "AGENTBOX_RULES_DIR",
     os.path.expanduser("~/.local/state/agentbox/policy-state/rules")))
+# Approvals live on the operator-owned policy mount, which the gateway reads
+# and cannot write — the same split as grants. A flag inside the rule file
+# would sit on the container-writable mount, where the gateway could approve
+# its own rules; an approval that the approved party can write is not one.
+RULES_APPROVED_PATH = Path(os.environ.get(
+    "AGENTBOX_RULES_APPROVED",
+    os.path.expanduser("~/.local/state/agentbox/policy/rules-approved.json")))
+
+# What an approval pins: the fields that execute and say as whom. Must stay
+# identical to evaluator.FINGERPRINT_FIELDS — tests/test_rules_evaluator.py
+# computes both over the same rule and fails on drift.
+RULE_FINGERPRINT_FIELDS = ("name", "identity", "when", "if", "do")
+
+
+def rule_fingerprint(record: dict) -> str:
+    core = {key: record.get(key) for key in RULE_FINGERPRINT_FIELDS}
+    return hashlib.sha256(json.dumps(
+        core, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _rule_approvals() -> dict[str, str]:
+    try:
+        data = json.loads(RULES_APPROVED_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(e.get("name", "")): str(e.get("sha", ""))
+            for e in (data.get("approved", []) if isinstance(data, dict) else [])
+            if e.get("name") and e.get("sha")}
+
+
+def _write_rule_approvals(entries: dict[str, str]) -> None:
+    RULES_APPROVED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RULES_APPROVED_PATH.write_text(json.dumps(
+        {"approved": [{"name": name, "sha": sha}
+                      for name, sha in sorted(entries.items())]},
+        indent=2), encoding="utf-8")
 
 
 def _rules() -> list[dict]:
     out = []
+    approved = _rule_approvals()
     if not RULES_DIR.is_dir():
         return out
     for path in sorted(RULES_DIR.glob("*.json")):
@@ -479,6 +516,11 @@ def _rules() -> list[dict]:
         except (OSError, ValueError):
             continue
         record["_path"] = str(path)
+        # Derived from the operator's approval record, never from the file:
+        # the file sits on the gateway-writable mount and carries no authority.
+        sha = approved.get(str(record.get("name")))
+        record["_active"] = sha == rule_fingerprint(record)
+        record["_edited_since_approval"] = bool(sha) and not record["_active"]
         out.append(record)
     return out
 
@@ -495,8 +537,11 @@ def rules_list() -> int:
         print("no rules")
         return 0
     for record in found:
-        state = "ACTIVE " if record.get("active") else "inactive"
+        state = "ACTIVE " if record.get("_active") else "inactive"
         print(f"[{state}] {record.get('name')}  (as {record.get('identity')})")
+        if record.get("_edited_since_approval"):
+            print("          !! changed since it was approved — the approval "
+                  "is void and it will not fire. Re-read it and approve again.")
         if record.get("description"):
             print(f"          {record['description']}")
         when = record.get("when", {})
@@ -511,25 +556,47 @@ def rules_list() -> int:
 
 
 def rules_decide(name: str, activate: bool) -> int:
+    """Approve or deactivate one rule.
+
+    Approval is an entry in the operator-owned approvals file, pinning a
+    fingerprint of what the rule executes. Nothing is written to the rule
+    file itself — that sits on the gateway-writable mount, and an approval
+    the approved party could write would not be one. Pinning means an
+    approved rule that is later edited (by anything) simply stops firing.
+    """
     for record in _rules():
         if record.get("name") != name:
             continue
-        path = Path(record.pop("_path"))
-        record["active"] = activate
-        record["decided_at"] = int(time.time())
-        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        entries = _rule_approvals()
+        if activate:
+            entries[name] = rule_fingerprint(record)
+        else:
+            entries.pop(name, None)
+        try:
+            _write_rule_approvals(entries)
+        except OSError as exc:
+            report(FAIL, f"could not write {RULES_APPROVED_PATH}: {exc}")
+            return 1
         report(OK, f"{'activated' if activate else 'deactivated'} rule "
                    f"'{name}'")
         if activate:
             report(WARN, "this rule now runs unattended, as "
-                         f"{record.get('identity')}, until deactivated")
+                         f"{record.get('identity')}, until deactivated. If "
+                         f"the rule file changes in any way, the approval is "
+                         f"void and it stops firing.")
             # Say so at the moment of approval, not in a document. An approved
             # rule that silently never fires is exactly the confident-but-wrong
-            # state this system keeps having to hunt down.
-            report(WARN, "nothing feeds rules events yet (the evaluator's "
-                         "event source is still to build — docs/roadmap.md "
-                         "item 11), so this rule is recorded but will NOT "
-                         "fire until that lands")
+            # state this system keeps having to hunt down. Kept in step with
+            # evaluator.LIVE_SOURCES by tests/test_rules_evaluator.py.
+            live = ("schedule", "homeassistant")
+            source = str((record.get("when") or {}).get("source", ""))
+            if source in live:
+                report(OK, f"'{source}' events are live — this rule can fire "
+                           f"within a minute or two of matching")
+            else:
+                report(WARN, f"'{source}' events are NOT wired up yet (live: "
+                             f"{', '.join(live)}), so this rule is recorded "
+                             f"but cannot fire until that source lands")
         return 0
     report(FAIL, f"no rule named '{name}'")
     return 1
@@ -538,8 +605,20 @@ def rules_decide(name: str, activate: bool) -> int:
 def rules_remove(name: str) -> int:
     for record in _rules():
         if record.get("name") == name:
-            Path(record["_path"]).unlink()
-            report(OK, f"removed rule '{name}'")
+            # The approval is what stops it firing, so revoke that first and
+            # unconditionally — file deletion can fail (the rules dir is
+            # container-owned) and must not leave the rule live.
+            entries = _rule_approvals()
+            if entries.pop(name, None) is not None:
+                _write_rule_approvals(entries)
+            try:
+                Path(record["_path"]).unlink()
+                report(OK, f"removed rule '{name}'")
+            except OSError:
+                report(OK, f"revoked approval for '{name}'; it cannot fire")
+                report(WARN, f"the proposal file remains at "
+                             f"{record['_path']} (owned by the gateway) — "
+                             f"harmless, and listed as inactive")
             return 0
     report(FAIL, f"no rule named '{name}'")
     return 1

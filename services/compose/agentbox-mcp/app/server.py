@@ -207,4 +207,10 @@ class AgentboxMcp(McpHandler):
 if __name__ == "__main__":
     print(f"agentbox-mcp: {len(TOOLS)} tools from "
           f"{len(INTEGRATIONS)} integrations", file=sys.stderr, flush=True)
+    # The rules evaluator lives in this process because firing a rule IS a
+    # tool call: same dispatch, same policy gate, same identity contextvar,
+    # same outcome journal. A separate service would need its own copy of all
+    # four, which is the divergence this gateway exists to end.
+    import evaluator
+    evaluator.start(dispatch)
     serve(AgentboxMcp)

@@ -399,12 +399,36 @@ single-user first would mean retrofitting identity into stored rules).
 already has, because the tool list is read from the live registry rather than a
 second list somebody keeps in step.
 
-**Still to build: the evaluator's event source.** `matches()` and
-`actions_for()` are done and tested, but nothing yet feeds them events. Home
-Assistant would push state changes to a gateway endpoint; the `schedule` source
-needs a timer. Until then a rule can be authored, reviewed and activated, and
-will not fire — which is inert-but-honest rather than half-working, and the
-`rules list` output says so.
+**Built 2026-08-11: the evaluator, for two of five sources.**
+`app/evaluator.py` runs as a thread inside the gateway, because firing a rule
+IS a tool call — same dispatch, same policy gate (non-consuming, the bridge's
+consume stays authoritative), same identity contextvar, same outcome journal
+(`service: "agentbox-rules"`, rule name in `detail`). Live sources:
+
+- `schedule` — a tick per pass carrying `at: "HH:MM"`;
+- `homeassistant` — entity-state diffs through the same bridge and lean view
+  the assistant uses. The first poll baselines silently, so a restart cannot
+  replay the whole house as events.
+
+A per-rule cooldown (default 300s) turns "the 07:30 tick matched twice" and
+"a flapping sensor" into one firing. A denied action is journalled and
+dropped, never retried.
+
+**Approval is not a flag in the rule file.** Rule files live on the
+container-writable mount, whose contract is that writing there confers no
+authority — so a flag there would let a compromised gateway approve its own
+rules, or rewrite an approved rule's `do` list after the human said yes.
+`agentbox rules approve` instead writes `/policy/rules-approved.json` on the
+operator-owned read-only mount (the grants split, reused), pinning a
+fingerprint of the rule's executing fields. An approved rule that changes in
+any way stops firing rather than inheriting its approval. Found 2026-08-11 —
+the original design stored `active` in the rule file, which also meant the
+CLI could never actually write the approval (the dir is container-owned):
+the gate was both forgeable by the wrong party and unusable by the right one.
+
+**Still dead sources: gmail, calendar, vikunja.** Valid grammar, no feed.
+`rules approve` and `propose_rule` both name which sources are live, so an
+approved mail rule says plainly that it cannot fire yet.
 
 ### 12. Close the shell gap — **done 2026-08-05**
 

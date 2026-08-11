@@ -209,7 +209,7 @@ def test_both_tools_are_policy_mapped():
     assert "check_reasoning: local_only" in policy
 
 
-def test_triage_never_returns_the_body_to_the_caller():
+def test_triage_never_returns_the_body_to_the_caller(monkeypatch):
     """The whole reason to prefer this over read_gmail.
 
     If the message text can appear in the result, the tool is a slower
@@ -225,12 +225,42 @@ def test_triage_never_returns_the_body_to_the_caller():
     sys.modules.pop("integrations.harness", None)
     import integrations.harness as integration
 
-    integration.bridge_post = bridge_post
-    integration.harness.run_task = lambda name, text: dict(
-        GOOD, task=name, model_role="context", trusted=False,
-        carries_quoted_text=True)
+    monkeypatch.setattr(integration, "bridge_post", bridge_post)
+    # integration.harness IS the module every other test uses — patch through
+    # monkeypatch so the stub cannot leak into them.
+    monkeypatch.setattr(integration.harness, "run_task",
+                        lambda name, text: dict(
+                            GOOD, task=name, model_role="context",
+                            trusted=False, carries_quoted_text=True))
 
     result = integration.dispatch("triage_email", {"message_id": "m1"})
     assert "SECRET-CANARY" not in json.dumps(result)
-    assert result["subject"] == "Invoice"
+    assert result["untrusted_subject"] == "Invoice"
     assert calls["path"] == "/v1/gmail/clean"
+
+
+def test_quoted_fields_carry_the_untrusted_prefix():
+    """The one field holding sender bytes is named the way every other such
+    field on this platform is named — the model-facing key stays `summary`
+    because a 4B model fills simple schemas more reliably."""
+    result = harness.run_task("email_triage", "hi",
+                              transport=transport_returning(json.dumps(GOOD)))
+    assert "untrusted_summary" in result
+    assert "summary" not in result
+
+
+def test_a_brace_inside_a_summary_is_not_structure():
+    """`"smiley :}"` used to end the candidate early and turn a valid answer
+    into an escalation."""
+    payload = dict(GOOD, summary="use config { debug: true } and :} smile")
+    result = harness.run_task("email_triage", "hi",
+                              transport=transport_returning(
+                                  "Here: " + json.dumps(payload) + " done"))
+    assert "smile" in result["untrusted_summary"]
+
+
+def test_a_date_with_trailing_digits_is_refused_not_truncated():
+    with pytest.raises(harness.SchemaError):
+        harness.coerce({"kind": "date"}, "2026-08-2099999")
+    # A datetime prefix is fine — models add T00:00:00 unprompted.
+    assert harness.coerce({"kind": "date"}, "2026-08-20T09:00:00") == "2026-08-20"

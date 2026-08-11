@@ -82,7 +82,13 @@ class SchemaError(Exception):
 
 
 def _coerce_date(value):
-    text = str(value).strip()[:10]
+    whole = str(value).strip()
+    text = whole[:10]
+    # Accept a bare date or a datetime prefix ("2026-08-20T09:00:00"), refuse
+    # a longer digit run: "2026-08-2099" truncating to a plausible date is the
+    # kind of wrong answer nothing downstream can detect.
+    if len(whole) > 10 and whole[10] not in "T ":
+        raise SchemaError(f"not an ISO date: {whole[:40]!r}")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
         raise SchemaError(f"not an ISO date: {text[:40]!r}")
     try:
@@ -211,6 +217,12 @@ TASKS = {
             "deadline": {"kind": "date", "optional": True},
             "summary": {"kind": "line"},
         },
+        # Renamed on the way out, to the same convention Drive and Gmail reads
+        # use for people-authored text. The model-facing key stays "summary"
+        # because a 4B model fills simple schemas more reliably; the caller
+        # sees "untrusted_summary" so the one field carrying the sender's
+        # bytes is named as loudly as every other such field on this platform.
+        "quote_fields": {"summary": "untrusted_summary"},
     },
 }
 
@@ -259,10 +271,27 @@ def _first_json_object(text: str):
     is lenient about the wrapping and strict about the contents — being strict
     here would only convert a formatting quirk into a task failure, and
     `validate` is where strictness actually buys something.
+
+    Braces inside string values are not structure, so the scan tracks whether
+    it is inside a string. Without that, a summary containing "}" ended the
+    candidate early, the parse failed, and a perfectly valid answer became an
+    escalation — a wrong direction to be wrong in twice, since the escalated
+    model tends to write the same summary.
     """
     depth, start = 0, -1
+    in_string = escaped = False
     for index, char in enumerate(text):
-        if char == "{":
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"' and depth:
+            in_string = True
+        elif char == "{":
             if depth == 0:
                 start = index
             depth += 1
@@ -307,6 +336,9 @@ def run_task(name: str, text: str, transport=call_router) -> dict:
         except SchemaError as exc:
             problems.append(f"{role}: {exc}")
             continue
+        for src, dst in (task.get("quote_fields") or {}).items():
+            if src in fields:
+                fields[dst] = fields.pop(src)
         return {"task": name, "model_role": role,
                 "escalated": role != task["role"],
                 "trusted": not task.get("untrusted_input"),
