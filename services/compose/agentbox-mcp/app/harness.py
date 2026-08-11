@@ -287,13 +287,21 @@ def run_task(name: str, text: str, transport=call_router) -> dict:
     if task is None:
         raise HarnessError(f"unknown task: {name}")
 
+    # Emails say "by the 20th", not "by 2026-08-20". Without today's date the
+    # worker invents a year — the first live run returned 2024 — and a wrong
+    # year in a deadline is a plausible-looking answer, which is the worst
+    # kind. Only added where a date is actually asked for.
+    instruction = task["instruction"]
+    if any(spec["kind"] == "date" for spec in task["fields"].values()):
+        instruction += f"\nToday is {datetime.date.today().isoformat()}."
+
     roles = [task["role"]]
     if ESCALATION_ENABLED and task.get("escalate_to"):
         roles.append(task["escalate_to"])
 
     problems = []
     for role in roles:
-        answer = transport(role, task["instruction"], text)
+        answer = transport(role, instruction, text)
         try:
             fields = validate(task["fields"], _first_json_object(answer))
         except SchemaError as exc:

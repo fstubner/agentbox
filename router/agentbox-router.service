@@ -1,7 +1,7 @@
 [Unit]
 Description=Agentbox role router for local model workers
-After=network-online.target fastcontext-worker.service vibethinker-worker.service
-Wants=network-online.target fastcontext-worker.service vibethinker-worker.service
+After=network-online.target fastcontext-worker.service vibethinker-worker.service agentbox-llama-key.service
+Wants=network-online.target fastcontext-worker.service vibethinker-worker.service agentbox-llama-key.service
 
 [Service]
 Type=simple
@@ -10,20 +10,16 @@ Type=simple
 # 2026-08-11 and would have started nothing on a clean install.
 WorkingDirectory=%h/oss/agentbox/router
 
-# Loopback by default: this endpoint is unauthenticated and will run any
-# prompt you give it.
+# Two addresses, because the callers are on opposite sides of a boundary: the
+# evaluator and `doctor` come in on loopback, agentbox-mcp comes in from a
+# container, where loopback is its own. Not 0.0.0.0 — this endpoint is
+# unauthenticated and will run any prompt it is handed, and 172.17.0.1 is
+# reachable from containers while not being routable from the LAN.
 #
-# The assistant now dispatches to it (agentbox-mcp/app/harness.py), and a
-# container cannot reach the host's loopback. If you want `triage_email` and
-# `check_reasoning` to work, bind to the Docker bridge gateway instead:
-#
-#   Environment=AGENTBOX_ROUTER_HOST=172.17.0.1
-#
-# That address is reachable from containers and not from the LAN, which is the
-# whole difference from 0.0.0.0. Confirm it first — `ip -4 addr show docker0` —
-# because it is assigned, not fixed. Leaving it as-is is a valid choice; the
-# two tools then fail with "router unreachable" and nothing else changes.
-Environment=AGENTBOX_ROUTER_HOST=127.0.0.1
+# Confirm the bridge address with `ip -4 addr show docker0`; it is assigned,
+# not fixed. An address that will not bind is logged and skipped rather than
+# taking the other listener down with it.
+Environment=AGENTBOX_ROUTER_HOST=127.0.0.1,172.17.0.1
 Environment=AGENTBOX_ROUTER_PORT=8765
 ExecStart=/usr/bin/python3 %h/oss/agentbox/router/agentbox_router.py
 Restart=on-failure

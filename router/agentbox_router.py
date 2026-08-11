@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -199,11 +200,40 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    host = os.environ.get("AGENTBOX_ROUTER_HOST", "127.0.0.1")
+    """Listen on every address named in AGENTBOX_ROUTER_HOST.
+
+    A list, not a single address, because the two callers live on opposite
+    sides of a boundary: the evaluator and `doctor` reach this on loopback,
+    while agentbox-mcp reaches it from a container, where loopback is the
+    container's own. `0.0.0.0` would serve both and also serve the LAN, and
+    this endpoint is unauthenticated and will run any prompt it is given.
+
+    So bind `127.0.0.1,172.17.0.1` instead — the Docker bridge address is
+    reachable from containers and not routable from the network. Check yours
+    with `ip -4 addr show docker0`; it is assigned, not fixed.
+    """
+    hosts = [h.strip() for h in
+             os.environ.get("AGENTBOX_ROUTER_HOST", "127.0.0.1").split(",")
+             if h.strip()]
     port = int(os.environ.get("AGENTBOX_ROUTER_PORT", "8765"))
-    server = ThreadingHTTPServer((host, port), Handler)
-    print(f"agentbox-router listening on http://{host}:{port}", flush=True)
-    server.serve_forever()
+    servers = []
+    for host in hosts:
+        try:
+            servers.append(ThreadingHTTPServer((host, port), Handler))
+        except OSError as exc:
+            # One address being unavailable — docker0 absent on a box with no
+            # containers — must not take down the loopback listener the
+            # evaluator needs. Say so and carry on.
+            print(f"agentbox-router: cannot bind {host}:{port}: {exc}",
+                  flush=True)
+    if not servers:
+        raise SystemExit(f"agentbox-router: no listener bound on {hosts}")
+    for server in servers[1:]:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    print("agentbox-router listening on " +
+          ", ".join(f"http://{s.server_address[0]}:{port}" for s in servers),
+          flush=True)
+    servers[0].serve_forever()
 
 
 if __name__ == "__main__":
