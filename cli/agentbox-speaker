@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Speech out loud, on the host, behind a constraint the model cannot argue with.
+
+The speakers are Bluetooth devices attached to this machine, not something a
+container can reach, so this runs on the host as the `agentbox` user — the same
+user the gateway runs as, and a member of `audio` because that is what
+bluealsa's D-Bus policy requires. agentbox-mcp calls it over
+host.docker.internal, the same way the Home Assistant bridge reaches Home
+Assistant.
+
+## Quiet hours are a constraint, not a policy tier
+
+A tier is checked once and can be granted; `agentbox grant speak_aloud` would
+make 3am speech possible, and an approval only helps if a human reads carefully
+before saying yes. So the refusal lives here, in the process that owns the
+speaker, in the same shape as the climate clamp: outside the window, there is
+no argument that produces sound.
+
+It refuses rather than queues. A message that arrives at 7am having been
+helpfully deferred is worse than one that never played — nobody wants yesterday's
+reminder read out while they make coffee, and a queue turns "the assistant was
+quiet last night" into "the assistant will ambush me later".
+
+## The text is the assistant's own words
+
+Speaking is how an injected email reaches a person who is not looking at a
+screen. The tool takes text the assistant composed; it is not a way to play
+back a document, and there is no route that takes a file or a URL.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PIPER = os.environ.get(
+    "AGENTBOX_PIPER", "/home/agentbox/hermes-agent-test/.venv/bin/piper")
+VOICE = os.environ.get(
+    "AGENTBOX_PIPER_VOICE",
+    "/home/agentbox/agentbox/cache/piper-voices/en_US-lessac-medium.onnx")
+TOKEN = os.environ.get("AGENTBOX_SPEAKER_TOKEN", "")
+# name:MAC pairs. Named rather than addressed, so the assistant asks for "the
+# kitchen" and never learns a MAC it could use to reach something else.
+SPEAKERS = os.environ.get("AGENTBOX_SPEAKERS", "")
+QUIET_HOURS = os.environ.get("AGENTBOX_QUIET_HOURS", "22:00-07:00")
+MAX_CHARS = int(os.environ.get("AGENTBOX_SPEAK_MAX_CHARS", "600"))
+
+
+def speakers() -> dict[str, str]:
+    out = {}
+    for pair in SPEAKERS.split(","):
+        name, _, mac = pair.partition(":")
+        if name.strip() and mac.strip():
+            out[name.strip().lower()] = mac.strip().upper()
+    return out
+
+
+def _parse_window(value: str):
+    match = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*", value or "")
+    if not match:
+        return None
+    a, b, c, d = (int(x) for x in match.groups())
+    return datetime.time(a % 24, b % 60), datetime.time(c % 24, d % 60)
+
+
+def in_quiet_hours(now: datetime.time | None = None) -> bool:
+    """Whether speech is currently refused.
+
+    Handles a window that crosses midnight, which is the normal case and the
+    one a naive `start <= now <= end` gets backwards — 22:00-07:00 would then
+    be quiet for exactly no minutes of the day.
+    """
+    window = _parse_window(QUIET_HOURS)
+    if window is None:
+        return False
+    start, end = window
+    current = now or datetime.datetime.now().time()
+    if start <= end:
+        return start <= current < end
+    return current >= start or current < end
+
+
+def say(text: str, speaker: str = "") -> tuple[bool, str]:
+    """Synthesise and play. Returns (spoken, detail)."""
+    text = (text or "").strip()
+    if not text:
+        return False, "nothing to say"
+    if len(text) > MAX_CHARS:
+        return False, (f"refused: {len(text)} characters is longer than a "
+                       f"person will stand in a room. Limit is {MAX_CHARS}.")
+    if in_quiet_hours():
+        return False, (f"refused: quiet hours are {QUIET_HOURS}. Not queued — "
+                       f"say it next time someone asks.")
+    available = speakers()
+    if not available:
+        return False, "no speakers configured"
+    name = (speaker or next(iter(available))).strip().lower()
+    mac = available.get(name)
+    if not mac:
+        return False, f"unknown speaker '{name}'; have {sorted(available)}"
+    if not (os.path.exists(PIPER) and os.path.exists(VOICE)):
+        return False, "piper or its voice model is missing on this host"
+
+    with tempfile.TemporaryDirectory() as work:
+        wav = os.path.join(work, "say.wav")
+        try:
+            subprocess.run([PIPER, "-m", VOICE, "-f", wav], input=text.encode(),
+                           capture_output=True, timeout=90, check=True)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            return False, f"speech synthesis failed: {type(exc).__name__}"
+        aplay = shutil.which("aplay") or "/usr/bin/aplay"
+        try:
+            result = subprocess.run(
+                [aplay, "-D", f"bluealsa:DEV={mac},PROFILE=a2dp", wav],
+                capture_output=True, timeout=120, check=False)
+        except subprocess.TimeoutExpired:
+            return False, "playback timed out; is the speaker still connected?"
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip()[:160]
+        return False, f"playback failed on '{name}': {detail}"
+    return True, f"spoken on '{name}'"
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "agentbox-speaker"
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write(f"[speaker] {fmt % args}\n")
+
+    def _send(self, code: int, payload: dict) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._send(200, {"ok": True})
+            return
+        self._send(404, {"error": "not found"})
+
+    def do_POST(self):
+        import hmac
+        provided = self.headers.get("Authorization", "")[7:]
+        if not TOKEN or not hmac.compare_digest(provided, TOKEN):
+            self._send(401, {"error": "unauthorized"})
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            self._send(400, {"error": "invalid json"})
+            return
+        if self.path == "/v1/speakers":
+            self._send(200, {"speakers": sorted(speakers()),
+                             "quiet_hours": QUIET_HOURS,
+                             "quiet_now": in_quiet_hours()})
+            return
+        if self.path == "/v1/speak":
+            spoken, detail = say(str(body.get("text", "")),
+                                 str(body.get("speaker", "")))
+            self._send(200 if spoken else 403,
+                       {"spoken": spoken, "detail": detail})
+            return
+        self._send(404, {"error": "not found"})
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Agentbox speech output")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("say")
+    s.add_argument("text")
+    s.add_argument("--to", default="")
+    serve = sub.add_parser("serve")
+    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--port", type=int, default=8772)
+    args = parser.parse_args()
+
+    if args.cmd == "say":
+        spoken, detail = say(args.text, args.to)
+        print(detail, file=sys.stderr if not spoken else sys.stdout)
+        return 0 if spoken else 1
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"[ok] speaker on {args.host}:{args.port}; "
+          f"speakers={sorted(speakers())}; quiet={QUIET_HOURS}", file=sys.stderr)
+    server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

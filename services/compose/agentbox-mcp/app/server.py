@@ -62,6 +62,8 @@ from integrations import (
     google,
     homeassistant,
     memory,
+    rulebook,
+    speaker,
     vikunja,
 )
 from mcp_base import McpHandler, ToolError, serve
@@ -72,6 +74,8 @@ INTEGRATIONS = {
     "google": google,
     "builder": builder,
     "homeassistant": homeassistant,
+    "speaker": speaker,
+    "rulebook": rulebook,
 }
 
 

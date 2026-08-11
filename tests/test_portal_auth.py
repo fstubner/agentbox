@@ -73,7 +73,7 @@ def test_link_is_single_use(portal):
     url, link_id = portal.mint_link("sam", "http://x")
     secret = secret_of(url)
     assert portal.redeem_link(link_id, secret)[0] == "sam"
-    identity, reason = portal.redeem_link(link_id, secret)
+    identity, _, reason = portal.redeem_link(link_id, secret)
     assert identity == ""
     assert "already been used" in reason
 
@@ -83,7 +83,7 @@ def test_link_expires(portal, monkeypatch):
     secret = secret_of(url)
     expired = portal.now() + portal.LINK_TTL_SECONDS + 60
     monkeypatch.setattr(portal, "now", lambda: expired)
-    identity, reason = portal.redeem_link(link_id, secret)
+    identity, _, reason = portal.redeem_link(link_id, secret)
     assert identity == ""
     assert "expired" in reason
 
@@ -99,10 +99,10 @@ def test_link_secret_is_not_stored(portal):
 
 def test_wrong_secret_is_refused_and_says_nothing(portal):
     _, link_id = portal.mint_link("sam", "http://x")
-    identity, reason = portal.redeem_link(link_id, "not-the-secret")
+    identity, _, reason = portal.redeem_link(link_id, "not-the-secret")
     assert identity == ""
     # A refusal that named the wrong part would be an oracle.
-    assert reason == portal.redeem_link("no-such-link", "x")[1]
+    assert reason == portal.redeem_link("no-such-link", "x")[2]
 
 
 def test_link_minting_is_rate_limited(portal):
@@ -222,10 +222,10 @@ def test_link_is_bound_to_the_requesting_browser(portal):
     url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc123")
 
     # An interceptor holding the link but not the browser cookie.
-    identity, reason = portal.redeem_link(link_id, secret_of(url), "")
+    identity, _, reason = portal.redeem_link(link_id, secret_of(url), "")
     assert identity == ""
     assert "browser" in reason
-    identity, _ = portal.redeem_link(link_id, secret_of(url), "wrong-nonce")
+    identity = portal.redeem_link(link_id, secret_of(url), "wrong-nonce")[0]
     assert identity == ""
 
     # The browser that asked for it.
@@ -280,3 +280,90 @@ def test_session_cookie_is_httponly_and_samesite(portal):
     assert "HttpOnly" in source and "SameSite=Lax" in source
 
 
+
+
+# --- agent-minted links --------------------------------------------------------
+
+
+def test_agent_session_cannot_approve_memories(portal):
+    """The one capability that actually matters.
+
+    The review gate is the assistant's only route to durable memory. If a link
+    it minted could approve, it would be writing its own long-term memory with
+    no human in the loop.
+    """
+    for cap in ("memory:decide_own", "memory:decide_household",
+                "connector:disconnect_own"):
+        assert not portal.can(portal.ADMIN, cap, portal.ORIGIN_AGENT)
+        assert portal.can(portal.ADMIN, cap, portal.ORIGIN_EMAIL)
+
+
+def test_agent_session_keeps_the_harmless_capabilities(portal):
+    """Withholding everything would make the feature pointless. Reading your
+    own memories and seeing connector status are things the assistant can
+    already do, so a link it made granting them costs nothing."""
+    for cap in ("memory:read_own", "connector:read_own"):
+        assert portal.can(portal.MEMBER, cap, portal.ORIGIN_AGENT)
+
+
+def test_unknown_origin_is_treated_as_agent(portal):
+    """A value read from disk that is missing or unrecognised must fail toward
+    less privilege, not more."""
+    assert not portal.can(portal.ADMIN, "memory:decide_own", "")
+    assert not portal.can(portal.ADMIN, "memory:decide_own", "something-else")
+
+
+def test_origin_survives_the_round_trip(portal):
+    url, link_id = portal.mint_link("alex", "http://x",
+                                    origin=portal.ORIGIN_AGENT)
+    identity, origin, reason = portal.redeem_link(link_id, secret_of(url))
+    assert (identity, origin, reason) == ("alex", portal.ORIGIN_AGENT, "")
+    sid = portal.new_session(identity, origin)
+    assert portal.load_session(sid)["origin"] == portal.ORIGIN_AGENT
+
+
+def test_operator_and_email_links_keep_full_rights(portal):
+    url, link_id = portal.mint_link("alex", "http://x")
+    _, origin, _ = portal.redeem_link(link_id, secret_of(url))
+    assert origin == portal.ORIGIN_OPERATOR
+    assert portal.can(portal.ADMIN, "memory:decide_own", origin)
+
+
+def test_decide_memory_refuses_an_agent_session(portal, monkeypatch):
+    monkeypatch.setattr(portal, "memory_call", lambda *a, **k: {
+        "proposals": [{"id": "p1", "scope": "alex"}]})
+    with pytest.raises(PermissionError):
+        portal.decide_memory("alex", portal.ADMIN, "p1", True,
+                             portal.ORIGIN_AGENT)
+    ok, _ = portal.decide_memory("alex", portal.ADMIN, "p1", True,
+                                 portal.ORIGIN_EMAIL)
+    assert ok is True
+
+
+def test_agent_endpoint_is_absent_when_unconfigured(portal):
+    """A capability nobody configured should not exist."""
+    assert portal.AGENT_TOKEN == ""
+
+
+def test_startup_warns_when_links_cannot_be_delivered(portal):
+    """The only place this failure can surface.
+
+    The sign-in page must answer identically for registered and unregistered
+    addresses, or it enumerates the household — so it cannot report that
+    delivery failed. Somebody is told a link is on its way and nothing arrives.
+    The portal ran for a day like this.
+    """
+    import inspect
+    source = inspect.getsource(portal.cmd_serve)
+    assert "IDENTITY_EMAILS and not SMTP_HOST" in source
+    assert "never sent" in source
+
+
+def test_delivery_failure_is_never_revealed_to_the_browser(portal):
+    """The other half of the same design: the operator learns, the visitor
+    does not."""
+    import inspect
+    source = inspect.getsource(portal.PortalHandler._request_link)
+    assert "sys.stderr.write" in source
+    # One response string, regardless of outcome.
+    assert source.count("told = ") == 1

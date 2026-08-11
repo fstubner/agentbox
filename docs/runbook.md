@@ -74,7 +74,7 @@ cover anyone, as every pre-identity grant does.
 
 ```
 cli/agentbox-invite create sam
-AGENTBOX_INVITE_ORIGIN=http://agentbox.local:8770 \
+AGENTBOX_INVITE_ORIGIN=http://127.0.0.1:8770 \
 AGENTBOX_GOOGLE_CLIENT_ID=<client id> \
   cli/agentbox-invite serve
 cli/agentbox invite complete <id>
@@ -169,7 +169,7 @@ memories the assistant proposed **about them** and manage their own
 connectors; admins additionally get operations.
 
 ```bash
-cli/agentbox-portal link sam --base-url http://agentbox.local:8771
+cli/agentbox-portal link sam --base-url http://127.0.0.1:8771
 ```
 
 Ordinarily people sign in themselves: they type their email address and a link
@@ -209,6 +209,119 @@ Env: `AGENTBOX_IDENTITY_EMAILS="alex:alex@example.com,sam:sam@example.com"`,
 `AGENTBOX_ADMINS=alex`, and `AGENTBOX_SMTP_*` for delivery. Without an SMTP
 host the portal still runs and links are minted; they just have to be handed
 over by the operator.
+
+### Speakers, and why they are not Home Assistant devices
+
+The Echoes are paired to the *host* over Bluetooth A2DP. There is no Home
+Assistant integration for a Bluetooth speaker — HA's Bluetooth support is for
+BLE sensors, not audio sinks — so no `media_player` entity exists or can be
+made to exist.
+
+What does exist is `cli/agentbox-speaker` on the host, reached two ways:
+
+- the assistant, through the `speak_aloud` tool
+- Home Assistant, through `rest_command.agentbox_speak` and the
+  `script.announce_*` wrappers (see `docs/reference/ha-announce-scripts.yaml`)
+
+Both land on the same quiet-hours clamp. An automation firing at 3am is refused
+for the same reason a tool call is — which is the argument for putting that
+clamp in the service rather than in `approval-policy.yaml`, since a policy file
+governs only one of these two callers.
+
+The per-room scripts exist so each can be assigned a Home Assistant **area**,
+which is the only place a room name can live for a device HA cannot see.
+Assign them under Settings → Areas.
+
+Speaker names are unverifiable by anything but a person. Bluetooth carries a
+MAC and an advertised name, and `Echo-7UP` is an Amazon string, not a location.
+They were wrong once, set from a guess, and the first test spoke in the wrong
+room.
+
+### Signing in to the portal
+
+```bash
+systemctl --user status agentbox-portal
+```
+
+On this box: **http://127.0.0.1:8771**. From a phone on the LAN: the box's
+address on port 8771. People sign in with their email; the operator can mint a
+link directly with `cli/agentbox-portal link <name>` for anyone whose address
+is not configured yet.
+
+#### The LAN address works for everything except Google consent
+
+This caught us out, so it is worth stating plainly. The portal is happy on a
+LAN address — magic links, memory review, connector status all work from a
+phone. **Google's consent redirect is the exception.** Google accepts a
+redirect URI only as loopback over http, or a real public-suffix domain over
+https. `agentbox.local` and a bare `192.168.x.x` are both refused by the
+console with "must end with a public top-level domain".
+
+Two ways out:
+
+- **Loopback.** Register `http://127.0.0.1:8771/google/callback` and do the
+  reconnect from a browser on the box itself. Simplest, and fine when the
+  operator is the one reconnecting.
+- **A real name over https.** A Tailscale `*.ts.net` host is the least work —
+  it is a genuine public domain with a real certificate, so
+  `https://agentbox.<tailnet>.ts.net/google/callback` is accepted, and it
+  works from a phone anywhere. Set `AGENTBOX_PORTAL_URL` to that.
+
+`agentbox validate` refuses a portal URL Google would reject, so this fails at
+config time rather than halfway through a consent screen in someone's browser.
+
+### Reconnecting or switching a Google account
+
+Scopes change. Drive, Drive activity and contacts were all added after Alex
+first consented, and every one returns `ACCESS_TOKEN_SCOPE_INSUFFICIENT`
+against a token minted before they existed. Before this flow the only fix was
+deleting the identity and starting over, which also orphaned their memories.
+
+The person starts it themselves at the portal under **Your accounts** →
+*Reconnect or switch account*. That sends them through Google's consent screen
+and captures an authorisation code.
+
+That is the whole flow. A timer picks it up within thirty seconds and
+finishes it — no command to run.
+
+```bash
+systemctl --user status agentbox-connectors.timer
+cli/agentbox connectors sync          # or do it now, by hand
+```
+
+There are still two processes, because the portal must not hold the Google
+client secret, write access to the env directory, or the docker socket: a
+LAN-reachable page that can run containers is the worst thing that could exist
+on this box. What changed is that the operator is no longer the *waiting* part.
+Requiring a human command per reconnect meant nobody could fix their own
+account without finding Alex, which defeats the point of self-service.
+
+**Authorisation codes expire in about ten minutes.** The timer runs well inside
+that; `reconnect` refuses a stale code with a plain message rather than letting
+Google return something opaque.
+
+Consent is bound to the requesting identity. A callback whose `state` does not
+match is refused — otherwise a crafted link could land someone else's
+authorisation code in this person's connector record, and whose mail Agentbox
+reads would be the attacker's choice.
+
+Disconnecting:
+
+```bash
+cli/agentbox identity disconnect sam
+```
+
+This revokes the credential **at Google** before removing the local copy.
+Deleting our copy alone is not disconnecting: the grant stays listed in their
+Google account and anyone who captured the token could still spend it. If
+revocation cannot be confirmed the command says so and tells you to check the
+account's connected apps by hand, rather than reporting an access that ended
+when it did not.
+
+`doctor` now probes each identity's Google credential and warns when one looks
+dead. A revoked token used to be invisible — `/health` stays green because the
+container is fine, and the first symptom was an opaque 403 during an unrelated
+task days later.
 
 ### What a private scope does and does not protect
 

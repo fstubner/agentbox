@@ -61,12 +61,88 @@ HTTP_TIMEOUT = int(os.environ.get("HA_TIMEOUT", "15"))
 SECURITY_DOMAINS = frozenset({"lock", "alarm_control_panel", "cover",
                               "garage_door", "vacuum", "camera"})
 
-# Comma-separated entity ids the operator has decided are safe to control.
-# Empty means control nothing, which is the right default for a service that
-# can act on the physical world.
+# Domains controllable without naming every entity.
+#
+# Requiring a per-entity list for lights was a third gate doing work the design
+# never asked for: approval-policy.yaml already tiers home_control_comfort as
+# `allowed`, and SECURITY_DOMAINS below already refuses the things that matter
+# whatever any list says. The practical effect was a house with thirty lights
+# where nobody maintains the list, so either nothing works or somebody pastes
+# everything in — including entities that should never have been there.
+#
+# light and scene only, and the line is drawn on consequence rather than
+# convenience:
+#
+#   light   reversible, visible, and its worst case is annoying
+#   scene   a named arrangement of the above, chosen by a human in advance
+#
+# Deliberately excluded, each for its own reason:
+#
+#   switch        a "switch" is whatever it is wired to — a heater, a pump, a
+#                 server. The domain name carries no information about risk.
+#   climate       costs money and affects a sleeping household; policy already
+#                 puts home_control_climate in approval_required.
+#   media_player  casting puts content on a screen other people can see, which
+#                 is why PRIVATE_SCREENS exists at all.
+#
+# Anything outside these domains still needs naming in HA_CONTROLLABLE_ENTITIES.
+CONTROLLABLE_DOMAINS = frozenset(
+    d.strip() for d in os.environ.get("HA_CONTROLLABLE_DOMAINS",
+                                      "light,scene").split(",")
+    if d.strip())
+
+# Individual entities allowed on top of the domains above — a media_player to
+# cast to, a specific switch someone has thought about.
 CONTROLLABLE = frozenset(
     e.strip() for e in os.environ.get("HA_CONTROLLABLE_ENTITIES", "").split(",")
     if e.strip())
+
+# Escape hatch the other way: an entity here is refused even if its domain is
+# allowed. For the light that is not really a light, or the one in a room
+# somebody wants left alone.
+NOT_CONTROLLABLE = frozenset(
+    e.strip() for e in os.environ.get("HA_DENIED_ENTITIES", "").split(",")
+    if e.strip())
+
+
+def _entity_ids_in(config) -> set[str]:
+    """Every entity id mentioned anywhere in an automation, at any depth.
+
+    The validator needs the permitted set, and that set now depends on the
+    entities the automation actually names rather than on a fixed list.
+    """
+    found: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("entity_id", "entity") and isinstance(value, str):
+                    found.add(value)
+                elif key in ("entity_id", "entity") and isinstance(value, list):
+                    found.update(v for v in value if isinstance(v, str))
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(config)
+    return found
+
+
+def is_controllable(entity_id: str) -> bool:
+    """Whether this bridge may act on `entity_id`.
+
+    Order matters and is deliberate: the hard domain refusal wins over
+    everything, then the explicit deny list, then domain or entity permission.
+    A deny that could be overridden by an allow is not a deny.
+    """
+    domain = (entity_id or "").split(".")[0]
+    if not domain or domain in SECURITY_DOMAINS:
+        return False
+    if entity_id in NOT_CONTROLLABLE:
+        return False
+    return domain in CONTROLLABLE_DOMAINS or entity_id in CONTROLLABLE
 
 LEAN_FIELDS = ("entity_id", "state", "friendly_name")
 
@@ -185,7 +261,7 @@ def require_controllable(entity_id: str, expected_domains: tuple[str, ...]) -> N
         raise BridgeError(400, f"'{entity_id}' is a {domain}; this tool controls "
                                f"{' or '.join(expected_domains)}")
 
-    if entity_id not in CONTROLLABLE:
+    if not is_controllable(entity_id):
         raise BridgeError(
             403, f"'{entity_id}' is not in the operator's controllable list. "
                  f"Reading it is fine; acting on it needs the operator to add "
@@ -242,8 +318,13 @@ def list_entities(handler, body):
     page = flattened[:limit]
     if view == "lean":
         page = project_fields(page, LEAN_FIELDS)
+    # Computed from what actually exists rather than echoing the config: a
+    # domain rule permits entities nobody has listed, so the configured value
+    # no longer answers "what may I act on?".
+    controllable = sorted(e["entity_id"] for e in flattened
+                          if is_controllable(e.get("entity_id", "")))
     return 200, {"entities": page, "total": total, "returned": len(page),
-                 "controllable": sorted(CONTROLLABLE)}
+                 "controllable": controllable}
 
 
 def get_entity(handler, body):
@@ -342,7 +423,11 @@ def create_automation(handler, body):
         raise BridgeError(400, "automation must be an object")
 
     try:
-        summary = automation.validate(json.dumps(config), config, CONTROLLABLE)
+        # Stored automations run unattended, so they are checked against the
+        # same rule a live call is — including the domain permission, or a
+        # light the assistant may switch now could not be put in an automation.
+        allowed = {e for e in _entity_ids_in(config) if is_controllable(e)}
+        summary = automation.validate(json.dumps(config), config, allowed)
     except automation.AutomationRefused as exc:
         raise BridgeError(403, str(exc)) from None
 

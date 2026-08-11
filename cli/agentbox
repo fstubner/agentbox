@@ -17,8 +17,8 @@ import os
 import re
 import shutil
 import subprocess
-import time
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -458,6 +458,174 @@ def _agent_can(action: str, path: str) -> bool | None:
     return result.returncode == 0
 
 
+RULES_DIR = Path(os.environ.get(
+    "AGENTBOX_RULES_DIR",
+    os.path.expanduser("~/.local/state/agentbox/policy-state/rules")))
+
+
+def _rules() -> list[dict]:
+    out = []
+    if not RULES_DIR.is_dir():
+        return out
+    for path in sorted(RULES_DIR.glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        record["_path"] = str(path)
+        out.append(record)
+    return out
+
+
+def rules_list() -> int:
+    """Show standing rules and what each one actually does.
+
+    Printed in full rather than summarised. A rule is the assistant's only way
+    to cause something to happen when nobody is watching, so the person
+    deciding needs to read the whole thing, not a description of it.
+    """
+    found = _rules()
+    if not found:
+        print("no rules")
+        return 0
+    for record in found:
+        state = "ACTIVE " if record.get("active") else "inactive"
+        print(f"[{state}] {record.get('name')}  (as {record.get('identity')})")
+        if record.get("description"):
+            print(f"          {record['description']}")
+        when = record.get("when", {})
+        print(f"          when: {when}")
+        for predicate in record.get("if") or []:
+            print(f"          if:   {predicate}")
+        for action in record.get("do") or []:
+            print(f"          do:   {action.get('tool')} {action.get('args')}")
+        print()
+    print("activate with: cli/agentbox rules approve <name>")
+    return 0
+
+
+def rules_decide(name: str, activate: bool) -> int:
+    for record in _rules():
+        if record.get("name") != name:
+            continue
+        path = Path(record.pop("_path"))
+        record["active"] = activate
+        record["decided_at"] = int(time.time())
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        report(OK, f"{'activated' if activate else 'deactivated'} rule "
+                   f"'{name}'")
+        if activate:
+            report(WARN, "this rule now runs unattended, as "
+                         f"{record.get('identity')}, until deactivated")
+        return 0
+    report(FAIL, f"no rule named '{name}'")
+    return 1
+
+
+def rules_remove(name: str) -> int:
+    for record in _rules():
+        if record.get("name") == name:
+            Path(record["_path"]).unlink()
+            report(OK, f"removed rule '{name}'")
+            return 0
+    report(FAIL, f"no rule named '{name}'")
+    return 1
+
+
+def portal_email_delivery() -> int:
+    """Warn when the portal can mint sign-in links but cannot deliver them.
+
+    This failure is invisible by construction. The sign-in page must answer
+    identically for a registered and an unregistered address, or it becomes a
+    way to enumerate who lives here — so it cannot report that delivery failed.
+    Somebody asks for a link, is told one is on its way, and nothing arrives.
+
+    Found the hard way: the portal ran for a day with addresses configured and
+    no SMTP host.
+    """
+    unit_env = {}
+    result = subprocess.run(
+        ["systemctl", "--user", "show", "agentbox-portal", "-p", "Environment"],
+        capture_output=True, text=True, timeout=20, check=False)
+    for chunk in (result.stdout or "").replace("Environment=", "").split():
+        key, _, value = chunk.partition("=")
+        unit_env[key] = value
+    if not unit_env.get("AGENTBOX_IDENTITY_EMAILS"):
+        return 0
+    if unit_env.get("AGENTBOX_SMTP_HOST"):
+        report(OK, "portal can deliver sign-in links by email")
+        return 0
+    report(WARN, "portal has addresses configured but no AGENTBOX_SMTP_HOST — "
+                 "sign-in links are minted and never sent, and the page cannot "
+                 "say so. Use: cli/agentbox-portal link <name>")
+    return 0
+
+
+def portal_redirect_uri() -> int:
+    """Fail early if the portal's OAuth redirect is one Google will refuse.
+
+    Registering it is a console step nobody can automate, so the least this can
+    do is not send an operator to register something impossible. It sent them
+    twice: both the invite page and the portal documented an agentbox.local
+    URI, which Google rejects outright.
+    """
+    url = os.environ.get("AGENTBOX_PORTAL_URL", "")
+    if not url:
+        return 0
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in ("127.0.0.1", "::1", "localhost"):
+        if parsed.scheme != "http":
+            report(FAIL, "loopback portal URLs must use http for Google OAuth")
+            return 1
+        return 0
+    if parsed.scheme != "https" or host.endswith(".local") or "." not in host:
+        report(FAIL, f"AGENTBOX_PORTAL_URL={url} cannot be registered as a "
+                     f"Google redirect URI. Google accepts loopback over http, "
+                     f"or a real public domain over https — .local and bare "
+                     f"hostnames are refused by the console.")
+        return 1
+    return 0
+
+
+def connector_credentials() -> int:
+    """Check each identity's Google credential still works.
+
+    A refresh token revoked at Google leaves this box holding a dead
+    credential, and nothing notices: /health stays green because the container
+    is fine, and the first symptom is an opaque 403 during an unrelated task
+    days later. That exact failure already happened once on the shared bridge,
+    which is why the bridge grew an upstream_status probe — this extends it to
+    the per-identity bridges, which nothing was checking.
+
+    Warns rather than fails: a disconnected account is a legitimate state, not
+    a broken deployment. The point is that it should be *visible*.
+    """
+    directory = Path(env_dir())
+    for env_path in sorted(directory.glob("*-google-bridge.env")):
+        identity = env_path.name[:-len("-google-bridge.env")]
+        container = f"{identity}-google-bridge"
+        result = subprocess.run(
+            ["docker", "exec", container, "python", "-c",
+             "import json,urllib.request;"
+             "print(urllib.request.urlopen("
+             "'http://127.0.0.1:8080/ready', timeout=10).read().decode())"],
+            capture_output=True, text=True, timeout=60, check=False)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()[:120]
+            report(WARN, f"{identity}'s google bridge did not answer: {detail}")
+            continue
+        if '"ok": true' in result.stdout.lower() or '"ok":true' in result.stdout.lower():
+            report(OK, f"{identity}'s google credential is live")
+        else:
+            report(WARN, f"{identity}'s google credential looks dead — they "
+                         f"can reconnect at the portal, then run: "
+                         f"cli/agentbox identity reconnect {identity}")
+    # Always zero. A disconnected account is a legitimate state rather than a
+    # broken deployment, so this reports and never fails the run.
+    return 0
+
+
 def assistant_containment() -> int:
     """Verify the assistant still cannot rewrite what constrains it.
 
@@ -625,6 +793,9 @@ def doctor() -> int:
     bad += deploy_freshness()
     bad += bridge_readiness()
     bad += assistant_containment()
+    bad += connector_credentials()
+    bad += portal_redirect_uri()
+    bad += portal_email_delivery()
     bad += gateway_tool_visibility()
     bad += validate()
     return 1 if bad else 0
@@ -1122,7 +1293,7 @@ def approvals_list() -> int:
         age = now - int(record.get("requested_at", now))
         print(f"{record.get('tool'):28} {record.get('capability') or '(unmapped)':28} "
               f"{age // 60}m ago")
-    print(f"\napprove with: agentbox grant <tool> --ttl 15m")
+    print("\napprove with: agentbox grant <tool> --ttl 15m")
     return 0
 
 
@@ -1464,6 +1635,167 @@ def provision_google_bridge(identity: str, refresh_token: str) -> bool:
     return True
 
 
+def portal_requests(identity: str = "") -> list[dict]:
+    """Connector requests people raised in the portal, oldest first."""
+    directory = Path(os.environ.get(
+        "AGENTBOX_PORTAL_DIR",
+        os.path.expanduser("~/.local/state/agentbox/portal"))) / "requests"
+    if not directory.is_dir():
+        return []
+    out = []
+    for entry in sorted(directory.glob("*.json")):
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        record["_path"] = str(entry)
+        if record.get("completed_at"):
+            continue
+        if identity and record.get("identity") != identity:
+            continue
+        out.append(record)
+    return out
+
+
+def _mark_request_done(record: dict) -> None:
+    path = Path(record.pop("_path", ""))
+    if not path:
+        return
+    record["completed_at"] = int(time.time())
+    record.pop("code", None)          # spent, and no reason to keep it on disk
+    try:
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def revoke_google_token(refresh_token: str) -> bool:
+    """Tell Google to invalidate the credential.
+
+    Deleting our copy is not disconnecting: the grant would still be listed in
+    the person's Google account, and anyone who had captured the token could
+    still spend it. Revoking upstream is the part that actually ends access.
+    """
+    if not refresh_token:
+        return False
+    body = urllib.parse.urlencode({"token": refresh_token}).encode()
+    request = urllib.request.Request(
+        "https://oauth2.googleapis.com/revoke", data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            return True
+    except urllib.error.HTTPError as exc:
+        # 400 invalid_token means it was already dead — the desired end state.
+        return exc.code == 400
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def connectors_sync(quiet: bool = False) -> int:
+    """Complete every connector request people raised in the portal.
+
+    This exists because the two-phase split was solving the right problem the
+    wrong way round. The portal must not hold the docker socket — a
+    LAN-reachable page that can run containers is the worst thing on this box.
+    But making the *operator* the manual step meant Sam could not reconnect her
+    own account without finding Alex, which defeats the point of a
+    self-service portal.
+
+    So the privilege stays here and the waiting goes away: this runs on a timer
+    as the operator's own user, picks up what the portal spooled, and finishes
+    it. The portal still holds no secret and no socket. The person just does not
+    have to ask anyone.
+
+    Timer interval matters: Google expires authorisation codes at about ten
+    minutes, so anything under a couple of minutes is fine and thirty seconds
+    is comfortable.
+    """
+    pending = portal_requests()
+    if not pending:
+        if not quiet:
+            report(OK, "no connector requests waiting")
+        return 0
+    failures = 0
+    for record in pending:
+        identity = str(record.get("identity", ""))
+        action = str(record.get("action", ""))
+        if not identity:
+            continue
+        if action == "reconnect" and record.get("code"):
+            if identity_reconnect(identity) != 0:
+                failures += 1
+        elif action == "disconnect":
+            if identity_disconnect(identity) != 0:
+                failures += 1
+    if failures:
+        report(WARN, f"{failures} connector request(s) could not be completed")
+    return 0
+
+
+def identity_reconnect(name: str) -> int:
+    """Finish a reconnect the portal started.
+
+    The portal captured an authorisation code; this exchanges it with the
+    client secret, which is why the two halves exist. Codes expire in about
+    ten minutes.
+    """
+    pending = [r for r in portal_requests(name)
+               if r.get("action") == "reconnect" and r.get("code")]
+    if not pending:
+        report(WARN, f"no pending reconnect for {name}; they start one at "
+                     f"the portal under 'Your accounts'")
+        return 1
+    record = pending[-1]
+    age = int(time.time()) - int(record.get("created_at", 0))
+    if age > 600:
+        report(FAIL, f"that authorisation code is {age // 60} minutes old and "
+                     f"Google expires them at about ten. Ask {name} to press "
+                     f"Reconnect again.")
+        return 1
+    token = exchange_oauth_code(record["code"], record.get("redirect_uri", ""))
+    if not token:
+        return 1
+    if not provision_google_bridge(name, token):
+        return 1
+    _mark_request_done(record)
+    report(OK, f"reconnected {name}'s Google account")
+    report(OK, "run: cli/agentbox deploy agentbox-mcp   (to pick up routing)")
+    return 0
+
+
+def identity_disconnect(name: str) -> int:
+    """Revoke a person's Google credential and remove it from this box."""
+    env_path = Path(env_dir()) / f"{name}-google-bridge.env"
+    if not env_path.exists():
+        report(WARN, f"{name} has no Google bridge of their own; nothing to "
+                     f"disconnect")
+        return 1
+    values = read_env_file(env_path)
+    if revoke_google_token(values.get("GOOGLE_REFRESH_TOKEN", "")):
+        report(OK, "credential revoked at Google")
+    else:
+        report(WARN, "could not confirm revocation at Google; removing the "
+                     "local copy anyway, but check the account's connected "
+                     "apps by hand")
+    subprocess.run(["docker", "compose", "-p", f"{name}-google-bridge", "down"],
+                   capture_output=True, text=True, timeout=120, check=False)
+    try:
+        env_path.unlink()
+    except OSError:
+        pass
+    suffix = name.upper().replace("-", "_")
+    gateway_env = Path(env_dir()) / "agentbox-mcp.env"
+    for key in (f"GOOGLE_BRIDGE_URL_{suffix}", f"GOOGLE_BRIDGE_TOKEN_{suffix}"):
+        write_env_value(gateway_env, key, "")
+    for record in portal_requests(name):
+        if record.get("action") == "disconnect":
+            _mark_request_done(record)
+    report(OK, f"disconnected {name}'s Google account")
+    report(OK, "run: cli/agentbox deploy agentbox-mcp")
+    return 0
+
+
 def invite_complete(token_id: str) -> int:
     """Turn a submitted invite into a working identity."""
     record = _invite(token_id)
@@ -1492,7 +1824,7 @@ def invite_complete(token_id: str) -> int:
         if provision_vikunja_user(name, password):
             report(OK, f"created vikunja user '{name}'")
             print(f"      one-time password: {password}")
-            print(f"      Give her this once; she changes it on first login.")
+            print("      Give her this once; she changes it on first login.")
 
     if "google" in chosen:
         code = record.get("google_code", "")
@@ -1511,9 +1843,9 @@ def invite_complete(token_id: str) -> int:
                 print(f"      Store it: op item edit Agentbox/google-{name} "
                       f"--refresh_token=<from "
                       f"{name}-google-bridge.env>")
-                print(f"      She has no writable calendar yet — set "
-                      f"GOOGLE_ALLOWED_WRITE_CALENDAR_ID in that env file "
-                      f"if she wants one.")
+                print("      She has no writable calendar yet — set "
+                      "GOOGLE_ALLOWED_WRITE_CALENDAR_ID in that env file "
+                      "if she wants one.")
 
     record["completed_at"] = int(time.time())
     # The secret is spent; there is no reason to keep it on disk.
@@ -1941,6 +2273,24 @@ def main() -> None:
     ida.add_argument("name")
     idr = idn_sub.add_parser("remove")
     idr.add_argument("name")
+    idrc = idn_sub.add_parser("reconnect",
+                              help="finish a reconnect started in the portal")
+    idrc.add_argument("name")
+    idd = idn_sub.add_parser("disconnect",
+                             help="revoke and remove a Google connection")
+    idd.add_argument("name")
+    rul = sub.add_parser("rules", help="standing rules the assistant proposed")
+    rul_sub = rul.add_subparsers(dest="rules_cmd", required=True)
+    rul_sub.add_parser("list")
+    for verb in ("approve", "reject", "remove"):
+        pr_ = rul_sub.add_parser(verb)
+        pr_.add_argument("name")
+    con = sub.add_parser("connectors",
+                         help="complete connector requests raised in the portal")
+    con_sub = con.add_subparsers(dest="connectors_cmd", required=True)
+    cs = con_sub.add_parser("sync")
+    cs.add_argument("--quiet", action="store_true",
+                    help="say nothing when there is nothing to do")
     pr = sub.add_parser("proposals", help="review code changes the assistant has proposed")
     pr_sub = pr.add_subparsers(dest="proposals_cmd", required=True)
     pr_sub.add_parser("list")
@@ -2006,7 +2356,27 @@ def main() -> None:
             sys.exit(identity_list())
         if args.identity_cmd == "add":
             sys.exit(identity_add(args.name))
-        sys.exit(identity_remove(args.name))
+        if args.identity_cmd == "reconnect":
+            sys.exit(identity_reconnect(args.name))
+        if args.identity_cmd == "disconnect":
+            sys.exit(identity_disconnect(args.name))
+        # Explicit rather than a fallthrough. `remove` deletes an identity, and
+        # reaching it by default meant any subcommand added later without a
+        # branch here would silently delete instead of erroring.
+        if args.identity_cmd == "remove":
+            sys.exit(identity_remove(args.name))
+        report(FAIL, f"unknown identity subcommand: {args.identity_cmd}")
+        sys.exit(2)
+    if args.cmd == "rules":
+        if args.rules_cmd == "list":
+            sys.exit(rules_list())
+        if args.rules_cmd == "approve":
+            sys.exit(rules_decide(args.name, True))
+        if args.rules_cmd == "reject":
+            sys.exit(rules_decide(args.name, False))
+        sys.exit(rules_remove(args.name))
+    if args.cmd == "connectors":
+        sys.exit(connectors_sync(args.quiet))
     if args.cmd == "proposals":
         if args.proposals_cmd == "list":
             sys.exit(proposals_list())

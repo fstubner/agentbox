@@ -272,14 +272,20 @@ elicitation handling at all. Until then approval runs out of band through
 
 ## Also outstanding, smaller
 
-- **No end-to-end test.** All tests are unit-level against fixtures; nothing
+- **End-to-end tests exist as of 2026-08-08** (`tests/test_integration.py`),
+  aimed at seams rather than units: every session bug was two components that
+  each worked and disagreed with each other, and a fixture on both sides of a
+  seam passes while the seam is broken. They skip when the system is not
+  running, so CI stays green on a machine with no containers. What remains
+  untested is *duration* — nothing yet proves a week of real use.
+- **Superseded:** All tests are unit-level against fixtures; nothing
   exercises MCP → bridge → upstream against the running system.
 - **Backup is not scheduled.** `agentbox backup` works and is restore-verified;
   nothing runs it.
 - **No traffic.** The request log holds only test calls, which blocks the
   `view=lean` A/B and every measurement that depends on real use.
 
-### 11. Cross-service rules — a designed grammar, not n8n
+### 11. Cross-service rules — a designed grammar, not n8n — **grammar built 2026-08-08**
 
 Decided 2026-08-04, and the reasoning is the platform's own principle stated
 sharply by the operator: **tools are designed surfaces, not wrappers.** We
@@ -311,6 +317,19 @@ else the assistant authors.
 Ordering: after the MCP consolidation (the evaluator belongs behind the same
 gateway) and after two accounts (a rule fires as *someone*; building it
 single-user first would mean retrofitting identity into stored rules).
+
+**Built 2026-08-08:** the grammar, its validator, and the authoring path.
+`propose_rule` checks a rule completely at authoring time and stores it inert;
+`agentbox rules approve` activates it. Rules can only call tools the assistant
+already has, because the tool list is read from the live registry rather than a
+second list somebody keeps in step.
+
+**Still to build: the evaluator's event source.** `matches()` and
+`actions_for()` are done and tested, but nothing yet feeds them events. Home
+Assistant would push state changes to a gateway endpoint; the `schedule` source
+needs a timer. Until then a rule can be authored, reviewed and activated, and
+will not fire — which is inert-but-honest rather than half-working, and the
+`rules list` output says so.
 
 ### 12. Close the shell gap — **done 2026-08-05**
 

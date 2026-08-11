@@ -1,0 +1,80 @@
+# Self-service portal: memories and connected accounts.
+#
+# Runs as the OPERATOR's systemd user instance, never as the agentbox user.
+# Same property as the approval loop, and for a stronger reason: this process
+# holds MEMORY_REVIEW_TOKEN, which approves any memory proposal. If the
+# assistant could start, stop, signal or share a uid with it, the review gate
+# would be a formality — self-approval is exactly what that gate prevents.
+#
+# Install:
+#   cp cli/agentbox-portal.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-portal
+#   sudo loginctl enable-linger "$USER"
+#
+# Then sign in at http://127.0.0.1:8771 on this box, or at the LAN address
+# from a phone. See docs/runbook.md — the LAN address works for everything
+# except the Google consent redirect, which Google will only accept on
+# loopback or a real https domain.
+
+[Unit]
+Description=Agentbox self-service portal
+After=network-online.target
+Wants=network-online.target
+
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Credentials, read from the operator's env dir rather than duplicated here:
+# MEMORY_BRIDGE_TOKEN and MEMORY_REVIEW_TOKEN from the first, GOOGLE_CLIENT_ID
+# from the second. A leading dash means "skip if absent", so a box without
+# Google configured still gets a working memory portal.
+EnvironmentFile=-%h/.config/agent-control-plane/memory-bridge.env
+EnvironmentFile=-%h/.config/agent-control-plane/google-workspace-bridge.env
+
+# Who is an admin. Everyone else is a member: their own memories and their own
+# connectors, no operations. Empty would mean nobody is an admin, which is the
+# right direction for a misread value to fail in.
+Environment=AGENTBOX_ADMINS=alex
+
+# Sign-in addresses. An address here is not a credential — it only decides
+# where a magic link is sent, and the link is useless in another browser.
+Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
+
+# Delivery for sign-in links. Without a host here, links are minted and never
+# sent — and the sign-in page cannot say so, because answering differently for
+# a registered address would reveal who lives here. `agentbox doctor` warns
+# instead.
+#
+# Gmail needs an app password (myaccount.google.com/apppasswords), not the
+# account password, and that needs 2FA switched on. Put it in the env file
+# below rather than here:
+#   AGENTBOX_SMTP_HOST=smtp.gmail.com
+#   AGENTBOX_SMTP_USER=you@gmail.com
+#   AGENTBOX_SMTP_PASSWORD=<app password>
+EnvironmentFile=-%h/.config/agent-control-plane/portal-smtp.env
+
+# The address links point at, and the base of the Google redirect URI.
+# Loopback by default because Google refuses .local and bare LAN hostnames
+# outright; `agentbox validate` fails if this is set to something the console
+# will not accept.
+Environment=AGENTBOX_PORTAL_URL=http://127.0.0.1:8771
+
+# Bound to all interfaces so a phone on the LAN can reach it. The magic-link
+# flow is what protects it, not the network boundary.
+ExecStart=%h/oss/agentbox/cli/agentbox-portal serve --host 0.0.0.0 --port 8771
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Links, sessions, and pending connector requests.
+ReadWritePaths=%h/.local/state/agentbox
+
+[Install]
+WantedBy=default.target

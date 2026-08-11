@@ -1,0 +1,118 @@
+# AppArmor profile for the Home Assistant container.
+#
+# This is Docker's `docker-default` profile, copied verbatim, plus the D-Bus
+# rules Bluetooth needs and nothing else.
+#
+# ## Why a custom profile rather than apparmor=unconfined
+#
+# Home Assistant already runs with host networking, a mounted system D-Bus
+# socket, NET_ADMIN and NET_RAW. Each of those is individually defensible and
+# together they make it the most privileged container on this box — and it is
+# the one service deliberately reachable from the LAN. Turning off its last
+# default confinement on top of that stack is a bigger step than it looks.
+#
+# `docker-default` carries no dbus rule at all, and AppArmor denies what a
+# profile does not permit, so every D-Bus call was refused at the handshake:
+#
+#   apparmor="DENIED" operation="dbus_method_call" member="Hello"
+#
+# `Hello` is the first message a client sends, which is why the symptom was an
+# EOFError with no useful detail behind it.
+#
+# So: keep every restriction docker-default imposes, and add the smallest set
+# of D-Bus rules that lets BlueZ work. Bluetooth becomes possible; nothing else
+# does.
+#
+# ## Install
+#
+#   sudo cp services/apparmor/agentbox-homeassistant /etc/apparmor.d/
+#   sudo apparmor_parser -r -W /etc/apparmor.d/agentbox-homeassistant
+#
+# The compose file names it via security_opt. `apparmor_parser -r` is idempotent
+# and safe to re-run; the profile survives reboot because it lives in
+# /etc/apparmor.d.
+
+#include <tunables/global>
+
+profile agentbox-homeassistant flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # --- docker-default, unchanged --------------------------------------------
+  deny @{PROC}/* w,
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9]*}/** w,
+  deny @{PROC}/sys/[^k]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  deny mount,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  ptrace (trace,read,tracedby,readby) peer=agentbox-homeassistant,
+
+  # --- the only addition: D-Bus for BlueZ -----------------------------------
+  #
+  # Scoped to what a Bluetooth client actually does. Note there is no blanket
+  # `dbus,` rule: the container may speak to the bus daemon itself and to
+  # org.bluez, and to nothing else on the system bus. systemd, NetworkManager,
+  # logind and the rest stay unreachable, which is the entire reason for
+  # writing this file instead of unconfining.
+
+  # Connect and register. Without these the handshake fails at Hello.
+  dbus send
+       bus=system
+       path=/org/freedesktop/DBus
+       interface=org.freedesktop.DBus
+       member={Hello,AddMatch,RemoveMatch,GetNameOwner,NameHasOwner,ListNames,ListActivatableNames,StartServiceByName,ReleaseName,RequestName},
+
+  # Bus housekeeping signals (name ownership changes, disconnects).
+  dbus receive
+       bus=system
+       path=/org/freedesktop/DBus
+       interface=org.freedesktop.DBus,
+
+  # Talk to BlueZ: adapters, devices, GATT, advertising.
+  dbus (send,receive)
+       bus=system
+       peer=(name=org.bluez),
+
+  # BlueZ pushes device discovery over ObjectManager and Properties signals,
+  # which arrive from the bus rather than from a named peer.
+  dbus receive
+       bus=system
+       path=/org/bluez/**,
+
+  # Peer-scoped, not interface-scoped. An unscoped rule on these three
+  # interfaces permits introspecting *any* service on the bus — written that
+  # way first, and systemd1 and login1 were both reachable through it. Every
+  # standard interface must name its peer or it is a hole with a specific name
+  # on it.
+  #
+  # Order matters to the parser: peer= comes last. Getting it wrong is not
+  # silent but it is easy to miss — apparmor_parser rejects the file and leaves
+  # the *previous* profile loaded, so the container keeps running with whatever
+  # was there before while the edit appears to have been applied.
+  dbus (send,receive)
+       bus=system
+       interface=org.freedesktop.DBus.{Properties,ObjectManager,Introspectable}
+       peer=(name=org.bluez),
+
+  # Agents and profiles BlueZ calls back into live under the client's own
+  # object tree, so it must be able to receive those calls.
+  dbus (send,receive)
+       bus=system
+       interface=org.bluez.{Agent1,Profile1,GattService1,GattCharacteristic1,GattDescriptor1,LEAdvertisement1}
+       peer=(name=org.bluez),
+}

@@ -1,0 +1,21 @@
+# Completes connector requests raised in the portal.
+#
+# Install:
+#   cp cli/agentbox-connectors.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-connectors.timer
+#
+# Thirty seconds because Google expires authorisation codes at about ten
+# minutes. Anything under a couple of minutes is comfortable; the cost of a
+# tick is one directory listing that is almost always empty.
+
+[Unit]
+Description=Finish Agentbox connector requests
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=30
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target

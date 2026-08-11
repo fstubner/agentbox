@@ -4,7 +4,14 @@ services:
       context: ../../..
       dockerfile: services/compose/agentbox-mcp/Dockerfile
     image: agentbox/agentbox-mcp:local
+    # The speakers are Bluetooth devices on the host, not something a container
+    # can hold, so the speaker service runs there and this reaches it by name.
+    # Same arrangement as the Home Assistant bridge reaching Home Assistant.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
+      AGENTBOX_SPEAKER_URL: "${AGENTBOX_SPEAKER_URL:-http://host.docker.internal:8772}"
+      AGENTBOX_SPEAKER_TOKEN: "${AGENTBOX_SPEAKER_TOKEN:-}"
       # Identity-aware auth. `alex:tokenA,sam:tokenB` — the presented token
       # IS the identity, resolved before any tool runs and never taken from a
       # tool argument. Leave empty for single-operator, which falls back to

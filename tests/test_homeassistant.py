@@ -31,12 +31,18 @@ POLICY = REPO / "policies" / "approval-policy.yaml"
 
 
 def load_bridge(controllable: str = "", url: str = "http://ha.test:8123",
-                token: str = "t"):
+                token: str = "t", domains: str | None = None,
+                denied: str = ""):
     os.environ["HA_CONTROLLABLE_ENTITIES"] = controllable
+    os.environ["HA_DENIED_ENTITIES"] = denied
+    if domains is None:
+        os.environ.pop("HA_CONTROLLABLE_DOMAINS", None)
+    else:
+        os.environ["HA_CONTROLLABLE_DOMAINS"] = domains
     os.environ["HA_URL"] = url
     os.environ["HA_TOKEN"] = token
     spec = importlib.util.spec_from_file_location(
-        f"ha_bridge_{abs(hash(controllable))}",
+        f"ha_bridge_{abs(hash((controllable, domains, denied)))}",
         REPO / "services" / "compose" / "homeassistant-bridge" / "app" / "bridge.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -101,11 +107,42 @@ def test_there_is_no_general_call_service_route(ha):
 # --- the allowlist -------------------------------------------------------------
 
 
+@pytest.fixture
+def ha_denied():
+    return load_bridge(controllable="", denied="light.study")
+
+
 def test_an_entity_outside_the_allowlist_is_refused(ha):
+    """A switch is not covered by the light/scene domain default, because a
+    switch is whatever it is wired to — a heater, a pump, a server."""
     with pytest.raises(ha.BridgeError) as exc:
-        ha.require_controllable("light.bedroom", ("light", "switch"))
+        ha.require_controllable("switch.boiler", ("light", "switch"))
     assert exc.value.status == 403
     assert "controllable list" in exc.value.message
+
+
+def test_lights_and_scenes_are_controllable_without_being_listed(ha):
+    """Changed deliberately. approval-policy.yaml already tiers
+    home_control_comfort as `allowed`, and SECURITY_DOMAINS already refuses
+    what matters whatever any list says, so a per-entity list for lights was a
+    third gate the design never asked for. In a house with thirty lights it
+    goes unmaintained, and then either nothing works or somebody pastes in
+    everything — including entities that should never have been there."""
+    ha.require_controllable("light.bedroom", ("light", "switch"))
+    ha.require_controllable("scene.evening", ("scene", "script"))
+
+
+def test_a_denied_entity_beats_its_domain(ha_denied):
+    """A deny that an allow can override is not a deny."""
+    with pytest.raises(ha_denied.BridgeError):
+        ha_denied.require_controllable("light.study", ("light", "switch"))
+    ha_denied.require_controllable("light.kitchen", ("light", "switch"))
+
+
+def test_security_domains_still_win_over_everything(ha):
+    """The hard refusal is above both the domain rule and the allowlist."""
+    for entity in ("lock.front", "alarm_control_panel.house", "camera.hall"):
+        assert ha.is_controllable(entity) is False
 
 
 def test_an_allowlisted_entity_passes(ha):
@@ -113,10 +150,14 @@ def test_an_allowlisted_entity_passes(ha):
     ha.require_controllable("scene.evening", ("scene", "script"))
 
 
-def test_an_empty_allowlist_controls_nothing():
-    """The default. A service that acts on the physical world should start
-    unable to."""
-    ha = load_bridge(controllable="")
+def test_control_can_still_be_turned_off_entirely():
+    """Domain defaults must not remove the ability to control nothing.
+
+    Someone who deliberately wants a read-only Home Assistant should still get
+    one, and this is the setting that does it — the default changed, the option
+    did not disappear.
+    """
+    ha = load_bridge(controllable="", domains="")
     with pytest.raises(ha.BridgeError):
         ha.require_controllable("light.kitchen", ("light", "switch"))
 

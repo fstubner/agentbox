@@ -83,9 +83,17 @@ def rpc(base, method, params=None, token=None):
 
 
 def test_every_integration_contributes_tools(gw):
+    """Derived from the registry rather than a hardcoded list.
+
+    A snapshot here fails on every new integration and gets "fixed" by pasting
+    the name in, which tests nothing. The property worth holding is that
+    something registered contributes tools — a module wired in but silently
+    exporting none is the bug this catches.
+    """
     owners = set(gw.TOOL_OWNER.values())
-    assert owners == {"vikunja", "memory", "google", "builder", "homeassistant"}
+    assert owners == set(gw.INTEGRATIONS)
     assert len(gw.TOOLS) == len(gw.TOOL_OWNER)
+    assert len(owners) >= 5
 
 
 def test_tool_names_are_unique_across_integrations(gw):

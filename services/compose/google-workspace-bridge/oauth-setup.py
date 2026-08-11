@@ -51,11 +51,46 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 # Derived from what app/bridge.py actually calls:
 #   gmail.modify  — read messages/labels, mark read, archive, apply labels
 #   calendar      — list calendars, read events, freebusy, create events
+#   drive.file    — create and read *only files this app created*
 # Keep this list minimal; widening it widens the blast radius of the token.
 SCOPES = (
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/drive.file",
+    # Read-only audit trail: who changed what, when. Cannot alter history, and
+    # cannot read file *contents* — a narrower thing than it sounds.
+    "https://www.googleapis.com/auth/drive.activity.readonly",
+    # Turns "someone edited the budget" into a name. Drive Activity returns a
+    # people/{id}, and only the People API maps that to a human.
+    #
+    # This reads the contact list, which is a real widening and worth being
+    # deliberate about — it is the difference between the assistant knowing who
+    # collaborates on a document and knowing everyone you have ever emailed.
+    # Activity queries work without it and simply say "someone", so a
+    # deployment that would rather not grant it loses a courtesy, not a feature.
+    "https://www.googleapis.com/auth/contacts.readonly",
+    # Workspace domains only; silently returns nothing on a personal account,
+    # where it costs nothing to have asked.
+    "https://www.googleapis.com/auth/directory.readonly",
 )
+
+# Opt-in, and the single most consequential choice in this file.
+#
+# drive.file (above) lets the assistant read and write the files it created and
+# nothing else — a boundary Google enforces, so it holds even if this bridge is
+# compromised. It cannot answer "find my tenancy agreement", because it cannot
+# see it.
+#
+# drive.readonly lets it read every file in the drive. That is what makes Drive
+# search useful and it is a genuinely large widening: tax returns, medical
+# letters, contracts. Set GOOGLE_ENABLE_DRIVE_READ_ALL=1 to request it, having
+# decided that on purpose.
+#
+# Note this is the *credential's* boundary, not a policy check. An approval
+# prompt on a tool call only helps if a human reads carefully every time; a
+# scope that was never granted cannot be spent at all.
+if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip() in ("1", "true", "yes"):
+    SCOPES = SCOPES + ("https://www.googleapis.com/auth/drive.readonly",)
 
 
 AUTH_FILES = (
