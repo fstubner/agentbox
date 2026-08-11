@@ -258,7 +258,49 @@ One constraint carries over from `docs/architecture.md`: FastContext-4B obeyed
 an instruction embedded in tool data in 10 of 10 attempts. Dispatching to the
 reasoner for verification is fine. Dispatching **externally-authored content**
 to the extractor is the exact path that document warns against, and it is also
-the most obvious use for it. Answer that before wiring the summarise case.
+the most obvious use for it.
+
+#### Answered 2026-08-08: constrain the dispatched model, not the instruction
+
+The tempting fix — put a safer model in front to sanitise the request before
+FastContext sees it — does not work, and the reason is worth stating because it
+generalises. **The injection is not in the instruction, it is in the data.**
+FastContext still has to read the attacker-authored email in order to summarise
+it, so guarding the instruction channel while the data channel stays open moves
+nothing. Worse, if the safe model must read the content to sanitise it, the
+expensive work is already done and there is nothing left for the fast model to
+contribute.
+
+Two constraints do work, and both are patterns already used elsewhere here.
+
+**The dispatched model holds no tools.** Its output is data returned to the
+orchestrator, never an action. An injected FastContext then produces a wrong
+summary rather than a wrong action — a privilege-escalation problem converted
+into an accuracy problem, which is a trade worth making because accuracy
+failures are visible and escalation failures are not.
+
+**Its output is schema-constrained and treated as untrusted.** Return typed
+fields — dates, enums, ids — and validate against the schema before anything
+downstream sees them. An injection can corrupt a value; it cannot smuggle
+"ignore your instructions" into the orchestrator's context, because that string
+is not a valid date. This is the camera `LOOK_PROMPTS` pattern generalised:
+closed vocabulary at both ends, so what comes back is checkable rather than
+merely readable. The `untrusted_text` naming on Drive and Gmail reads is the
+same idea one layer up.
+
+A classifier in front is defensible where the two above are not enough,
+**precisely because its output is one bit**. A boolean cannot carry an
+injection. It is still a model reading hostile text, so it buys containment
+rather than prevention — but a one-bit blast radius is a real reduction, unlike
+a sanitising rewrite that must reproduce the hostile content to work.
+
+So the dispatch table entry for the extractor is: no tools, typed output,
+schema-validated on return, and the result carried as untrusted input. The
+reasoner needs none of this for the verification case, which never sees
+externally-authored text.
+
+Remaining work: the dispatch table itself, the typed-output contract, and
+deciding which existing tools are worth routing. Nothing blocks it now.
 
 ### 9. Cloud escalation
 
