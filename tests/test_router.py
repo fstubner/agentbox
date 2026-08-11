@@ -131,3 +131,24 @@ def test_final_text_empty_choices(stack):
     _, mod = stack
     assert mod.final_text({"choices": []}) == ""
     assert mod.final_text({}) == ""
+
+
+def test_each_role_forwards_the_instruction(stack, monkeypatch):
+    """The seam the harness escalation depends on.
+
+    The harness sends its schema demand in `instruction` and escalates from the
+    context worker to the main model. `decide_orchestrate` silently dropped the
+    field, so the escalation target never saw the contract and every retry
+    failed validation. Assert all three roles actually forward it — a stub that
+    echoes the last 20 characters would not have caught this.
+    """
+    _, mod = stack
+    captured = {}
+    monkeypatch.setattr(mod, "chat",
+                        lambda base, model, messages, **k:
+                        captured.setdefault("user", messages[-1]["content"]))
+    marker = "RETURN-ONLY-JSON-abc123"
+    for handler in (mod.context_extract, mod.reason_check, mod.decide_orchestrate):
+        captured.clear()
+        handler({"text": "the email body", "instruction": marker})
+        assert marker in captured["user"], handler.__name__

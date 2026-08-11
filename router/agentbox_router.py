@@ -143,9 +143,17 @@ def decide_orchestrate(payload: dict[str, Any]) -> dict[str, Any]:
     messages = payload.get("messages")
     if not isinstance(messages, list):
         text = user_text(payload)
+        # Honour `instruction` the same way context/extract and reason/check do.
+        # Without this the field is silently dropped, which broke harness
+        # escalation: the extractor's schema demand ("return JSON with these
+        # keys") travels in `instruction`, so escalating here handed the main
+        # model a raw email with no contract and every retry failed validation.
+        # A caller that passes its own `messages` is untouched.
+        instruction = payload.get("instruction")
+        user_content = f"{instruction}\n\n--- INPUT ---\n{text}" if instruction else text
         messages = [
             {"role": "system", "content": "You are the main local agentbox model. Be direct and practical."},
-            {"role": "user", "content": text},
+            {"role": "user", "content": user_content},
         ]
     return chat(MAIN_BASE, MAIN_MODEL, messages, max_tokens=int(payload.get("max_tokens", 2048)))
 
