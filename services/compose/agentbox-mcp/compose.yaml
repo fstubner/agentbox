@@ -12,6 +12,14 @@ services:
     environment:
       AGENTBOX_SPEAKER_URL: "${AGENTBOX_SPEAKER_URL:-http://host.docker.internal:8772}"
       AGENTBOX_SPEAKER_TOKEN: "${AGENTBOX_SPEAKER_TOKEN:-}"
+
+      # The model router, also on the host. Unauthenticated because it is bound
+      # to loopback and offers no tools — the worst a caller can do is spend
+      # inference. See app/harness.py for why dispatching to a small model is
+      # safe here and would not be if that were untrue.
+      AGENTBOX_HARNESS_ROUTER_URL: "${AGENTBOX_HARNESS_ROUTER_URL:-http://host.docker.internal:8765}"
+      # Set to 0 to stop a failed extraction retrying on the main model.
+      AGENTBOX_HARNESS_ESCALATE: "${AGENTBOX_HARNESS_ESCALATE:-1}"
       # Identity-aware auth. `alex:tokenA,sam:tokenB` — the presented token
       # IS the identity, resolved before any tool runs and never taken from a
       # tool argument. Leave empty for single-operator, which falls back to

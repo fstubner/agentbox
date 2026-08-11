@@ -60,6 +60,7 @@ from integrations import (
     _client,
     builder,
     google,
+    harness,
     homeassistant,
     memory,
     rulebook,
@@ -76,6 +77,7 @@ INTEGRATIONS = {
     "homeassistant": homeassistant,
     "speaker": speaker,
     "rulebook": rulebook,
+    "harness": harness,
 }
 
 

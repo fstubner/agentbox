@@ -36,6 +36,7 @@ tiers:
     - task_management                # the assistant's own workspace; reversible, nothing deletes
     - personal_data_read             # gmail/calendar reads — see the note below
     - propose_memory_for_review      # inert until an operator approves it
+    - local_only                     # thinking out loud on this box; reaches nothing
     - propose_rule_for_review        # inert until an operator activates it
     - home_read_state                # sensor/entity state from Home Assistant
     - home_control_comfort           # lights, scenes, media — allowlisted entities only
@@ -116,6 +117,17 @@ tools:
   # speaker
   speak_aloud: speak_aloud
   list_speakers: home_read_state
+
+  # harness dispatch
+  #
+  # triage_email reads a message, so it sits in the same tier as reading one —
+  # a cheaper-and-safer way to do a thing already permitted, not a new power.
+  # It reads strictly less into the conversation than read_gmail does.
+  #
+  # check_reasoning touches nothing outside the box and returns text to the
+  # caller only. There is no smaller tier than local_only for it.
+  triage_email: personal_data_read
+  check_reasoning: local_only
 
   # google-workspace (drive)
   search_drive: drive_read

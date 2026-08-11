@@ -5,10 +5,27 @@ Wants=network-online.target fastcontext-worker.service vibethinker-worker.servic
 
 [Service]
 Type=simple
-WorkingDirectory=%h/agentbox/router
+# The repository, not ~/agentbox — that path is the gateway's private runtime
+# state directory and has never held this code. The unit pointed there until
+# 2026-08-11 and would have started nothing on a clean install.
+WorkingDirectory=%h/oss/agentbox/router
+
+# Loopback by default: this endpoint is unauthenticated and will run any
+# prompt you give it.
+#
+# The assistant now dispatches to it (agentbox-mcp/app/harness.py), and a
+# container cannot reach the host's loopback. If you want `triage_email` and
+# `check_reasoning` to work, bind to the Docker bridge gateway instead:
+#
+#   Environment=AGENTBOX_ROUTER_HOST=172.17.0.1
+#
+# That address is reachable from containers and not from the LAN, which is the
+# whole difference from 0.0.0.0. Confirm it first — `ip -4 addr show docker0` —
+# because it is assigned, not fixed. Leaving it as-is is a valid choice; the
+# two tools then fail with "router unreachable" and nothing else changes.
 Environment=AGENTBOX_ROUTER_HOST=127.0.0.1
 Environment=AGENTBOX_ROUTER_PORT=8765
-ExecStart=/usr/bin/python3 %h/agentbox/router/agentbox_router.py
+ExecStart=/usr/bin/python3 %h/oss/agentbox/router/agentbox_router.py
 Restart=on-failure
 RestartSec=5
 

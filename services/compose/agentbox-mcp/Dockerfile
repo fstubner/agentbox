@@ -6,6 +6,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY services/compose/agentbox-mcp/app/server.py /app/server.py
 COPY services/compose/agentbox-mcp/app/rules.py /app/rules.py
+COPY services/compose/agentbox-mcp/app/harness.py /app/harness.py
 COPY services/compose/agentbox-mcp/app/integrations /app/integrations
 COPY services/templates/mcp/mcp_base.py /app/mcp_base.py
 COPY services/templates/mcp/policy_gate.py /app/policy_gate.py

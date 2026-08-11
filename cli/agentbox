@@ -342,6 +342,12 @@ def probe(url: str, timeout: float = 5) -> bool:
 # FAIL is now reserved for what the assistant actually needs to serve a
 # request: the main model, and the bridge/MCP chain. Everything the assistant
 # does not depend on warns.
+#
+# Amended 2026-08-11: the router is no longer evaluator-only. `triage_email`
+# and `check_reasoning` dispatch to it (see agentbox-mcp/app/harness.py). Still
+# WARN, because those two tools fail loudly with "router unreachable" and every
+# other tool keeps working — a request is still served. If the router ever ends
+# up on the path of an ordinary answer, this becomes FAIL.
 ENDPOINTS = {
     "main model": (os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models", FAIL),
     "router": ("http://127.0.0.1:" + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health", WARN),
