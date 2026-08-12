@@ -6,6 +6,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -135,16 +136,123 @@ def visible_scopes(identity: str, operator: bool = False) -> set[str] | None:
     return {identity, HOUSEHOLD} if identity else {HOUSEHOLD}
 
 
+# --- memory vs feedback -----------------------------------------------------
+#
+# Two different things arrive through one door. "Sam is allergic to peanuts"
+# is a fact about the household and belongs in memory. "Stop asking me to
+# confirm before every calendar read" is not a fact — it is a complaint about
+# how the assistant behaves, and storing it as a memory is a patch: the
+# behaviour stays wrong, and a line of memory is spent every session
+# apologising for it. That belongs in a backlog of things to fix properly, in
+# the skill or the tool description or the system prompt.
+#
+# The classification is a heuristic and is allowed to be wrong, because the
+# person reviewing the proposal sees the suggestion and can flip it. What it
+# must not do is silently decide: the portal always shows which way it went
+# and why.
+
+KIND_MEMORY = "memory"
+KIND_FEEDBACK = "feedback"
+
+# Phrases that describe the assistant's conduct rather than the world. Second
+# person plus a directive is the core signal — a fact about a person almost
+# never addresses the reader.
+FEEDBACK_MARKERS = (
+    "you should", "you shouldn't", "you should not", "you must", "you need to",
+    "you keep", "you always", "you never", "you tend to", "you often",
+    "don't ask", "do not ask", "stop asking", "stop doing", "stop telling",
+    "instead of asking", "rather than asking", "prefer that you",
+    "i'd prefer you", "i would prefer you", "please don't", "please do not",
+    "remember to ask", "make sure you", "be more", "be less",
+    "too verbose", "too long", "too many questions", "annoying",
+    "asked you", "told you", "keeps happening", "every time i ask",
+    "when i ask you", "you got it wrong", "you were wrong", "that was wrong",
+)
+
+
+# Vocabulary that only appears when the assistant is describing its own
+# operation rather than the household's life.
+#
+# This half was added after reading the real queue on 2026-08-12, where five
+# of seven pending proposals were the assistant writing notes to itself about
+# broken tooling — "look_at_camera returned upstream_rejected on every call
+# this week (3/3, 0% success). Do not retry it" — and the markers above, which
+# were tuned for a person complaining ("you keep asking me"), caught none of
+# them. That shape is the *dominant* one here, and it is the purest example of
+# the thing worth separating: the fix is to repair look_at_camera, not to
+# remember forever that it is broken.
+SELF_REPORT_MARKERS = (
+    "upstream_rejected", "approval_required", "always_denied",
+    "was refused", "were refused", "refused ", "% success", "0/",
+    "calls returned", "returned upstream", "this tool", "the tool",
+    "tool description", "requires ", "required argument",
+    "do not retry", "do not silently", "do not propose", "don't propose",
+    "before proposing", "before calling", "before i ", "always call",
+    "always run", "when in doubt", "my memory proposals", "my calls",
+    "i need a grant", "ask the operator to grant",
+)
+
+# A tool name: snake_case with at least one underscore. Household facts do not
+# mention find_or_create_task; a proposal that does is describing the machine.
+TOOL_NAME = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+
+
+def classify_kind(statement: str) -> tuple[str, str]:
+    """Guess whether this is a fact to remember or feedback to act on.
+
+    Returns (kind, reason). The reason is shown to whoever reviews it, because
+    an unexplained classification is one nobody can correct with confidence.
+
+    Three signals, in order of how sure they are: someone addressing the
+    assistant's conduct, the assistant reporting on its own machinery, and a
+    bare directive. All are heuristics and all are overridable at review.
+    """
+    text = " " + statement.lower().strip() + " "
+    for marker in FEEDBACK_MARKERS:
+        if marker in text:
+            return KIND_FEEDBACK, f"sounds like feedback about behaviour (“{marker.strip()}”)"
+    for marker in SELF_REPORT_MARKERS:
+        if marker in text:
+            return KIND_FEEDBACK, (f"describes how a tool behaved "
+                                   f"(“{marker.strip()}”) — worth fixing, not remembering")
+    match = TOOL_NAME.search(statement.lower())
+    if match:
+        return KIND_FEEDBACK, (f"names a tool (“{match.group(0)}”), so it is "
+                               f"probably about the system rather than the household")
+    # A bare imperative aimed at the assistant: "always confirm before…",
+    # "never read my email out loud". No subject, starts with the directive.
+    first = text.strip().split(" ")[0] if text.strip() else ""
+    if first in ("always", "never", "stop", "don't", "dont", "avoid"):
+        return KIND_FEEDBACK, f"starts with a directive (“{first}”)"
+    return KIND_MEMORY, ""
+
+
+def resolve_kind(body: dict[str, Any], statement: str) -> tuple[str, str, str]:
+    """(kind, reason, source). An explicit kind always wins over the guess."""
+    requested = str(body.get("kind") or "").strip().lower()
+    if requested in (KIND_MEMORY, KIND_FEEDBACK):
+        return requested, str(body.get("kind_reason") or ""), "explicit"
+    kind, reason = classify_kind(statement)
+    return kind, reason, "auto"
+
+
 def clean_memory(body: dict[str, Any], status: str,
                  identity: str = "") -> dict[str, Any]:
     statement = str(body.get("statement", "")).strip()
     if not statement:
         raise BridgeError(400, "statement is required")
+    kind, kind_reason, kind_source = resolve_kind(body, statement)
     return {
         "scope": resolve_scope(body, identity),
         "id": body.get("id") or str(uuid.uuid4()),
         "type": body.get("type", "profile_preference"),
         "statement": statement,
+        # Which of the two things this is, why we think so, and whether a
+        # human said or a heuristic guessed. All three travel together: a
+        # classification without its provenance cannot be reviewed.
+        "kind": kind,
+        "kind_reason": kind_reason,
+        "kind_source": kind_source,
         "source": body.get("source", ""),
         "confidence": body.get("confidence", "medium"),
         "sensitivity": body.get("sensitivity", "medium"),
@@ -261,6 +369,18 @@ def create_proposal(handler, body):
                          if x.get("statement", "").strip() == item["statement"]), None)
         if existing:
             return 200, existing
+        # Already on the improvement backlog. The assistant cannot see that
+        # list, so left to itself it would re-propose the same complaint every
+        # time the behaviour recurred — which is exactly when it is most
+        # likely to notice. Swallowed quietly rather than errored: from the
+        # assistant's side this is a proposal that has already been made, not
+        # a mistake.
+        filed = next((x for x in store.get("feedback", [])
+                      if x.get("statement", "").strip() == item["statement"]), None)
+        if filed:
+            return 200, {"id": filed.get("id"), "status": filed.get("status"),
+                         "kind": KIND_FEEDBACK,
+                         "note": "already recorded for review; not queued again"}
         store["proposals"].append(item)
         save_store(store)
     return 201, item
@@ -293,19 +413,118 @@ def list_memories(handler, body):
                  "scopes_visible": "all" if scopes is None else sorted(scopes)}
 
 
-def approve_proposal(handler, proposal_id: str):
+def apply_reviewer_edits(proposal: dict[str, Any], body: dict[str, Any] | None,
+                         identity: str) -> None:
+    """Let the reviewer correct a proposal before it becomes durable.
+
+    The assistant's wording is a draft. "Alex doesn't like early meetings" may
+    be true only on Mondays, and the choice was previously all-or-nothing:
+    accept a slightly wrong memory forever, or reject and lose it. Both are
+    bad, and rejecting is the one that quietly loses information.
+
+    The original is kept beside the edit. A memory a human rewrote and one the
+    assistant wrote are different evidence about how well it is doing, and
+    collapsing them would corrupt the only record of that.
+    """
+    body = body or {}
+    edited = str(body.get("statement") or "").strip()
+    if edited and edited != proposal.get("statement"):
+        proposal["original_statement"] = proposal.get("statement", "")
+        proposal["statement"] = edited
+        proposal["edited_by_reviewer"] = True
+    scope = str(body.get("scope") or "").strip().lower()
+    if scope:
+        # Re-resolved rather than assigned, so the reviewer cannot widen a
+        # memory into someone else's private plane by typing a name.
+        proposal["scope"] = resolve_scope({"scope": scope}, identity)
+    kind = str(body.get("kind") or "").strip().lower()
+    if kind in (KIND_MEMORY, KIND_FEEDBACK) and kind != proposal.get("kind"):
+        proposal["kind"] = kind
+        proposal["kind_source"] = "reviewer"
+        proposal["kind_reason"] = "set during review"
+
+
+def approve_proposal(handler, proposal_id: str, body=None):
+    """Approve a proposal, optionally with the reviewer's edits applied.
+
+    A proposal marked as feedback is routed to the feedback backlog instead of
+    durable memory even here, so "approve" cannot quietly turn a behaviour
+    complaint into a memory that patches around it.
+    """
     require_review(handler)
     with _LOCK:
         store = load_store()
         proposal = next((x for x in store["proposals"] if x.get("id") == proposal_id), None)
         if not proposal:
             raise BridgeError(404, "proposal not found")
+        apply_reviewer_edits(proposal, body, identity_of(handler))
+        if proposal.get("kind") == KIND_FEEDBACK:
+            return _file_as_feedback(store, proposal)
         proposal["status"] = "approved"
         proposal["updated_at"] = now()
         store["memories"].append(proposal)
         store["proposals"] = [x for x in store["proposals"] if x.get("id") != proposal_id]
         save_store(store)
     return 200, proposal
+
+
+def _file_as_feedback(store: dict[str, Any], proposal: dict[str, Any]):
+    """Move a proposal into the improvement backlog. Caller holds the lock.
+
+    Deliberately not appended to `memories`: the whole point is that this does
+    not become a line of context the assistant reads back to excuse the
+    behaviour. It is work for a human to do to a skill, and it stays on a list
+    until they say they have done it.
+    """
+    proposal["status"] = "open"
+    proposal["kind"] = KIND_FEEDBACK
+    proposal["updated_at"] = now()
+    store["proposals"] = [x for x in store["proposals"]
+                          if x.get("id") != proposal.get("id")]
+    store.setdefault("feedback", []).append(proposal)
+    save_store(store)
+    return 200, proposal
+
+
+def list_feedback(handler, body):
+    """The improvement backlog. Operator-only: this is not assistant context.
+
+    If the assistant could read this it would start apologising for things
+    instead of them being fixed, which is the failure mode the split exists to
+    prevent.
+    """
+    require_review(handler)
+    query = query_of(handler)
+    wanted = first(query, "status", "open")
+    with _LOCK:
+        store = load_store()
+    items = store.get("feedback", [])
+    if wanted != "all":
+        items = [x for x in items if x.get("status", "open") == wanted]
+    return 200, {"feedback": items, "total": len(items),
+                 "note": "the assistant cannot read these; they are things to "
+                         "fix in a skill, prompt or tool description"}
+
+
+def decide_feedback(handler, feedback_id: str, verb: str, body):
+    """Mark one backlog item folded (fixed properly) or dismissed."""
+    require_review(handler)
+    status = "folded" if verb == "fold" else "dismissed"
+    with _LOCK:
+        store = load_store()
+        item = next((x for x in store.get("feedback", [])
+                     if x.get("id") == feedback_id), None)
+        if not item:
+            raise BridgeError(404, "feedback not found")
+        item["status"] = status
+        item["updated_at"] = now()
+        note = str((body or {}).get("note", ""))[:500]
+        if note:
+            # What was actually changed. Without it, a folded item is
+            # indistinguishable from a forgotten one six months later.
+            item["resolution"] = note
+        save_store(store)
+    return 200, item
 
 
 def reject_proposal(handler, proposal_id: str, body):
@@ -460,6 +679,7 @@ class MemoryBridge(BridgeHandler):
         ("POST", "/v1/proposals"): create_proposal,
         ("GET", "/v1/memories"): list_memories,
         ("POST", "/v1/memories"): create_memory,
+        ("GET", "/v1/feedback"): list_feedback,
         ("GET", "/v1/activity"): activity,
     }
 
@@ -478,12 +698,18 @@ class MemoryBridge(BridgeHandler):
     def route_fallback(self, method: str, path: str, body):
         prefix = "/v1/proposals/"
         if method == "POST" and path.startswith(prefix):
-            for suffix, handler in (("/approve", approve_proposal), ("/reject", reject_proposal)):
+            for suffix, handler in (("/approve", approve_proposal),
+                                    ("/reject", reject_proposal)):
                 if path.endswith(suffix):
                     proposal_id = path[len(prefix):-len(suffix)]
-                    if handler is reject_proposal:
-                        return handler(self, proposal_id, body)
-                    return handler(self, proposal_id)
+                    return handler(self, proposal_id, body)
+        feedback_prefix = "/v1/feedback/"
+        if method == "POST" and path.startswith(feedback_prefix):
+            for suffix in ("/fold", "/dismiss"):
+                if path.endswith(suffix):
+                    return decide_feedback(
+                        self, path[len(feedback_prefix):-len(suffix)],
+                        suffix.lstrip("/"), body)
         raise BridgeError(404, "not found")
 
 

@@ -367,3 +367,66 @@ def test_delivery_failure_is_never_revealed_to_the_browser(portal):
     assert "sys.stderr.write" in source
     # One response string, regardless of outcome.
     assert source.count("told = ") == 1
+
+
+# --- editing and classifying at review time ------------------------------------
+
+
+def test_the_edit_box_carries_the_current_wording(portal):
+    """The reviewer edits what the assistant actually proposed, not a blank."""
+    portal.own_proposals = lambda identity, role: [
+        {"id": "p1", "scope": "alex", "statement": "Alex hates meetings",
+         "kind": "memory"}]
+    body = portal.render_home("alex", portal.ADMIN, "").decode()
+    assert "<textarea name=statement" in body
+    assert "Alex hates meetings" in body
+
+
+def test_a_feedback_proposal_says_why_and_offers_the_split(portal):
+    portal.own_proposals = lambda identity, role: [
+        {"id": "p2", "scope": "alex", "statement": "You keep asking me twice",
+         "kind": "feedback", "kind_reason": "sounds like feedback (“you keep”)"}]
+    body = portal.render_home("alex", portal.ADMIN, "").decode()
+    assert "feedback about how I behave" in body
+    assert "value=feedback" in body
+
+
+def test_filing_as_feedback_sends_the_kind_to_the_bridge(portal, monkeypatch):
+    """One path for both verbs: the bridge routes anything marked feedback to
+    the backlog, so the two cannot disagree about where it lands."""
+    sent = {}
+    portal.own_proposals = lambda identity, role: [
+        {"id": "p3", "scope": "alex", "statement": "You keep asking"}]
+    monkeypatch.setattr(portal, "memory_call",
+                        lambda method, path, payload=None: sent.update(
+                            path=path, payload=payload) or {"status": "open"})
+    ok, message = portal.decide_memory("alex", portal.ADMIN, "p3", "feedback",
+                                       statement="You keep asking")
+    assert ok
+    assert sent["path"].endswith("/approve")
+    assert sent["payload"]["kind"] == "feedback"
+    assert "not saved as a memory" in message
+
+
+def test_an_edited_statement_reaches_the_bridge(portal, monkeypatch):
+    sent = {}
+    portal.own_proposals = lambda identity, role: [
+        {"id": "p4", "scope": "alex", "statement": "Alex hates meetings"}]
+    monkeypatch.setattr(portal, "memory_call",
+                        lambda method, path, payload=None: sent.update(
+                            payload=payload) or {"status": "approved"})
+    ok, message = portal.decide_memory(
+        "alex", portal.ADMIN, "p4", "approve",
+        statement="Alex dislikes meetings before 10am")
+    assert ok
+    assert sent["payload"]["statement"] == "Alex dislikes meetings before 10am"
+    assert "with your edit" in message
+
+
+def test_an_agent_minted_session_still_cannot_decide(portal):
+    """Editing must not have opened a route around the origin gate."""
+    portal.own_proposals = lambda identity, role: [
+        {"id": "p5", "scope": "alex", "statement": "x"}]
+    with pytest.raises(PermissionError):
+        portal.decide_memory("alex", portal.ADMIN, "p5", "approve",
+                             origin=portal.ORIGIN_AGENT, statement="edited")

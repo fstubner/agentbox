@@ -2087,6 +2087,45 @@ def memory_list(identity: str = "") -> int:
     return 0
 
 
+def feedback_list(status: str = "open") -> int:
+    """The improvement backlog: things to fix properly rather than remember.
+
+    Deliberately an operator surface only. If the assistant could read this it
+    would start explaining the behaviour instead of the behaviour changing,
+    which is exactly the patch-around this split exists to prevent.
+    """
+    payload = memory_request("GET", f"/v1/feedback?status={urllib.parse.quote(status)}")
+    if payload is None:
+        return 1
+    items = payload.get("feedback", [])
+    if not items:
+        print(f"no {status} feedback")
+        return 0
+    for item in items:
+        print(f"{item['id']}  [{item.get('status', 'open')}]  "
+              f"{item.get('statement', '')}")
+        if item.get("resolution"):
+            print(f"            fixed by: {item['resolution']}")
+    print(f"\n{len(items)} item(s). When you have actually changed a skill, "
+          f"prompt or tool description:\n"
+          f"  cli/agentbox feedback fold <id> --note 'what you changed'")
+    return 0
+
+
+def feedback_decide(action: str, feedback_id: str, note: str = "") -> int:
+    payload = memory_request(
+        "POST", f"/v1/feedback/{urllib.parse.quote(feedback_id)}/{action}",
+        {"note": note})
+    if payload is None:
+        return 1
+    # The highest-value record in the journal: a human said the behaviour was
+    # wrong, and then said what they changed about it.
+    record_decision("operator", f"feedback_{action}", "assistant_behaviour", note)
+    report(OK, f"{payload.get('status', action)}: "
+               f"{payload.get('statement', feedback_id)}")
+    return 0
+
+
 def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
     body = {"reason": reason} if action == "reject" else None
     payload = memory_request("POST", f"/v1/proposals/{urllib.parse.quote(proposal_id)}/{action}", body)
@@ -2527,6 +2566,19 @@ def main() -> None:
     reject = mem_sub.add_parser("reject")
     reject.add_argument("proposal_id")
     reject.add_argument("--reason", default="")
+
+    fb = sub.add_parser("feedback",
+                        help="things to fix in a skill rather than remember")
+    fb_sub = fb.add_subparsers(dest="fb_cmd", required=True)
+    fbl = fb_sub.add_parser("list")
+    fbl.add_argument("--status", default="open",
+                     choices=["open", "folded", "dismissed", "all"])
+    fold = fb_sub.add_parser("fold", help="you changed something; retire this")
+    fold.add_argument("feedback_id")
+    fold.add_argument("--note", default="", help="what you actually changed")
+    dismiss = fb_sub.add_parser("dismiss")
+    dismiss.add_argument("feedback_id")
+    dismiss.add_argument("--note", default="")
     args = parser.parse_args()
 
     if args.cmd == "validate":
@@ -2592,6 +2644,10 @@ def main() -> None:
         if args.mem_cmd == "list":
             sys.exit(memory_list(args.identity))
         sys.exit(memory_decide(args.mem_cmd, args.proposal_id, getattr(args, "reason", "")))
+    if args.cmd == "feedback":
+        if args.fb_cmd == "list":
+            sys.exit(feedback_list(args.status))
+        sys.exit(feedback_decide(args.fb_cmd, args.feedback_id, args.note))
 
 
 if __name__ == "__main__":

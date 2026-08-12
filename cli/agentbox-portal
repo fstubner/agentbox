@@ -469,14 +469,19 @@ def own_proposals(identity: str, role: str) -> list[dict]:
             if p.get("scope", "household") in allowed]
 
 
-def decide_memory(identity: str, role: str, proposal_id: str,
-                  approve: bool, origin: str = ORIGIN_EMAIL) -> tuple[bool, str]:
-    """Approve or reject one proposal, refusing anything out of scope.
+def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
+                  origin: str = ORIGIN_EMAIL,
+                  statement: str = "") -> tuple[bool, str]:
+    """Approve, file as feedback, or reject one proposal.
 
     The scope check re-reads the proposal rather than trusting a form field.
     An id posted from a crafted form is an argument, and an argument must never
     decide whose memory is being touched — the same rule that keeps identity
     bound to the session credential everywhere else in this system.
+
+    The edited statement, by contrast, is meant to come from the form: it is
+    what the person typed, and it is applied only to a proposal they were
+    already entitled to decide.
     """
     require(role, "memory:decide_own", origin)
     try:
@@ -485,11 +490,33 @@ def decide_memory(identity: str, role: str, proposal_id: str,
         return False, "The memory service did not respond. Nothing changed."
     if proposal_id not in visible:
         return False, "That proposal is not yours to decide."
-    verb = "approve" if approve else "reject"
-    result = memory_call("POST", f"/v1/proposals/{proposal_id}/{verb}", {})
+
+    payload: dict = {}
+    edited = statement.strip()[:2000]
+    if edited and edited != str(visible[proposal_id].get("statement", "")).strip():
+        payload["statement"] = edited
+    if verb == "feedback":
+        # Force the classification, then approve: the bridge routes anything
+        # marked feedback to the backlog rather than to memory, so one path
+        # covers both and they cannot disagree about where it lands.
+        payload["kind"] = "feedback"
+        route = "approve"
+    elif verb == "approve":
+        payload["kind"] = "memory"
+        route = "approve"
+    else:
+        route = "reject"
+
+    result = memory_call("POST", f"/v1/proposals/{proposal_id}/{route}", payload)
     if result is None:
         return False, "The memory service did not respond. Nothing changed."
-    return True, f"Memory {verb}d."
+    if verb == "feedback":
+        return True, ("Filed as feedback. It is on the list to fix properly, "
+                      "and was not saved as a memory.")
+    if verb == "approve":
+        return True, ("Memory saved, with your edit."
+                      if "statement" in payload else "Memory saved.")
+    return True, "Rejected."
 
 
 # --- connectors ----------------------------------------------------------------
@@ -759,13 +786,40 @@ def render_home(identity: str, role: str, flash: str,
     for item in proposals:
         scope = html.escape(str(item.get("scope", "household")))
         label = "private to you" if scope == identity else scope
+        statement = str(item.get("statement", ""))
+        is_feedback = item.get("kind") == "feedback"
+        reason = str(item.get("kind_reason") or "")
+        # The suggested classification, and why. Shown rather than applied
+        # silently, because the heuristic is allowed to be wrong and the only
+        # person who can tell is reading this page.
+        hint = ""
+        if is_feedback:
+            hint = ("<p class=sub style='margin:.1rem 0 .6rem'>This looks like "
+                    "<b>feedback about how I behave</b>"
+                    + (f" — {html.escape(reason)}" if reason else "")
+                    + ". Filing it as feedback puts it on a list to fix "
+                    "properly, instead of storing a note that works around "
+                    "it.</p>")
         parts.append(
             f"<div class=card><span class=scope>{html.escape(label)}</span>"
-            f"<p class=stmt>{html.escape(str(item.get('statement', '')))}</p>"
+            f"{hint}"
             f"<form method=post action=/memory/decide>"
             f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
-            f"<button class=yes name=verb value=approve>Remember this</button>"
-            f"<button name=verb value=reject>Forget it</button></form></div>")
+            # Editable, because the assistant's wording is a draft. Rejecting
+            # a nearly-right memory was the only alternative before, and that
+            # loses the information entirely.
+            f"<textarea name=statement rows=3 style='width:100%;padding:.5rem;"
+            f"font:inherit;border:1px solid #ccd2d9;border-radius:.35rem;"
+            f"resize:vertical'>{html.escape(statement)}</textarea>"
+            f"<p class=sub style='margin:.35rem 0 .6rem;font-size:.8rem'>"
+            f"Edit before saving if it is not quite right.</p>"
+            f"<button class=yes name=verb value=approve>"
+            f"{'Save as a memory' if is_feedback else 'Remember this'}</button>"
+            f"<button name=verb value=feedback>"
+            f"{'File as feedback' if is_feedback else 'Not a memory — file as feedback'}"
+            f"</button>"
+            f"<button name=verb value=reject>Forget it</button>"
+            f"</form></div>")
     parts.append("<footer>Only you can approve a memory in your own private "
                  "scope \u2014 not the assistant, and not the household admin."
                  " &middot; <a href='/logout'>Sign out</a></footer>")
@@ -1214,11 +1268,13 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if path == "/memory/decide":
             try:
+                verb = (form.get("verb") or [""])[0]
                 _, message = decide_memory(
                     session["identity"], session["role"],
                     (form.get("id") or [""])[0],
-                    (form.get("verb") or [""])[0] == "approve",
-                    session.get("origin", ORIGIN_AGENT))
+                    verb if verb in ("approve", "feedback") else "reject",
+                    session.get("origin", ORIGIN_AGENT),
+                    statement=(form.get("statement") or [""])[0])
             except PermissionError:
                 message = ("This link was created by the assistant, so it "
                            "cannot approve memories. Sign in from the email "
