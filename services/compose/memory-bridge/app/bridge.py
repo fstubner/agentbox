@@ -639,6 +639,18 @@ def activity(handler, body):
                 entry["note"] = "refused without a grant; the operator can approve it"
             elif tiers[name] == "always_denied":
                 entry["note"] = "never permitted; do not ask"
+            elif tiers[name] == "allowed" and entry.get("denied"):
+                # An `allowed` tool being refused is not a fault and not a
+                # permission problem: the bridge is saying the thing is not
+                # set up — a camera nobody added to the allowlist, a file
+                # that is guarded. Said explicitly because the alternative
+                # reading is "this tool is broken", which the assistant
+                # actually reached and proposed to remember forever.
+                entry["note"] = ("permitted, but the bridge refused: usually "
+                                 "not configured (an entity not on the "
+                                 "operator's allowlist, a guarded path) rather "
+                                 "than broken. Ask what to add, do not "
+                                 "conclude it is unusable")
         summary[name] = entry
 
     # Error classes, not messages: an upstream message quotes its input.

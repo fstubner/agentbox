@@ -324,3 +324,59 @@ def test_the_skill_warns_against_writing_off_an_approvable_tool():
     skill = (REPO / "skills" / "self-reflection" / "SKILL.md").read_text()
     assert "approval_required" in skill and "always_denied" in skill
     assert "how to ask" in skill
+
+
+# --- a refusal is not a fault --------------------------------------------------
+#
+# On 2026-08-12 the assistant read its own journal and proposed, in writing:
+# "look_at_camera returned upstream_rejected on every call this week (3/3, 0%
+# success). This tool appears broken or restricted. Do not retry it." Every one
+# of those calls was the bridge correctly refusing a camera nobody had
+# configured. Separately, 45 propose_change "failures" were the smoke suite
+# verifying that guarded files cannot be edited — guardrails working, recorded
+# as breakage. The tools were fine; the record of them was not.
+
+
+def test_a_bridge_refusal_is_recorded_as_denied_not_error():
+    """403 means "no", and "no" is a different fact from "broken"."""
+    source = (REPO / "services/templates/mcp/mcp_base.py").read_text()
+    # The whole handler, not a fixed-width slice — a comment growing must
+    # not silently move the code out of view and turn this green.
+    block = source.split("except ToolError as exc:")[1].split("except Exception")[0]
+    assert '"HTTP 403" in text' in block
+    assert "outcome_log.DENIED, detail=\"upstream_refused\"" in block
+    # And it must still be distinguishable from a policy-gate denial.
+    assert "upstream_refused" != "denied"
+
+
+def test_an_allowed_tool_that_was_refused_is_explained(tmp_path):
+    """Without this note the summary shows a permitted tool with denials and
+    no reason — and the available reading is 'it does not work'."""
+    import os
+    sys.path.insert(0, str(REPO / "services" / "templates" / "bridge" / "app"))
+    os.environ["MEMORY_PATH"] = str(tmp_path / "memory.json")
+    spec = importlib.util.spec_from_file_location(
+        "mem_refusal", REPO / "services/compose/memory-bridge/app/bridge.py")
+    mem = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mem)
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "agentbox-mcp-outcomes.jsonl").write_text("\n".join(
+        json.dumps({"ts": int(time.time()), "service": "agentbox-mcp",
+                    "tool": "look_at_camera", "outcome": "denied",
+                    "detail": "upstream_refused",
+                    "capability": "home_view_camera"})
+        for _ in range(3)))
+    mem.LOG_DIR = logs
+
+    class Handler:
+        headers = {}
+        path = "/v1/activity?days=7"
+
+    _, payload = mem.activity(Handler(), None)
+    entry = payload["tools"]["look_at_camera"]
+    assert entry["denied"] == 3
+    if entry.get("tier") == "allowed":
+        assert "not configured" in entry.get("note", "")
+        assert "do not conclude it is unusable" in entry.get("note", "")

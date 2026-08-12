@@ -415,6 +415,23 @@ class McpHandler(BaseHTTPRequestHandler):
                     note(outcome_log.INVALID, detail="missing_required_argument")
                 elif "unknown tool" in text:
                     note(outcome_log.INVALID, detail="unknown_tool")
+                elif "HTTP 403" in text:
+                    # A bridge 403 is a REFUSAL, not a fault. The bridge is the
+                    # authoritative gate, and it says no for exactly the reasons
+                    # it is supposed to: an entity not on the operator's
+                    # allowlist, a path outside the repo, a guarded file.
+                    #
+                    # Recorded as an error until 2026-08-12, which made a
+                    # working guardrail indistinguishable from a broken tool —
+                    # and the assistant, reading its own journal, drew the wrong
+                    # conclusion in writing: "look_at_camera returned
+                    # upstream_rejected on every call (0% success), it appears
+                    # broken, do not retry it". Every one of those calls was the
+                    # bridge correctly refusing a camera nobody had configured,
+                    # and 45 propose_change "failures" were the smoke suite
+                    # verifying that guarded files cannot be edited. The tools
+                    # were working perfectly; only the record of them was wrong.
+                    note(outcome_log.DENIED, detail="upstream_refused")
                 else:
                     note(outcome_log.ERROR, detail="upstream_rejected")
                 return self._reply(message_id, tool_result(text, True))
