@@ -251,3 +251,55 @@ def test_unknown_identity_subcommand_does_not_delete(cli):
     assert 'if args.identity_cmd == "remove":' in block
     remove_calls = block.count("identity_remove(")
     assert remove_calls == 1
+
+
+# --- the reconnect must actually take effect -----------------------------------
+
+
+def test_reconnect_applies_the_routing_to_the_running_gateway(cli, monkeypatch):
+    """Writing the env file is not applying it.
+
+    On 2026-08-12 a reconnect wrote a fresh token, restarted the identity's
+    bridge and reported success, while every Drive call kept 403ing for five
+    hours: the gateway had started before the routing existed, so it was still
+    reaching the shared bridge and its stale credential.
+    """
+    deployed = []
+    monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)
+    monkeypatch.setattr(cli.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 1,
+                                                       "stdout": "", "stderr": ""})())
+    assert cli.gateway_routing_applied("sam") is True
+    assert deployed == ["agentbox-mcp"]
+
+
+def test_a_gateway_already_routing_correctly_is_left_alone(cli, monkeypatch):
+    """Restarting the gateway drops every in-flight call; do it only when the
+    routing is actually missing."""
+    deployed = []
+    monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)
+    monkeypatch.setattr(
+        cli.subprocess, "run",
+        lambda *a, **k: type("R", (), {
+            "returncode": 0, "stdout": "http://sam-google-bridge:8080\n",
+            "stderr": ""})())
+    assert cli.gateway_routing_applied("sam") is True
+    assert deployed == []
+
+
+def test_a_failed_gateway_restart_is_reported_not_swallowed(cli, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "deploy", lambda service: 1)
+    monkeypatch.setattr(cli.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 1,
+                                                       "stdout": "", "stderr": ""})())
+    assert cli.gateway_routing_applied("sam") is False
+    assert "still routes to the shared bridge" in capsys.readouterr().out
+
+
+def test_reconnect_from_the_lan_is_refused_with_instructions(portal):
+    """Google only accepts a loopback redirect, so a consent started from a
+    phone completes and lands on the phone. Say so before, not after."""
+    body = portal._wrong_origin_page("192.0.2.10")
+    assert "Finish this on the box" in body
+    assert "127.0.0.1" in body
+    assert "ssh -L" in body

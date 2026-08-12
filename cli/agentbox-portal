@@ -897,6 +897,41 @@ def _consent_state(identity: str) -> str:
                     hashlib.sha256).hexdigest()
 
 
+def _wrong_origin_page(host: str) -> str:
+    """Explain why connecting Google has to happen on the box itself.
+
+    Written out in full because the failure it prevents is genuinely
+    confusing: the consent screen succeeds, Google redirects to 127.0.0.1,
+    and the browser lands on whatever is running on *the user's own* machine
+    — usually nothing. The operator who hit this rescued it by editing the
+    address bar by hand, which works but nobody should have to guess it.
+    """
+    port = urllib.parse.urlparse(PUBLIC_URL).port or 8771
+    return (
+        "<h1>Finish this on the box</h1>"
+        "<p class=sub>Connecting a Google account is the one thing that "
+        f"cannot be done from another device. You are on <b>{html.escape(host)}"
+        f"</b>.</p>"
+        "<div class=card><b>Why</b><p class=sub style='margin:.4rem 0 0'>"
+        "Google only accepts a loopback address as the return URL, so after "
+        f"you approve, it sends the code to <code>127.0.0.1:{port}</code> — "
+        "which is <i>this</i> device, not Agentbox. The approval works and "
+        "the code lands nowhere.</p></div>"
+        "<div class=card><b>Option 1 — use a browser on the Agentbox machine"
+        "</b><p class=sub style='margin:.4rem 0 0'>Open "
+        f"<code>http://127.0.0.1:{port}</code> there, sign in, and press "
+        "Reconnect.</p></div>"
+        "<div class=card><b>Option 2 — tunnel from here</b>"
+        "<p class=sub style='margin:.4rem 0 .4rem'>Run this on the device you "
+        "are using now, then open the portal at "
+        f"<code>http://127.0.0.1:{port}</code> in this browser:</p>"
+        f"<pre style='background:#f6f7f9;border:1px solid #e3e6ea;"
+        f"border-radius:.4rem;padding:.6rem;overflow-x:auto'>ssh -L "
+        f"{port}:127.0.0.1:{port} {html.escape(os.environ.get('USER', 'alex'))}"
+        f"@{html.escape(host)}</pre></div>"
+        "<p><a href='/connectors'>Back to accounts</a></p>")
+
+
 def cookie_value(header: str, name: str) -> str:
     for part in header.split(";"):
         key, _, value = part.strip().partition("=")
@@ -1054,6 +1089,16 @@ class PortalHandler(BaseHTTPRequestHandler):
             if not can(role, "connector:read_own") or not GOOGLE_CLIENT_ID:
                 self._redirect("/connectors?" + urllib.parse.urlencode(
                     {"m": "Google sign-in is not configured on this box."}))
+                return
+            # Google will only accept a loopback redirect, so the callback
+            # always goes to 127.0.0.1 — which is *this browser's* own machine.
+            # Reached from a phone or laptop over the LAN, the consent
+            # succeeds and then lands nowhere, and the code is lost. Say so
+            # before sending anyone into it rather than after.
+            host = (self.headers.get("Host") or "").split(":")[0]
+            if host not in ("127.0.0.1", "localhost", "::1", "[::1]"):
+                self._send(200, page("Finish this on the box",
+                                     _wrong_origin_page(host)))
                 return
             self._redirect(google_consent_url(_consent_state(identity)))
             return

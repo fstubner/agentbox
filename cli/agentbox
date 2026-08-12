@@ -1724,6 +1724,43 @@ def provision_google_bridge(identity: str, refresh_token: str) -> bool:
     write_env_value(gateway_env, f"GOOGLE_BRIDGE_URL_{suffix}",
                     f"http://{identity}-google-bridge:8080")
     write_env_value(gateway_env, f"GOOGLE_BRIDGE_TOKEN_{suffix}", bridge_token)
+    return gateway_routing_applied(identity)
+
+
+def gateway_routing_applied(identity: str) -> bool:
+    """Make the gateway actually use the routing just written.
+
+    Writing the env file is not applying it: the gateway reads its environment
+    at container start, so until it is recreated the new per-identity route is
+    invisible and calls keep going to the shared bridge — with whatever
+    credential that one holds.
+
+    That is not a theoretical gap. On 2026-08-12 a reconnect succeeded end to
+    end, wrote a fresh refresh token, restarted the identity's own bridge, and
+    reported success — while every Drive call kept 403ing for five hours,
+    because the gateway had started before the routing existed and was still
+    talking to the shared bridge's stale token. The flow was correct in every
+    step except the one that made it take effect.
+
+    A failure here is reported, never swallowed: a half-applied reconnect that
+    claims success is precisely what produced that five-hour gap.
+    """
+    suffix = identity.upper().replace("-", "_")
+    expected = f"http://{identity}-google-bridge:8080"
+    running = subprocess.run(
+        ["docker", "exec", "agentbox-mcp-agentbox-mcp-1",
+         "printenv", f"GOOGLE_BRIDGE_URL_{suffix}"],
+        capture_output=True, text=True, timeout=30, check=False)
+    if running.returncode == 0 and running.stdout.strip() == expected:
+        return True  # already routing correctly; no need to disturb the gateway
+
+    report(WARN, "restarting the gateway so it picks up the new routing")
+    if deploy("agentbox-mcp") != 0:
+        report(FAIL, f"{identity}'s credential was updated but the gateway "
+                     f"still routes to the shared bridge. Their calls will use "
+                     f"the wrong account until you run: "
+                     f"cli/agentbox deploy agentbox-mcp")
+        return False
     return True
 
 
