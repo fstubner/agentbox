@@ -56,14 +56,23 @@ def _triage(args):
     # happens. Fetched here rather than by the caller so the body has no route
     # into this context even if the dispatch fails.
     message = bridge_post("/v1/gmail/clean", {"message_id": message_id})
-    body = str(message.get("untrusted_text") or message.get("text") or "")
+    # The clean route returns `clean_text` and puts the subject under
+    # `headers`. This read `untrusted_text`/`text` and a top-level `subject`
+    # — keys the bridge never emits — so triage_email raised "no readable
+    # body" on every real message while the unit test passed against a stub
+    # that used the wrong keys on both sides of the seam. The fallbacks stay
+    # for older bridges, but the live key leads.
+    body = str(message.get("clean_text")
+               or message.get("untrusted_text")
+               or message.get("text") or "")
     if not body.strip():
         raise ToolError(f"message {message_id} has no readable body")
 
     # Subject is quoted straight from the message rather than asked of the
     # worker: the worker could get it wrong, and this one field is cheap to
     # carry exactly. Bounded by the same rule as any other quoted line.
-    subject = str(message.get("subject") or "")
+    headers = message.get("headers") if isinstance(message.get("headers"), dict) else {}
+    subject = str(headers.get("subject") or message.get("subject") or "")
 
     try:
         result = harness.run_task("email_triage", body)

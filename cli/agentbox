@@ -2340,6 +2340,64 @@ def smoke() -> int:
     return 0
 
 
+def scenarios() -> int:
+    """The household test: of the things a person would actually ask, how many
+    can the assistant answer today, and what closes each remaining gap?
+
+    `smoke` proves the seams hold; this proves (or disproves) usefulness. It
+    exists because a week of the outcome journal showed `whoami` outnumbering
+    every household tool — the plumbing was perfect and almost nobody was
+    being helped. Run it weekly; the score should climb as gaps close.
+    """
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location(
+        "agentbox_scenarios", Path(__file__).resolve().parent / "agentbox_scenarios.py")
+    lib = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(lib)
+
+    token = smoke_token("agentbox-mcp")
+    if not token:
+        report(FAIL, "no gateway token found; is agentbox-mcp configured?")
+        return 1
+    print("-- can the assistant answer what a person would ask? --\n")
+    outcome = lib.run(tool_call, token)
+    icon = {lib.READY: "[ok]  ", lib.EMPTY: "[  ..]", lib.BLOCKED: "[FAIL]"}
+    for r in outcome["results"]:
+        print(f"{icon[r['state']]} {r['asked']}")
+        print(f"        {r['state']}: {r['detail']}")
+        if r["state"] != lib.READY and r["needs"]:
+            print(f"        next: {r['needs']}")
+    print(f"\nscore: {outcome['ready']}/{outcome['total']} ready, "
+          f"{outcome['empty']} empty, {outcome['blocked']} blocked")
+
+    journal = Path(os.environ.get(
+        "AGENTBOX_LOG_DIR",
+        os.path.expanduser("~/.local/state/agentbox/logs"))) / "agentbox-mcp-outcomes.jsonl"
+    if journal.exists():
+        records = []
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                continue
+        summary = lib.usage_summary(records)
+        print("\n-- and what actually got used (whole journal) --")
+        print(f"household calls: {summary['household_ok']}   "
+              f"self-management: {summary['self_management_ok']}   "
+              f"failures: {summary['failures']}")
+        if summary["top_household_tools"]:
+            print("top household tools: " + ", ".join(
+                f"{t} x{n}" for t, n in summary["top_household_tools"]))
+        if summary["by_identity"]:
+            print("by person: " + ", ".join(
+                f"{k}: {v}" for k, v in summary["by_identity"].items()))
+        if summary["household_ok"] < summary["self_management_ok"]:
+            report(WARN, "the assistant mostly talks to itself — more "
+                         "self-management than household calls. The score "
+                         "above says what to unblock.")
+    return 0 if outcome["ready"] > 0 else 1
+
+
 def policy_state_dir() -> str:
     return os.environ.get("AGENTBOX_POLICY_STATE_DIR",
                           str(Path("~/.local/state/agentbox/policy-state").expanduser()))
@@ -2354,6 +2412,7 @@ def main() -> None:
     dep.add_argument("--dry-run", action="store_true")
     sub.add_parser("doctor")
     sub.add_parser("smoke", help="drive real workflows end to end against the running system")
+    sub.add_parser("scenarios", help="score what a household member could actually ask today")
     inv = sub.add_parser("invite", help="finish onboarding somebody who used an invite link")
     inv_sub = inv.add_subparsers(dest="invite_cmd", required=True)
     invc = inv_sub.add_parser("complete")
@@ -2439,6 +2498,8 @@ def main() -> None:
         sys.exit(deploy(args.service, args.dry_run))
     if args.cmd == "doctor":
         sys.exit(doctor())
+    if args.cmd == "scenarios":
+        sys.exit(scenarios())
     if args.cmd == "smoke":
         sys.exit(smoke())
     if args.cmd == "invite":

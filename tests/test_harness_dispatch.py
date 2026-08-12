@@ -220,7 +220,13 @@ def test_triage_never_returns_the_body_to_the_caller(monkeypatch):
 
     def bridge_post(path, payload):
         calls["path"] = path
-        return {"untrusted_text": body, "subject": "Invoice"}
+        # EXACTLY the shape the live clean route returns: clean_text, and the
+        # subject nested under headers. This stub used untrusted_text and a
+        # top-level subject — keys the bridge never emits — so the test
+        # passed while triage_email raised "no readable body" on every real
+        # message. The regression test below pins the real contract; this one
+        # now honours it too.
+        return {"clean_text": body, "headers": {"subject": "Invoice"}}
 
     sys.modules.pop("integrations.harness", None)
     import integrations.harness as integration
@@ -237,6 +243,29 @@ def test_triage_never_returns_the_body_to_the_caller(monkeypatch):
     assert "SECRET-CANARY" not in json.dumps(result)
     assert result["untrusted_subject"] == "Invoice"
     assert calls["path"] == "/v1/gmail/clean"
+
+
+def test_triage_reads_the_clean_routes_real_keys(monkeypatch):
+    """The seam that shipped broken. clean_gmail returns `clean_text` and a
+    `headers.subject`; triage read `untrusted_text` and top-level `subject`,
+    so it raised 'no readable body' on every real message. A stub that used
+    the wrong keys on both sides hid it — this pins the live contract."""
+    sys.modules.pop("integrations.harness", None)
+    import integrations.harness as integration
+
+    monkeypatch.setattr(integration, "bridge_post",
+                        lambda path, payload: {
+                            "clean_text": "the actual body text",
+                            "headers": {"subject": "Real Subject",
+                                        "from": "a@b.c"}})
+    monkeypatch.setattr(integration.harness, "run_task",
+                        lambda name, text: dict(
+                            GOOD, task=name, model_role="context",
+                            trusted=False, carries_quoted_text=True,
+                            _body_seen=text))
+    result = integration.dispatch("triage_email", {"message_id": "m1"})
+    assert result["_body_seen"] == "the actual body text"
+    assert result["untrusted_subject"] == "Real Subject"
 
 
 def test_quoted_fields_carry_the_untrusted_prefix():
