@@ -135,6 +135,183 @@ def clear_pending(tool: str) -> None:
 OUTCOME_DIR = Path(os.environ.get(
     "AGENTBOX_LOG_DIR", str(Path("~/.local/state/agentbox/logs").expanduser())))
 
+# --- memory review, in the same conversation --------------------------------
+#
+# The portal is the full surface, but it needs a browser and a fresh link, and
+# a memory proposal is a five-second decision. Reviewing them where the
+# conversation already happens is the difference between a queue that gets
+# cleared and one that grows for six weeks — which is what actually happened.
+#
+# Every property that makes the grant loop safe applies unchanged, because it
+# is the same loop: replies from bots are ignored outright, so the assistant
+# cannot approve its own memory even if an injected instruction makes it type
+# the words; only configured operator ids are accepted; and this process holds
+# the review token, which the assistant never sees.
+#
+# The one thing this adds is a privacy rule the grant loop never needed. A
+# grant is about a tool and is nobody's secret. A memory proposal can be
+# private to one person, and a shared channel is the wrong place for it —
+# posting Alex's private proposal where Sam reads it would be a disclosure
+# neither of them chose. So: household proposals go to the channel, private
+# ones only to that person's DM, and if nobody has mapped them to a Discord
+# account it stays in the portal rather than leaking.
+
+MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
+                                   "http://127.0.0.1:3471")
+
+
+def identity_discord_map() -> dict[str, str]:
+    """identity -> discord user id, from `alex:123,sam:456`."""
+    raw = os.environ.get("AGENTBOX_DISCORD_IDENTITIES", "")
+    mapping = {}
+    for pair in raw.replace(" ", ",").split(","):
+        name, _, user = pair.partition(":")
+        if name.strip() and user.strip():
+            mapping[name.strip()] = user.strip()
+    return mapping
+
+
+def memory_call(method: str, path: str, payload: dict | None = None):
+    """Talk to the memory bridge with the review credential."""
+    token = os.environ.get("MEMORY_BRIDGE_TOKEN") or op_read(
+        "op://Agentbox/memory-bridge/bridge_token")
+    review = os.environ.get("MEMORY_REVIEW_TOKEN") or op_read(
+        "op://Agentbox/memory-bridge/review_token")
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json",
+               "X-Memory-Review-Token": review}
+    data = json.dumps(payload).encode() if payload is not None else None
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(MEMORY_BRIDGE_URL + path, data=data,
+                                     method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        log(f"memory bridge {method} {path} -> {exc.code}")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        log(f"memory bridge unreachable: {type(exc).__name__}")
+        return None
+
+
+def short_id(value: str) -> str:
+    """First eight characters. Nobody is typing a UUID into a chat window."""
+    return str(value)[:8]
+
+
+def dm_channel(user_id: str, token: str) -> str:
+    created = discord("POST", "/users/@me/channels", token,
+                      {"recipient_id": user_id})
+    return str((created or {}).get("id", ""))
+
+
+def announce_proposals(channel: str, token: str, state: dict) -> None:
+    """Post proposals nobody has been shown yet, to the right audience."""
+    payload = memory_call("GET", "/v1/proposals?limit=50")
+    if payload is None:
+        return
+    mapping = identity_discord_map()
+    seen = state.setdefault("memories_announced", {})
+    for item in payload.get("proposals", []):
+        key = str(item.get("id"))
+        if key in seen:
+            continue
+        scope = str(item.get("scope", "household"))
+        kind = item.get("kind") or "memory"
+        target = channel
+        if scope != "household":
+            user = mapping.get(scope)
+            if not user:
+                log(f"proposal {short_id(key)} is private to {scope}, who has "
+                    f"no Discord id configured — left for the portal")
+                seen[key] = int(time.time())
+                continue
+            target = dm_channel(user, token)
+            if not target:
+                continue
+        verb = ("This reads as **feedback about my behaviour**, not a fact."
+                if kind == "feedback" else "Shall I remember this?")
+        posted = discord("POST", f"/channels/{target}/messages", token, {
+            "content": (f"**Memory proposal** `{short_id(key)}`"
+                        f"{'' if scope == 'household' else ' (private to you)'}\n"
+                        f"> {str(item.get('statement',''))[:900]}\n"
+                        f"{verb}\n"
+                        f"Reply `remember {short_id(key)}`, "
+                        f"`feedback {short_id(key)}` to file it as something to "
+                        f"fix, or `forget {short_id(key)}`.")})
+        if posted:
+            seen[key] = int(time.time())
+            log(f"asked about memory {short_id(key)} ({scope}/{kind})")
+
+
+def resolve_memory(prefix: str) -> tuple[str, str]:
+    """Find a proposal or a stored memory by id prefix.
+
+    Returns (id, where) where `where` is 'proposal' or 'memory', or ("", "").
+    Ambiguous prefixes resolve to nothing rather than to the first match —
+    acting on the wrong memory because two ids share four characters is not a
+    mistake worth risking to save typing.
+    """
+    hits = []
+    for where, path in (("proposal", "/v1/proposals?limit=200"),
+                        ("memory", "/v1/memories?limit=200")):
+        payload = memory_call("GET", path) or {}
+        for item in payload.get(where + "s", []):
+            if str(item.get("id", "")).startswith(prefix):
+                hits.append((str(item["id"]), where))
+    if len(hits) != 1:
+        return "", ""
+    return hits[0]
+
+
+def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
+                        state: dict) -> bool:
+    """Act on `remember|forget|feedback <id>`. True if it was ours to handle."""
+    if verb not in ("remember", "forget", "feedback", "memories"):
+        return False
+    if verb == "memories":
+        payload = memory_call("GET", "/v1/memories?limit=25") or {}
+        items = payload.get("memories", [])
+        lines = "\n".join(f"`{short_id(m.get('id'))}` [{m.get('scope')}] "
+                          f"{str(m.get('statement',''))[:150]}" for m in items)
+        discord("POST", f"/channels/{channel}/messages", token, {
+            "content": (f"**What I remember** ({len(items)})\n{lines}\n"
+                        f"`forget <id>` to remove one."
+                        if items else "I have no memories stored.")})
+        return True
+
+    memory_id, where = resolve_memory(prefix)
+    if not memory_id:
+        discord("POST", f"/channels/{channel}/messages", token,
+                {"content": f"no single match for `{prefix}` — check `memories`"})
+        return True
+
+    if verb == "forget" and where == "memory":
+        result = memory_call("POST", f"/v1/memories/{memory_id}/forget",
+                             {"reason": "forgotten from Discord"})
+        reply = "forgotten" if result else "could not forget that"
+    elif verb == "forget":
+        result = memory_call("POST", f"/v1/proposals/{memory_id}/reject",
+                             {"reason": "rejected from Discord"})
+        reply = "dropped" if result else "could not drop that"
+    elif where != "proposal":
+        reply = "that is already stored; `forget` is the only thing left to do"
+    else:
+        result = memory_call("POST", f"/v1/proposals/{memory_id}/approve",
+                             {"kind": "feedback" if verb == "feedback" else "memory"})
+        if not result:
+            reply = "could not do that"
+        elif verb == "feedback":
+            reply = ("filed as feedback — on the list to fix properly, not "
+                     "stored as a memory")
+        else:
+            reply = "remembered"
+    discord("POST", f"/channels/{channel}/messages", token, {"content": reply})
+    state.get("memories_announced", {}).pop(memory_id, None)
+    log(f"{verb} {short_id(memory_id)} -> {reply}")
+    return True
+
 
 def record_denial(tool: str, user_id: str) -> None:
     """A denial is the strongest signal the system gets and used to vanish.
@@ -170,6 +347,7 @@ def main() -> int:
     state = load_cursor()
 
     while True:
+        announce_proposals(channel, token, state)
         for request in pending_requests():
             tool = request.get("tool", "")
             if state.get("announced", {}).get(tool):
@@ -201,6 +379,16 @@ def main() -> int:
             if str(author.get("id")) not in operators:
                 continue
             words = str(message.get("content", "")).strip().split()
+            if not words:
+                continue
+            # Memory review shares this loop, and therefore shares every
+            # property that makes it safe — bots already skipped above, so an
+            # injected assistant cannot approve its own memory by typing.
+            if handle_memory_reply(words[0].lower(),
+                                   words[1].strip("`") if len(words) > 1 else "",
+                                   channel, token, state):
+                save_cursor(state)
+                continue
             if len(words) < 2 or words[0].lower() not in ("approve", "deny"):
                 continue
             verb, tool = words[0].lower(), words[1].strip("`")

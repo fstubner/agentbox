@@ -331,3 +331,42 @@ def test_the_assistant_still_cannot_use_that_path(mem):
     with pytest.raises(mem.BridgeError) as exc:
         mem.create_memory(Handler(operator=False), {"statement": "sneaky"})
     assert exc.value.status == 403
+
+
+# --- forgetting ----------------------------------------------------------------
+
+
+def test_a_stored_memory_can_be_removed(mem):
+    """Memory was append-only: a wrong fact stayed wrong forever, and these
+    statements are read back as true, so a stale one misinforms every answer
+    that touches it."""
+    _, item = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                            "scope": "household"})
+    mem.forget_memory(Handler(), item["id"], {"reason": "it is Wednesday"})
+    store = mem.load_store()
+    assert store["memories"] == []
+    assert store["forgotten"][0]["statement"] == "Bin day is Tuesday"
+    assert store["forgotten"][0]["forgotten_reason"] == "it is Wednesday"
+
+
+def test_the_assistant_cannot_forget_a_memory(mem):
+    """Editing what it is allowed to remember by deleting the inconvenient
+    parts is the same capability as writing memory, in reverse."""
+    _, item = mem.create_memory(Handler(), {"statement": "x"})
+    with pytest.raises(mem.BridgeError) as exc:
+        mem.forget_memory(Handler(operator=False), item["id"], {})
+    assert exc.value.status == 403
+
+
+def test_forgetting_something_that_is_not_there_is_an_error(mem):
+    with pytest.raises(mem.BridgeError) as exc:
+        mem.forget_memory(Handler(), "no-such-id", {})
+    assert exc.value.status == 404
+
+
+def test_a_forgotten_memory_is_not_returned_to_the_assistant(mem):
+    _, item = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                            "scope": "household"})
+    mem.forget_memory(Handler(), item["id"], {})
+    _, payload = mem.list_memories(Handler(operator=False), None)
+    assert payload["memories"] == []

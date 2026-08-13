@@ -2126,6 +2126,43 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "") -> int:
     return 0
 
 
+def memory_show(limit: int = 50) -> int:
+    """What is actually stored, as opposed to what is waiting for review."""
+    payload = memory_request("GET", f"/v1/memories?limit={int(limit)}")
+    if payload is None:
+        return 1
+    items = payload.get("memories", [])
+    if not items:
+        print("nothing remembered yet")
+        return 0
+    for item in items:
+        print(f"{item['id']}  [{item.get('scope','household')}]  "
+              f"{item.get('statement','')}")
+        if item.get("edited_by_reviewer"):
+            print(f"{'':38}(edited; originally: "
+                  f"{item.get('original_statement','')[:60]})")
+    print(f"\n{len(items)} remembered — remove one with: "
+          f"cli/agentbox memory forget <id>")
+    return 0
+
+
+def memory_forget(memory_id: str, reason: str = "") -> int:
+    """Remove something already durable.
+
+    Memory was append-only until this existed: a wrong fact stayed wrong
+    forever, and these statements are read back as true, so a stale one does
+    not sit inertly — it misinforms every answer that touches it.
+    """
+    payload = memory_request(
+        "POST", f"/v1/memories/{urllib.parse.quote(memory_id)}/forget",
+        {"reason": reason})
+    if payload is None:
+        return 1
+    record_decision("operator", "forget", "memory", reason)
+    report(OK, f"forgotten: {payload.get('statement', memory_id)}")
+    return 0
+
+
 def feedback_list(status: str = "open") -> int:
     """The improvement backlog: things to fix properly rather than remember.
 
@@ -2605,6 +2642,10 @@ def main() -> None:
     reject = mem_sub.add_parser("reject")
     reject.add_argument("proposal_id")
     reject.add_argument("--reason", default="")
+    mem_sub.add_parser("show", help="what is actually stored")
+    forget = mem_sub.add_parser("forget", help="remove a stored memory")
+    forget.add_argument("memory_id")
+    forget.add_argument("--reason", default="")
     add = mem_sub.add_parser("add", help="state a fact directly, no review step")
     add.add_argument("statement")
     add.add_argument("--scope", default="",
@@ -2687,6 +2728,10 @@ def main() -> None:
     if args.cmd == "memory":
         if args.mem_cmd == "list":
             sys.exit(memory_list(args.identity))
+        if args.mem_cmd == "show":
+            sys.exit(memory_show())
+        if args.mem_cmd == "forget":
+            sys.exit(memory_forget(args.memory_id, args.reason))
         if args.mem_cmd == "add":
             sys.exit(memory_add(args.statement, args.scope, args.memory_type))
         sys.exit(memory_decide(args.mem_cmd, args.proposal_id, getattr(args, "reason", "")))

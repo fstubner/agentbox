@@ -499,6 +499,38 @@ def _file_as_feedback(store: dict[str, Any], proposal: dict[str, Any]):
     return 200, proposal
 
 
+def forget_memory(handler, memory_id: str, body):
+    """Remove a memory that is already durable. Operator-only.
+
+    Memory was append-only: once approved, a fact could be wrong forever with
+    no route out. That is worse here than in most stores, because these
+    statements are read back into the assistant's context as true — a stale
+    "Bin day is Tuesday" does not sit inertly, it actively misinforms every
+    answer that touches it.
+
+    Kept rather than deleted, in a `forgotten` list. The assistant cannot read
+    it, and it is the only record of what was once believed — which matters
+    when working out why an answer three weeks ago was wrong.
+    """
+    require_review(handler)
+    with _LOCK:
+        store = load_store()
+        item = next((x for x in store.get("memories", [])
+                     if x.get("id") == memory_id), None)
+        if not item:
+            raise BridgeError(404, "memory not found")
+        item["status"] = "forgotten"
+        item["updated_at"] = now()
+        reason = str((body or {}).get("reason", ""))[:500]
+        if reason:
+            item["forgotten_reason"] = reason
+        store["memories"] = [x for x in store["memories"]
+                             if x.get("id") != memory_id]
+        store.setdefault("forgotten", []).append(item)
+        save_store(store)
+    return 200, item
+
+
 def list_feedback(handler, body):
     """The improvement backlog. Operator-only: this is not assistant context.
 
@@ -728,6 +760,11 @@ class MemoryBridge(BridgeHandler):
                 if path.endswith(suffix):
                     proposal_id = path[len(prefix):-len(suffix)]
                     return handler(self, proposal_id, body)
+        memory_prefix = "/v1/memories/"
+        if method == "POST" and path.startswith(memory_prefix) and \
+                path.endswith("/forget"):
+            return forget_memory(self, path[len(memory_prefix):-len("/forget")],
+                                 body)
         feedback_prefix = "/v1/feedback/"
         if method == "POST" and path.startswith(feedback_prefix):
             for suffix in ("/fold", "/dismiss"):

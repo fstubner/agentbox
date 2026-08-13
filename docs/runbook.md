@@ -794,6 +794,37 @@ the file. Setgid keeps the group on anything written later.
 If that is missed, single-use grants are refused with an explicit message
 rather than silently degrading to unlimited-until-expiry.
 
+### Reviewing memories from Discord
+
+The same process, because it needs the same protections and reimplementing
+them is how they drift. Pending proposals are posted as they appear:
+
+```
+Memory proposal `520a4fcf`
+> Bin day is usually Wednesday
+Shall I remember this?
+Reply `remember 520a4fcf`, `feedback 520a4fcf` to file it as something to
+fix, or `forget 520a4fcf`.
+```
+
+Also `memories` to list what is stored, and `forget <id>` to remove one.
+
+Replies are accepted only from `AGENTBOX_APPROVAL_USER_IDS`, and messages
+authored by a bot are ignored before any verb is parsed — so the assistant,
+which reads the same channel, cannot approve its own memory even if an
+injected instruction makes it type the words.
+
+**Privacy:** a grant is about a tool and is nobody's secret, but a memory
+proposal can be private to one person. Household proposals go to the channel;
+private ones go only to that person's DM, which needs a mapping:
+
+```
+AGENTBOX_DISCORD_IDENTITIES="alex:123456789,sam:987654321"
+```
+
+Without a mapping a private proposal is not posted anywhere — it stays in the
+portal rather than defaulting to a channel someone else can read.
+
 ## Repo validation (CI-equivalent, run locally)
 ```
 cli/agentbox validate
