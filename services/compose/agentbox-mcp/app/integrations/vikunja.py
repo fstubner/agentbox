@@ -30,8 +30,14 @@ TOOLS = [
      "description": "Find a project by exact title, or create it if missing.",
      "inputSchema": schema_object({"title": {"type": "string"}, "description": {"type": "string"}}, ["title"])},
     {"name": "find_or_create_task", "title": "Find or create a task",
-     "description": "Find an open task by exact title in a project, or create it. "
-                    "Prefer this over create_task when a retry could duplicate work.",
+     "description": "Find an open task by exact title in a project, or create "
+                    "it. Prefer this over create_task when a retry could "
+                    "duplicate work.\n\n"
+                    "**Needs a project_id, which is a number, not a name.** "
+                    "Call list_projects first and match on title to get it — "
+                    "there is no way to pass a project by name, and guessing "
+                    "an id will either fail or file the task in the wrong "
+                    "project.",
      "inputSchema": schema_object(TASK_FIELDS, ["project_id", "title"])},
     {"name": "list_tasks", "title": "List tasks",
      "description": "List or search tasks. Use this before creating duplicates.",

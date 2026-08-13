@@ -68,15 +68,25 @@ def test_a_ready_house_scores_ready():
     assert "1 controllable" in house["detail"]
 
 
-def test_drive_403_reads_as_blocked_with_the_fix_named():
-    """The Drive gap has been open for days precisely because its symptom (an
-    opaque 403) never said what closes it. The scenario must."""
-    gateway = _fake_gateway({
-        "search_drive": (False, "ACCESS_TOKEN_SCOPE_INSUFFICIENT")})
+def test_an_empty_drive_result_names_the_scope_not_an_empty_drive():
+    """The worst kind of wrong answer this suite can give.
+
+    Under the drive.file scope the assistant sees only files it created, so a
+    person with a full Drive gets zero results. Reporting that as "no match"
+    told the operator their Drive was empty when the truth was that Agentbox
+    cannot see any of it — a scope decision, not a fault to fix.
+    """
+    gateway = _fake_gateway({"search_drive": (True, {"files": []})})
     outcome = lib.run(gateway, "tok")
     drive = next(r for r in outcome["results"] if "Drive" in r["asked"])
+    assert drive["state"] == lib.EMPTY
+    assert "drive.file" in drive["needs"]
+    assert "drive.readonly" in drive["needs"]
+    # And a real failure still reads as blocked.
+    broken = _fake_gateway({"search_drive": (False, "HTTP 403")})
+    outcome = lib.run(broken, "tok")
+    drive = next(r for r in outcome["results"] if "Drive" in r["asked"])
     assert drive["state"] == lib.BLOCKED
-    assert "re-consent" in (drive["detail"] + drive["needs"])
 
 
 def test_every_scenario_has_a_next_action_or_is_self_evident():

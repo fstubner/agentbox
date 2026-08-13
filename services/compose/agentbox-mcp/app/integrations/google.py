@@ -78,8 +78,15 @@ TOOLS = [
          ["message_id", "label_ids"])},
 
     {"name": "search_drive",
-     "description": "Search Google Drive by filename and document contents. "
-                    "Returns file metadata only — use read_drive_file for text.",
+     "description": "Search Drive by filename and contents. Returns metadata "
+                    "only — use read_drive_file for text.\n\n"
+                    "**Scope-limited, and this surprises people.** With the "
+                    "`drive.file` scope (the default here) you can only see "
+                    "files Agentbox itself created — not the person's own "
+                    "documents, however many they have. An empty result "
+                    "usually means 'not visible to me', NOT 'not in their "
+                    "Drive'. Say which you mean; do not report their Drive as "
+                    "empty.",
      "inputSchema": schema_object({
          "query": {"type": "string"},
          "folder_id": {"type": "string"},

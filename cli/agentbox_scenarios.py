@@ -209,10 +209,17 @@ SCENARIOS = [
     Scenario(
         "Find that lease PDF in my Drive.",
         "search_drive", {"query": "lease", "max_results": 5},
-        lambda ok, p: (READY, f"{len(p)} files") if ok and isinstance(p, list) and p
-        else (EMPTY, "Drive searched, no match") if ok
-        else (BLOCKED, "Drive scope: re-consent needed — " + str(p)[:70]),
-        needs="Drive re-consent (portal → Accounts → Reconnect, from the box)"),
+        # "no match" was a lie. With the drive.file scope the assistant can
+        # only see files it created itself, so a person with a full Drive gets
+        # zero results and a report that reads like an empty Drive. The
+        # scenario has to name the scope or it teaches the wrong lesson.
+        _has_items("files", key="files",
+                   needs="nothing is visible under the drive.file scope — see "
+                         "below"),
+        needs="the granted scope is drive.file, which sees ONLY files Agentbox "
+              "created — not your own documents. Granting drive.readonly at "
+              "consent time would let it search your real Drive; that is a "
+              "deliberate privacy decision, not a bug to fix"),
 ]
 
 

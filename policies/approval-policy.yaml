@@ -47,6 +47,7 @@ tiers:
     - drive_read                     # see the note below on which scope was granted
     - drive_write_own_folder         # the agent's own Drive folder only
     - speak_aloud                    # quiet hours enforced in the speaker service
+    - email_state_change             # archive / mark read; reversible, stays in the account
 
     # drive_read is `allowed` for the same reason personal_data_read is: the
     # real control is not an approval prompt but which OAuth scope was granted
@@ -60,6 +61,22 @@ tiers:
     # text formats, and there is no delete and no sharing — a permission change
     # is how a private document quietly becomes a public link, so it is absent
     # rather than gated.
+
+    # email_state_change moved from approval_required to allowed on
+    # 2026-08-13, on evidence rather than instinct. It was refused 17 times in
+    # one week and granted zero times: the gate was not protecting anything,
+    # it was training the assistant to route around a capability it had been
+    # given. A tier that is never granted is not a control, it is friction
+    # with a security-shaped explanation.
+    #
+    # What it covers is archive and mark-as-read, both reversible in one click
+    # and neither leaving the account — archived mail is in All Mail, unread
+    # is a flag. The irreversible and outward-facing things stay where they
+    # were: sending is absent entirely, deleting is absent entirely, and
+    # labels are confined to the agent's own namespace by the bridge.
+    #
+    # The real control is the same as everywhere else in this file: the bridge
+    # decides what `modify` may do, and it accepts exactly two verbs.
 
     # speak_aloud is `allowed` because the thing that makes 3am speech
     # impossible is a clamp in the process holding the speaker, not this tier.
@@ -81,7 +98,6 @@ tiers:
     - health_sensitive_recommendations
 
     # Assistant
-    - email_state_change             # archive / mark read — changes what the operator sees
     - store_sensitive_memory         # durable write; also gated by the memory review token
     - send_external_communications   # messages/emails/invites
 

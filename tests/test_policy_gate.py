@@ -47,10 +47,19 @@ def write_grant(path, tool, ttl=60, single_use=True):
     ]}))
 
 
+# The gated exemplar throughout is set_home_climate / home_control_climate.
+# It used to be archive_gmail, until that capability was moved to `allowed` on
+# evidence and thirteen tests broke that had nothing to do with email — they
+# were testing grant mechanics and only needed *something* gated. Climate is a
+# better stand-in: it is gated for a reason that will not expire (it costs
+# money and can wake a household), so these stay about the gate rather than
+# about the example.
+
+
 def test_shipped_policy_parses_and_has_all_tiers(tiers):
     assert set(tiers) == {"allowed", "approval_required", "always_denied"}
     assert "task_management" in tiers["allowed"]
-    assert "email_state_change" in tiers["approval_required"]
+    assert "home_control_climate" in tiers["approval_required"]
     assert "merge_own_pr" in tiers["always_denied"]
 
 
@@ -58,13 +67,13 @@ def test_one_policy_covers_operator_and_assistant_actions(tiers, tool_map):
     """The merge: operator capabilities and assistant tools resolve from the
     same file, so the two cannot contradict each other."""
     assert "host_package_install" in tiers["approval_required"]   # operator
-    assert tool_map["archive_gmail"] == "email_state_change"      # assistant
-    assert "email_state_change" in tiers["approval_required"]
+    assert tool_map["set_home_climate"] == "home_control_climate"      # assistant
+    assert "home_control_climate" in tiers["approval_required"]
 
 
 def test_tools_resolve_through_a_capability(tiers, tool_map):
     assert pg.tier_of("list_tasks", tiers, tool_map) == "allowed"
-    assert pg.tier_of("archive_gmail", tiers, tool_map) == "approval_required"
+    assert pg.tier_of("set_home_climate", tiers, tool_map) == "approval_required"
 
 
 def test_unmapped_tool_fails_closed(tiers, tool_map):
@@ -87,7 +96,7 @@ def test_unknown_tool_defaults_to_approval_required(tiers, grants, consumed, too
 
 def test_approval_required_denied_without_grant(tiers, grants, consumed, tool_map):
     with pytest.raises(pg.PolicyDenied) as exc:
-        pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+        pg.check("set_home_climate", tiers, grants, consumed, tool_map)
     message = str(exc.value)
     assert "requires operator approval" in message
     # The message no longer tells the model a command to suggest. The operator
@@ -97,45 +106,46 @@ def test_approval_required_denied_without_grant(tiers, grants, consumed, tool_ma
 
 
 def test_approval_required_passes_with_grant(tiers, grants, consumed, tool_map):
-    write_grant(grants, "archive_gmail")
-    pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+    write_grant(grants, "set_home_climate")
+    pg.check("set_home_climate", tiers, grants, consumed, tool_map)
 
 
 def test_single_use_grant_is_consumed(tiers, grants, consumed, tool_map):
-    write_grant(grants, "archive_gmail", single_use=True)
-    pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+    write_grant(grants, "set_home_climate", single_use=True)
+    pg.check("set_home_climate", tiers, grants, consumed, tool_map)
     with pytest.raises(pg.PolicyDenied):
-        pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+        pg.check("set_home_climate", tiers, grants, consumed, tool_map)
 
 
 def test_repeatable_grant_survives_use(tiers, grants, consumed, tool_map):
-    write_grant(grants, "archive_gmail", single_use=False)
-    pg.check("archive_gmail", tiers, grants, consumed, tool_map)
-    pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+    write_grant(grants, "set_home_climate", single_use=False)
+    pg.check("set_home_climate", tiers, grants, consumed, tool_map)
+    pg.check("set_home_climate", tiers, grants, consumed, tool_map)
 
 
 def test_expired_grant_does_not_authorise(tiers, grants, consumed, tool_map):
-    write_grant(grants, "archive_gmail", ttl=-1)
+    write_grant(grants, "set_home_climate", ttl=-1)
     with pytest.raises(pg.PolicyDenied):
-        pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+        pg.check("set_home_climate", tiers, grants, consumed, tool_map)
 
 
 def test_grant_for_one_tool_does_not_cover_another(tiers, grants, consumed, tool_map):
-    write_grant(grants, "archive_gmail")
+    write_grant(grants, "set_home_climate")
     with pytest.raises(pg.PolicyDenied):
-        pg.check("mark_gmail_read", tiers, grants, consumed, tool_map)
+        # A different gated tool: a grant is for one capability, not a mood.
+        pg.check("create_home_automation", tiers, grants, consumed, tool_map)
 
 
 def test_missing_grants_file_is_not_an_open_door(tiers, tmp_path, consumed, tool_map):
     with pytest.raises(pg.PolicyDenied):
-        pg.check("archive_gmail", tiers, tmp_path / "absent.json", consumed, tool_map)
+        pg.check("set_home_climate", tiers, tmp_path / "absent.json", consumed, tool_map)
 
 
 def test_corrupt_grants_file_is_not_an_open_door(tiers, grants, consumed, tool_map):
     """A gate that fails open on malformed input is not a gate."""
     grants.write_text("{ this is not json")
     with pytest.raises(pg.PolicyDenied):
-        pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+        pg.check("set_home_climate", tiers, grants, consumed, tool_map)
 
 
 def test_always_denied_cannot_be_granted(grants, consumed):
@@ -149,10 +159,10 @@ def test_always_denied_cannot_be_granted(grants, consumed):
 def test_read_only_grants_file_does_not_block_consumption(tiers, grants, consumed, tool_map):
     """Grants are mounted read-only in production; consumption is recorded
     elsewhere, so a read-only grants file must not break a legitimate call."""
-    write_grant(grants, "archive_gmail")
+    write_grant(grants, "set_home_climate")
     grants.chmod(0o444)
     try:
-        pg.check("archive_gmail", tiers, grants, consumed, tool_map)
+        pg.check("set_home_climate", tiers, grants, consumed, tool_map)
     finally:
         grants.chmod(0o644)
 
@@ -160,13 +170,13 @@ def test_read_only_grants_file_does_not_block_consumption(tiers, grants, consume
 def test_unwritable_consumption_store_refuses_rather_than_allows(tiers, grants, tmp_path, tool_map):
     """The bug this replaced: a read-only mount silently turned every
     single-use grant into an unlimited TTL-long window."""
-    write_grant(grants, "archive_gmail")
+    write_grant(grants, "set_home_climate")
     blocked = tmp_path / "ro" / "consumed.json"
     blocked.parent.mkdir()
     blocked.parent.chmod(0o500)
     try:
         with pytest.raises(pg.PolicyDenied) as exc:
-            pg.check("archive_gmail", tiers, grants, blocked, tool_map)
+            pg.check("set_home_climate", tiers, grants, blocked, tool_map)
         assert "cannot be enforced" in str(exc.value)
     finally:
         blocked.parent.chmod(0o700)
@@ -200,25 +210,25 @@ def test_capability_check_allows_an_allowed_capability(tiers, grants, consumed):
 
 def test_capability_check_denies_without_a_grant(tiers, grants, consumed):
     with pytest.raises(pg.PolicyDenied):
-        pg.check_capability("email_state_change", tiers, grants, consumed)
+        pg.check_capability("home_control_climate", tiers, grants, consumed)
 
 
 def test_grant_named_by_tool_authorises_the_capability(tiers, grants, consumed, tool_map):
-    """The operator grants `archive_gmail`; the bridge asks for
-    `email_state_change`. One grant, two vocabularies."""
-    write_grant(grants, "archive_gmail")
-    pg.check_capability("email_state_change", tiers, grants, consumed, tool_map=tool_map)
+    """The operator grants `set_home_climate`; the bridge asks for
+    `home_control_climate`. One grant, two vocabularies."""
+    write_grant(grants, "set_home_climate")
+    pg.check_capability("home_control_climate", tiers, grants, consumed, tool_map=tool_map)
 
 
 def test_non_consuming_check_leaves_the_grant_for_the_bridge(tiers, grants, consumed, tool_map):
     """The MCP checks without consuming so it cannot spend a single-use grant
     the bridge then needs — otherwise every gated call would fail at the layer
     whose answer actually matters."""
-    write_grant(grants, "archive_gmail")
-    pg.check("archive_gmail", tiers, grants, consumed, tool_map, consume=False)
-    pg.check_capability("email_state_change", tiers, grants, consumed, tool_map=tool_map)
+    write_grant(grants, "set_home_climate")
+    pg.check("set_home_climate", tiers, grants, consumed, tool_map, consume=False)
+    pg.check_capability("home_control_climate", tiers, grants, consumed, tool_map=tool_map)
     with pytest.raises(pg.PolicyDenied):
-        pg.check_capability("email_state_change", tiers, grants, consumed, tool_map=tool_map)
+        pg.check_capability("home_control_climate", tiers, grants, consumed, tool_map=tool_map)
 
 
 def test_always_denied_capability_cannot_be_granted(grants, consumed):
@@ -230,9 +240,15 @@ def test_always_denied_capability_cannot_be_granted(grants, consumed):
 
 
 def test_google_bridge_declares_its_gated_capabilities():
-    """The bridge must recognise the gated actions, or the second gate is
-    decorative."""
+    """The bridge must name the capability each action exercises, or the
+    second gate is decorative.
+
+    It declares the capability; the policy file decides the tier. Those are
+    deliberately different jobs — email_state_change moved to `allowed`
+    without this line changing, which is the separation working.
+    """
     src = (REPO / "services" / "compose" / "google-workspace-bridge" /
            "app" / "bridge.py").read_text()
     assert "def capability_for" in src
     assert "email_state_change" in src
+    assert "email_label_own_namespace" in src

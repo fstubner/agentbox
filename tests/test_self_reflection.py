@@ -110,7 +110,7 @@ def test_denied_calls_are_recorded(journal):
     """Bridges never see a policy denial, so without this the most interesting
     events — the assistant wanting something it cannot have — are invisible."""
     log = load_outcome_log(journal)
-    log.record("google-mcp", "archive_gmail", log.DENIED,
+    log.record("google-mcp", "set_home_climate", log.DENIED,
                capability="email_state_change")
     entry = records(journal)[0]
     assert entry["outcome"] == "denied"
@@ -119,8 +119,8 @@ def test_denied_calls_are_recorded(journal):
 
 def test_operator_decisions_are_recorded_with_a_subject(journal):
     log = load_outcome_log(journal)
-    log.record_decision("operator", "approve", "archive_gmail", "single-use")
-    log.record_decision("operator", "deny", "archive_gmail")
+    log.record_decision("operator", "approve", "set_home_climate", "single-use")
+    log.record_decision("operator", "deny", "set_home_climate")
     actions = [r["action"] for r in records(journal)]
     assert actions == ["approve", "deny"]
 
@@ -166,7 +166,7 @@ def test_aggregate_counts_outcomes_per_tool(tmp_path, monkeypatch):
     write_journal(tmp_path, "a-outcomes.jsonl", [
         {"ts": now, "tool": "list_tasks", "outcome": "ok", "ms": 10},
         {"ts": now, "tool": "list_tasks", "outcome": "ok", "ms": 20},
-        {"ts": now, "tool": "archive_gmail", "outcome": "denied", "ms": 1},
+        {"ts": now, "tool": "set_home_climate", "outcome": "denied", "ms": 1},
         {"ts": now, "tool": "find_or_create_task", "outcome": "invalid",
          "ms": 2, "detail": "missing_required_argument"},
     ])
@@ -174,7 +174,7 @@ def test_aggregate_counts_outcomes_per_tool(tmp_path, monkeypatch):
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert payload["total_calls"] == 4
     assert payload["tools"]["list_tasks"]["ok"] == 2
-    assert payload["tools"]["archive_gmail"]["denied"] == 1
+    assert payload["tools"]["set_home_climate"]["denied"] == 1
     assert "find_or_create_task: missing_required_argument" in payload["problems"]
 
 
@@ -277,8 +277,8 @@ def test_the_skill_tells_it_to_propose_rather_than_act():
 
 # --- tier disambiguation ----------------------------------------------------
 #
-# From the first real run of the loop. The assistant saw archive_gmail refused
-# and proposed "do not retry archive_gmail" — wrong: archive_gmail is
+# From the first real run of the loop. The assistant saw set_home_climate refused
+# and proposed "do not retry set_home_climate" — wrong: set_home_climate is
 # approval_required and available with a grant, not always_denied. "denied"
 # alone cannot distinguish "ask for this" from "never do this", and the
 # safe-looking reading is the one that silently discards a capability.
@@ -288,13 +288,13 @@ def test_summary_labels_each_tool_with_its_tier(tmp_path, monkeypatch):
     bridge = load_memory_bridge()
     now = int(time.time())
     write_journal(tmp_path, "a-outcomes.jsonl", [
-        {"ts": now, "tool": "archive_gmail", "outcome": "denied"},
+        {"ts": now, "tool": "set_home_climate", "outcome": "denied"},
         {"ts": now, "tool": "list_tasks", "outcome": "ok"},
     ])
     monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
     monkeypatch.setattr(bridge, "policy_gate", repo_policy_gate())
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
-    assert payload["tools"]["archive_gmail"]["tier"] == "approval_required"
+    assert payload["tools"]["set_home_climate"]["tier"] == "approval_required"
     assert payload["tools"]["list_tasks"]["tier"] == "allowed"
 
 
@@ -302,10 +302,10 @@ def test_an_approvable_refusal_says_it_can_be_approved(tmp_path, monkeypatch):
     """The note is what stops a reflecting model reading a refusal as final."""
     bridge = load_memory_bridge()
     write_journal(tmp_path, "a-outcomes.jsonl", [
-        {"ts": int(time.time()), "tool": "archive_gmail", "outcome": "denied"}])
+        {"ts": int(time.time()), "tool": "set_home_climate", "outcome": "denied"}])
     monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
-    assert "operator can approve" in payload["tools"]["archive_gmail"]["note"]
+    assert "operator can approve" in payload["tools"]["set_home_climate"]["note"]
 
 
 def test_a_missing_policy_omits_tiers_rather_than_failing(tmp_path, monkeypatch):
