@@ -490,3 +490,35 @@ def test_approving_a_proposal_can_supersede(mem):
     store = mem.load_store()
     assert next(x for x in store["memories"]
                 if x["id"] == old["id"])["status"] == mem.STATUS_SUPERSEDED
+
+
+def test_two_stored_memories_can_be_linked_after_the_fact(mem):
+    """The suggestion arrives after the write, and somebody reviewing a list
+    months later is looking at two memories that were never connected."""
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    _, new = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                           "scope": "household"})
+    _, linked = mem.link_supersession(Handler(), new["id"],
+                                      {"supersedes": old["id"]})
+    assert linked["replaced"]["statement"] == "Bin day is Tuesday"
+    _, history = mem.memory_history(Handler(), old["id"], None)
+    assert [h["statement"] for h in history["history"]] == [
+        "Bin day is Tuesday", "Bin day is Wednesday"]
+    _, visible = mem.list_memories(Handler(operator=False), None)
+    assert len(visible["memories"]) == 1
+
+
+def test_a_memory_cannot_supersede_itself(mem):
+    _, item = mem.create_memory(Handler(), {"statement": "x"})
+    with pytest.raises(mem.BridgeError) as exc:
+        mem.link_supersession(Handler(), item["id"], {"supersedes": item["id"]})
+    assert exc.value.status == 400
+
+
+def test_only_the_operator_can_link_a_supersession(mem):
+    _, item = mem.create_memory(Handler(), {"statement": "x"})
+    with pytest.raises(mem.BridgeError) as exc:
+        mem.link_supersession(Handler(operator=False), item["id"],
+                              {"supersedes": "anything"})
+    assert exc.value.status == 403

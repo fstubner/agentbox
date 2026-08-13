@@ -469,6 +469,56 @@ def own_proposals(identity: str, role: str) -> list[dict]:
             if p.get("scope", "household") in allowed]
 
 
+def stored_memories(identity: str, role: str) -> tuple[list[dict], dict]:
+    """Current memories this session may see, and the history behind each.
+
+    One call including superseded rows rather than a history request per
+    memory: the chain is derivable from the rows themselves, and N+1 requests
+    to render a page is how a list of ten becomes slow enough that nobody
+    opens it.
+    """
+    payload = memory_call("GET", "/v1/memories?limit=200&include_superseded=true")
+    if payload is None:
+        raise BridgeUnreachable
+    allowed = {identity}
+    if can(role, "memory:decide_household"):
+        allowed.add("household")
+    rows = [m for m in payload.get("memories", [])
+            if m.get("scope", "household") in allowed]
+    by_id = {m.get("id"): m for m in rows}
+    current = [m for m in rows if m.get("status", "approved") == "approved"]
+    history: dict[str, list[dict]] = {}
+    for item in current:
+        chain, cursor = [], item.get("supersedes")
+        while cursor in by_id and cursor not in {c.get("id") for c in chain}:
+            chain.append(by_id[cursor])
+            cursor = by_id[cursor].get("supersedes")
+        history[item["id"]] = chain
+    return current, history
+
+
+def forget_memory(identity: str, role: str, memory_id: str,
+                  origin: str = ORIGIN_EMAIL) -> tuple[bool, str]:
+    """Retire a stored memory, refusing anything out of scope.
+
+    Withheld from assistant-minted sessions for the same reason approving is:
+    editing what it may remember by deleting the inconvenient parts is the
+    same capability as writing memory, in reverse.
+    """
+    require(role, "memory:decide_own", origin)
+    try:
+        current, _ = stored_memories(identity, role)
+    except BridgeUnreachable:
+        return False, "The memory service did not respond. Nothing changed."
+    if memory_id not in {m.get("id") for m in current}:
+        return False, "That memory is not yours to remove."
+    result = memory_call("POST", f"/v1/memories/{memory_id}/forget",
+                         {"reason": "removed from the portal"})
+    if result is None:
+        return False, "The memory service did not respond. Nothing changed."
+    return True, "Forgotten."
+
+
 def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
                   origin: str = ORIGIN_EMAIL,
                   statement: str = "") -> tuple[bool, str]:
@@ -820,6 +870,39 @@ def render_home(identity: str, role: str, flash: str,
             f"</button>"
             f"<button name=verb value=reject>Forget it</button>"
             f"</form></div>")
+    # What is actually stored, as opposed to what is waiting. Without this the
+    # page could only ever add memories, never show or correct them.
+    try:
+        current, history = stored_memories(identity, role)
+    except BridgeUnreachable:
+        current, history = [], {}
+    if current:
+        parts.append("<h1 style='margin-top:2rem'>What I remember</h1>")
+        for item in current:
+            scope = html.escape(str(item.get("scope", "household")))
+            label = "private to you" if scope == identity else scope
+            past = history.get(item["id"], [])
+            chain = ""
+            if past:
+                # Superseded versions are collapsed rather than hidden: the
+                # useful record is that this replaced something, and what.
+                rows = "".join(
+                    f"<div style='color:#5b6470;font-size:.85rem;"
+                    f"padding:.2rem 0'>was: {html.escape(str(p.get('statement','')))}"
+                    f"</div>" for p in past)
+                chain = (f"<details style='margin:.4rem 0 0'>"
+                         f"<summary style='cursor:pointer;color:#5b6470;"
+                         f"font-size:.85rem'>{len(past)} earlier version"
+                         f"{'s' if len(past) > 1 else ''}</summary>{rows}"
+                         f"</details>")
+            parts.append(
+                f"<div class=card><span class=scope>{html.escape(label)}</span>"
+                f"<p class=stmt>{html.escape(str(item.get('statement','')))}</p>"
+                f"{chain}"
+                f"<form method=post action=/memory/forget>"
+                f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
+                f"<button>Forget this</button></form></div>")
+
     parts.append("<footer>Only you can approve a memory in your own private "
                  "scope \u2014 not the assistant, and not the household admin."
                  " &middot; <a href='/logout'>Sign out</a></footer>")
@@ -1264,6 +1347,19 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if path == "/connectors/start":
             self._connector_action(session, form)
+            return
+
+        if path == "/memory/forget":
+            try:
+                _, message = forget_memory(
+                    session["identity"], session["role"],
+                    (form.get("id") or [""])[0],
+                    session.get("origin", ORIGIN_AGENT))
+            except PermissionError:
+                message = ("This link was created by the assistant, so it "
+                           "cannot remove memories. Sign in from the email "
+                           "link to do that.")
+            self._redirect("/?" + urllib.parse.urlencode({"m": message}))
             return
 
         if path == "/memory/decide":

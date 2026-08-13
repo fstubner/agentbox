@@ -175,3 +175,61 @@ def test_forget_on_a_stored_memory_uses_the_forget_route(monkeypatch):
 def test_an_unrelated_message_is_left_alone():
     assert lib.handle_memory_reply("approve", "archive_gmail", "c", "t", {}) is False
     assert lib.handle_memory_reply("hello", "", "c", "t", {}) is False
+
+
+# --- superseding from Discord --------------------------------------------------
+
+
+def test_remember_replaces_links_them_in_one_step(monkeypatch):
+    calls = []
+    monkeypatch.setattr(lib, "discord", Recorder())
+    monkeypatch.setattr(lib, "resolve_memory",
+                        lambda p: (("new-1", "proposal") if p == "aaa"
+                                   else ("old-1", "memory")))
+    monkeypatch.setattr(lib, "memory_call",
+                        lambda m, p, b=None: calls.append((p, b)) or
+                        {"replaced": {"statement": "Bin day is Tuesday"}})
+    assert lib.handle_memory_reply("remember", "aaa", "c", "tok", {},
+                                   ["replaces", "bbb"]) is True
+    path, body = calls[0]
+    assert path.endswith("/approve")
+    assert body["supersedes"] == "old-1"
+
+
+def test_replaces_links_two_already_stored(monkeypatch):
+    """The suggestion arrives after the write, so this is the shape it
+    usually needs."""
+    calls = []
+    monkeypatch.setattr(lib, "discord", Recorder())
+    monkeypatch.setattr(lib, "resolve_memory",
+                        lambda p: (("new-1", "memory") if p == "aaa"
+                                   else ("old-1", "memory")))
+    monkeypatch.setattr(lib, "memory_call",
+                        lambda m, p, b=None: calls.append((p, b)) or
+                        {"replaced": {"statement": "Bin day is Tuesday"}})
+    lib.handle_memory_reply("replaces", "aaa", "c", "tok", {}, ["bbb"])
+    assert calls[0][0] == "/v1/memories/new-1/supersede"
+    assert calls[0][1]["supersedes"] == "old-1"
+
+
+def test_a_suggestion_tells_you_exactly_what_to_type(monkeypatch):
+    """Leaving two contradictory facts current with no instruction is how the
+    queue stops being trusted."""
+    posted = Recorder()
+    monkeypatch.setattr(lib, "discord", posted)
+    monkeypatch.setattr(lib, "resolve_memory", lambda p: ("new-12345678", "proposal"))
+    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+        "possibly_supersedes": [{"id": "old-87654321",
+                                 "statement": "Bin day is Tuesday"}]})
+    lib.handle_memory_reply("remember", "aaa", "c", "tok", {})
+    content = posted.posts[-1][1]
+    assert "may replace" in content
+    assert "replaces new-1234 old-8765" in content
+
+
+def test_replaces_without_a_target_asks_rather_than_guesses(monkeypatch):
+    posted = Recorder()
+    monkeypatch.setattr(lib, "discord", posted)
+    monkeypatch.setattr(lib, "resolve_memory", lambda p: ("new-1", "memory"))
+    lib.handle_memory_reply("replaces", "aaa", "c", "tok", {}, [])
+    assert "which one it replaces" in posted.posts[-1][1]

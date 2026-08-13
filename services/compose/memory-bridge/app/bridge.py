@@ -632,6 +632,38 @@ def _mark_superseded(store: dict[str, Any], old_id: str, new_id: str) -> dict:
     return old
 
 
+def link_supersession(handler, new_id: str, body):
+    """Record that an already-stored memory replaced an older one.
+
+    The link is usually made when the new fact is written, but not always: the
+    suggestion arrives *after* the write, and somebody reviewing a list months
+    later is looking at two memories that were never connected. Without this
+    the only way to reconcile them is to forget one, which throws away the
+    chain that makes the change legible.
+    """
+    require_review(handler)
+    old_id = str((body or {}).get("supersedes") or "").strip()
+    if not old_id:
+        raise BridgeError(400, "supersedes is required")
+    if old_id == new_id:
+        raise BridgeError(400, "a memory cannot supersede itself")
+    with _LOCK:
+        store = load_store()
+        new = next((x for x in store.get("memories", [])
+                    if x.get("id") == new_id), None)
+        if not new:
+            raise BridgeError(404, "memory not found")
+        if new.get("status", STATUS_APPROVED) != STATUS_APPROVED:
+            raise BridgeError(409, f"{new_id} is {new.get('status')}, so it "
+                                   f"cannot be the current version of anything")
+        replaced = _mark_superseded(store, old_id, new_id)
+        new["supersedes"] = old_id
+        new["updated_at"] = now()
+        save_store(store)
+    return 200, {**new, "replaced": {"id": replaced["id"],
+                                     "statement": replaced["statement"]}}
+
+
 def memory_history(handler, memory_id: str, body):
     """The whole chain this memory belongs to, oldest first.
 
@@ -942,6 +974,10 @@ class MemoryBridge(BridgeHandler):
                 path.endswith("/history"):
             return memory_history(
                 self, path[len(memory_prefix):-len("/history")], body)
+        if method == "POST" and path.startswith(memory_prefix) and \
+                path.endswith("/supersede"):
+            return link_supersession(
+                self, path[len(memory_prefix):-len("/supersede")], body)
         if method == "POST" and path.startswith(memory_prefix) and \
                 path.endswith("/forget"):
             return forget_memory(self, path[len(memory_prefix):-len("/forget")],

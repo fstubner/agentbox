@@ -813,6 +813,23 @@ cli/agentbox memory history <any-id-in-the-chain>
 `history` resolves from **any** link, because the id you have is usually the
 one you saw in an old answer, not the current one.
 
+From Discord:
+
+```
+remember <id> replaces <old-id>    approve it, retiring what it replaces
+replaces <new-id> <old-id>         link two that are already stored
+```
+
+The second exists because the suggestion appears *after* the write — and
+somebody reviewing a list months later is looking at two memories that were
+never connected.
+
+The portal's Memories tab lists what is stored under **What I remember**, with
+earlier versions collapsed beneath each one and a Forget button. Forgetting is
+withheld from assistant-minted sessions for the same reason approving is:
+deleting the inconvenient parts is the same capability as writing memory, in
+reverse.
+
 Adding a memory that looks like it replaces an existing one prints a
 suggestion rather than acting on it. An automatic supersession that is wrong
 hides a true memory behind a false one and says nothing, which is worse than

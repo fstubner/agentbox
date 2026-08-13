@@ -266,10 +266,19 @@ def resolve_memory(prefix: str) -> tuple[str, str]:
 
 
 def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
-                        state: dict) -> bool:
-    """Act on `remember|forget|feedback <id>`. True if it was ours to handle."""
-    if verb not in ("remember", "forget", "feedback", "memories"):
+                        state: dict, rest: list[str] | None = None) -> bool:
+    """Act on a memory command. True if it was ours to handle.
+
+        memories                       what is stored
+        remember <id>                  approve a proposal
+        remember <id> replaces <old>   approve it, retiring what it replaces
+        replaces <new> <old>           link two that are already stored
+        feedback <id>                  file it as something to fix
+        forget <id>                    drop a proposal, or retire a memory
+    """
+    if verb not in ("remember", "forget", "feedback", "memories", "replaces"):
         return False
+    rest = rest or []
     if verb == "memories":
         payload = memory_call("GET", "/v1/memories?limit=25") or {}
         items = payload.get("memories", [])
@@ -287,6 +296,33 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
                 {"content": f"no single match for `{prefix}` — check `memories`"})
         return True
 
+    # `replaces <new> <old>` links two memories that are already stored, which
+    # is the shape this arrives in most often: the suggestion appears after
+    # the write, not before it.
+    if verb == "replaces":
+        old_id, _ = resolve_memory(rest[0]) if rest else ("", "")
+        if not old_id:
+            discord("POST", f"/channels/{channel}/messages", token, {
+                "content": "say which one it replaces: `replaces <new> <old>`"})
+            return True
+        result = memory_call("POST", f"/v1/memories/{memory_id}/supersede",
+                             {"supersedes": old_id})
+        discord("POST", f"/channels/{channel}/messages", token, {
+            "content": (f"linked — “{result['replaced']['statement'][:80]}” is "
+                        f"now history" if result else "could not link those")})
+        return True
+
+    # `remember <id> replaces <old>` does it in one step, before the new fact
+    # is ever current alongside the old one.
+    supersedes = ""
+    if verb == "remember" and len(rest) >= 2 and rest[0].lower() in (
+            "replaces", "replacing", "supersedes"):
+        supersedes, _ = resolve_memory(rest[1].strip("`"))
+        if not supersedes:
+            discord("POST", f"/channels/{channel}/messages", token, {
+                "content": f"no single match for `{rest[1]}`"})
+            return True
+
     if verb == "forget" and where == "memory":
         result = memory_call("POST", f"/v1/memories/{memory_id}/forget",
                              {"reason": "forgotten from Discord"})
@@ -298,15 +334,27 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
     elif where != "proposal":
         reply = "that is already stored; `forget` is the only thing left to do"
     else:
+        payload = {"kind": "feedback" if verb == "feedback" else "memory"}
+        if supersedes:
+            payload["supersedes"] = supersedes
         result = memory_call("POST", f"/v1/proposals/{memory_id}/approve",
-                             {"kind": "feedback" if verb == "feedback" else "memory"})
+                             payload)
         if not result:
             reply = "could not do that"
         elif verb == "feedback":
             reply = ("filed as feedback — on the list to fix properly, not "
                      "stored as a memory")
+        elif result.get("replaced"):
+            reply = (f"remembered — “{result['replaced']['statement'][:70]}” "
+                     f"is now history")
         else:
             reply = "remembered"
+            # The suggestion only exists after the write. Say what to type to
+            # act on it rather than leaving two contradictory facts current.
+            for candidate in result.get("possibly_supersedes", [])[:2]:
+                reply += (f"\nthis may replace “{candidate['statement'][:60]}” "
+                          f"— `replaces {short_id(memory_id)} "
+                          f"{short_id(candidate['id'])}` to link them")
     discord("POST", f"/channels/{channel}/messages", token, {"content": reply})
     state.get("memories_announced", {}).pop(memory_id, None)
     log(f"{verb} {short_id(memory_id)} -> {reply}")
@@ -386,7 +434,8 @@ def main() -> int:
             # injected assistant cannot approve its own memory by typing.
             if handle_memory_reply(words[0].lower(),
                                    words[1].strip("`") if len(words) > 1 else "",
-                                   channel, token, state):
+                                   channel, token, state,
+                                   [w.strip("`") for w in words[2:]]):
                 save_cursor(state)
                 continue
             if len(words) < 2 or words[0].lower() not in ("approve", "deny"):

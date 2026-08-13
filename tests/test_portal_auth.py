@@ -430,3 +430,74 @@ def test_an_agent_minted_session_still_cannot_decide(portal):
     with pytest.raises(PermissionError):
         portal.decide_memory("alex", portal.ADMIN, "p5", "approve",
                              origin=portal.ORIGIN_AGENT, statement="edited")
+
+
+# --- stored memories, history, and forgetting ---------------------------------
+
+
+def _memories_payload(rows):
+    return {"memories": rows, "total": len(rows)}
+
+
+def test_the_page_shows_what_is_actually_stored(portal, monkeypatch):
+    """Without this the portal could only ever add memories, never show or
+    correct them."""
+    portal.own_proposals = lambda identity, role: []
+    monkeypatch.setattr(portal, "memory_call", lambda m, p, payload=None:
+                        _memories_payload([
+                            {"id": "m1", "scope": "household", "status": "approved",
+                             "statement": "Bin day is Wednesday"}]))
+    body = portal.render_home("alex", portal.ADMIN, "").decode()
+    assert "What I remember" in body
+    assert "Bin day is Wednesday" in body
+    assert "Forget this" in body
+
+
+def test_earlier_versions_are_shown_as_history(portal, monkeypatch):
+    """The useful record is that this replaced something, and what."""
+    portal.own_proposals = lambda identity, role: []
+    monkeypatch.setattr(portal, "memory_call", lambda m, p, payload=None:
+                        _memories_payload([
+                            {"id": "old", "scope": "household",
+                             "status": "superseded",
+                             "statement": "Bin day is Tuesday"},
+                            {"id": "new", "scope": "household",
+                             "status": "approved", "supersedes": "old",
+                             "statement": "Bin day is Wednesday"}]))
+    body = portal.render_home("alex", portal.ADMIN, "").decode()
+    assert "1 earlier version" in body
+    assert "was: Bin day is Tuesday" in body
+    # The superseded one is history, not a second current memory.
+    assert body.count("Forget this") == 1
+
+
+def test_another_persons_memory_is_not_listed(portal, monkeypatch):
+    portal.own_proposals = lambda identity, role: []
+    monkeypatch.setattr(portal, "memory_call", lambda m, p, payload=None:
+                        _memories_payload([
+                            {"id": "m1", "scope": "sam", "status": "approved",
+                             "statement": "Sam's private thing"}]))
+    body = portal.render_home("alex", portal.MEMBER, "").decode()
+    assert "Sam's private thing" not in body
+
+
+def test_forgetting_out_of_scope_is_refused(portal, monkeypatch):
+    """An id posted from a crafted form must never decide whose memory is
+    touched."""
+    monkeypatch.setattr(portal, "memory_call", lambda m, p, payload=None:
+                        _memories_payload([
+                            {"id": "mine", "scope": "alex", "status": "approved",
+                             "statement": "x"}]))
+    ok, message = portal.forget_memory("alex", portal.MEMBER, "someone-elses")
+    assert not ok
+    assert "not yours" in message
+
+
+def test_an_agent_session_cannot_forget(portal, monkeypatch):
+    """Deleting the inconvenient parts is the same capability as writing
+    memory, in reverse."""
+    monkeypatch.setattr(portal, "memory_call", lambda m, p, payload=None:
+                        _memories_payload([]))
+    with pytest.raises(PermissionError):
+        portal.forget_memory("alex", portal.ADMIN, "m1",
+                             origin=portal.ORIGIN_AGENT)
