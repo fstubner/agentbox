@@ -309,3 +309,25 @@ def test_a_legacy_fact_still_becomes_a_memory(mem):
     after = mem.load_store()
     assert len(after["memories"]) == 1
     assert after.get("feedback", []) == []
+
+
+# --- the operator stating a fact -----------------------------------------------
+
+
+def test_the_operator_can_state_a_fact_without_a_review_step(mem):
+    """Reviewing your own statement is theatre. The gate exists so the
+    assistant cannot write its own memory; a person typing at a terminal is
+    the evidence it protects.
+    """
+    _, item = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                            "scope": "household"})
+    assert item["scope"] == "household"
+    assert mem.load_store()["memories"][0]["statement"] == "Bin day is Wednesday"
+    assert mem.load_store()["proposals"] == []
+
+
+def test_the_assistant_still_cannot_use_that_path(mem):
+    """The whole reason the direct write is operator-only."""
+    with pytest.raises(mem.BridgeError) as exc:
+        mem.create_memory(Handler(operator=False), {"statement": "sneaky"})
+    assert exc.value.status == 403
