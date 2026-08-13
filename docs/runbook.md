@@ -802,7 +802,7 @@ end states, not two:
 | status | meaning | assistant reads it |
 |---|---|---|
 | `approved` | current | yes |
-| `superseded` | was true, something replaced it | no — history |
+| `superseded` | was true, something replaced it | as history, nested |
 | `forgotten` | should never have been stored | no |
 
 ```
@@ -812,6 +812,14 @@ cli/agentbox memory history <any-id-in-the-chain>
 
 `history` resolves from **any** link, because the id you have is usually the
 one you saw in an old answer, not the current one.
+
+`search_memories` returns the current version of each fact with the versions
+it replaced nested underneath as `previously`, each carrying the date it
+stopped being true. Nested rather than listed flat: a prior version costs a
+sentence and a date rather than a second copy of every field, and there is no
+ambiguity about which is current for a model to be confused by. Capped at
+`MEMORY_MAX_PRIOR_VERSIONS` (default 3) so a fact revised fifty times does not
+become fifty lines in every retrieval.
 
 From Discord:
 

@@ -923,10 +923,21 @@ SIGNIN = """<h1>Agentbox</h1>
 browser. Opening it somewhere else will not sign anyone in.</footer>"""
 
 
-def render_signin(flash: str = "") -> bytes:
+def render_signin(sent: bool = False) -> bytes:
+    """The signed-out page. It never echoes text from the URL.
+
+    It used to render whatever `?m=` carried, which is how a redirect meant
+    for a signed-in page — "Google consent received. An operator has to finish
+    it…" — ended up greeting anyone who opened a stale URL, truncated at 120
+    characters, long after the thing it described had been finished. Worse, it
+    told an unauthenticated visitor what the box had recently been doing.
+    Only one message belongs here, and it is fixed text.
+    """
+    told = ("If that address belongs to someone here, a sign-in link is on "
+            "its way. It will only work in this browser.")
     return page("Sign in \u2014 Agentbox", SIGNIN.format(
         minutes=LINK_TTL_SECONDS // 60,
-        flash=f"<div class=flash>{html.escape(flash)}</div>" if flash else ""))
+        flash=f"<div class=flash>{told}</div>" if sent else ""))
 
 
 def render_connectors(identity: str, role: str, flash: str,
@@ -1137,7 +1148,9 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         session = self._session()
         if not session:
-            self._send(401, render_signin(flash))
+            # `sent` is a flag, not a message: nothing from the URL is
+            # rendered to somebody who is not signed in.
+            self._send(401, render_signin(query.get("sent") == ["1"]))
             return
 
         if parsed.path == "/logout":
@@ -1304,8 +1317,6 @@ class PortalHandler(BaseHTTPRequestHandler):
         whether or not delivery succeeded. Anything else turns this form into a
         way to enumerate who lives here.
         """
-        told = ("If that address belongs to someone here, a sign-in link is on "
-                "its way. It will only work in this browser.")
         identity = identity_for_email(address)
         nonce = secrets.token_urlsafe(24)
         if identity:
@@ -1319,7 +1330,7 @@ class PortalHandler(BaseHTTPRequestHandler):
             except RuntimeError as exc:
                 sys.stderr.write(f"[portal] {exc}\n")
         self.send_response(303)
-        self.send_header("Location", "/?" + urllib.parse.urlencode({"m": told}))
+        self.send_header("Location", "/?sent=1")
         self.send_header("Set-Cookie",
                          f"req={nonce}; HttpOnly; SameSite=Lax; Path=/; "
                          f"Max-Age={LINK_TTL_SECONDS}")

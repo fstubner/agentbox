@@ -522,3 +522,81 @@ def test_only_the_operator_can_link_a_supersession(mem):
         mem.link_supersession(Handler(operator=False), item["id"],
                               {"supersedes": "anything"})
     assert exc.value.status == 403
+
+
+# --- history the assistant can actually use ------------------------------------
+#
+# Excluding superseded versions outright was the first design and it was
+# wrong. The argument — two contradictory memories produce a confident wrong
+# answer — holds only when nothing says which is current. Nested under the
+# fact that replaced it, with the date it stopped being true, there is no
+# ambiguity left, and the assistant can answer "when did that change?" instead
+# of flatly contradicting somebody who remembers the old value.
+
+
+def test_the_current_fact_carries_its_own_history(mem):
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                  "scope": "household", "supersedes": old["id"]})
+    _, payload = mem.list_memories(Handler(operator=False), None)
+    assert len(payload["memories"]) == 1
+    current = payload["memories"][0]
+    assert current["statement"] == "Bin day is Wednesday"
+    assert current["previously"][0]["statement"] == "Bin day is Tuesday"
+    # The date it stopped being true is what removes the ambiguity.
+    assert current["previously"][0]["until"]
+
+
+def test_history_is_nested_not_a_second_current_memory(mem):
+    """Flat inclusion is what makes a model contradict itself; nesting is
+    what makes the same information safe."""
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                  "scope": "household", "supersedes": old["id"]})
+    _, payload = mem.list_memories(Handler(operator=False), None)
+    statements = [m["statement"] for m in payload["memories"]]
+    assert statements == ["Bin day is Wednesday"]
+
+
+def test_a_memory_with_no_history_carries_no_empty_field(mem):
+    """Context economy: an empty list on every memory is pure cost."""
+    mem.create_memory(Handler(), {"statement": "Sam is allergic to peanuts"})
+    _, payload = mem.list_memories(Handler(operator=False), None)
+    assert "previously" not in payload["memories"][0]
+
+
+def test_a_long_chain_is_capped(mem):
+    """A fact revised fifty times must not become fifty lines in every
+    retrieval."""
+    monkey = mem.MAX_PRIOR_VERSIONS
+    _, item = mem.create_memory(Handler(), {"statement": "version 0",
+                                            "scope": "household"})
+    for n in range(1, monkey + 3):
+        _, item = mem.create_memory(Handler(), {"statement": f"version {n}",
+                                                "scope": "household",
+                                                "supersedes": item["id"]})
+    _, payload = mem.list_memories(Handler(operator=False), None)
+    assert len(payload["memories"][0]["previously"]) == monkey
+
+
+def test_the_management_view_still_returns_flat_rows(mem):
+    """The portal builds chains itself and wants the raw rows."""
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                  "scope": "household", "supersedes": old["id"]})
+    _, payload = mem.list_memories(
+        Handler(query="?include_superseded=true"), None)
+    assert len(payload["memories"]) == 2
+
+
+def test_listing_never_writes_an_index_into_the_store(mem):
+    """An index cached on the store is one save_store away from being written
+    to the memory file on disk."""
+    mem.create_memory(Handler(), {"statement": "x"})
+    mem.list_memories(Handler(), None)
+    assert "_index" not in mem.load_store()
+    mem.create_memory(Handler(), {"statement": "y"})
+    assert "_index" not in mem.load_store()

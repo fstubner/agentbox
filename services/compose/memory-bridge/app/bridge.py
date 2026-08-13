@@ -425,14 +425,32 @@ def list_memories(handler, body):
     identity = identity_of(handler)
     operator = is_operator(handler)
     query = query_of(handler)
-    # Superseded facts are history, not context. Two contradictory memories
-    # with no marker of which is current is how a confident wrong answer
-    # happens, so they are excluded unless explicitly asked for.
+    # `include_superseded=true` returns retired rows as top-level items, which
+    # is what a management view wants. The assistant gets something better: the
+    # current fact with its own history nested underneath.
+    #
+    # Excluding history outright was the first design and it was wrong. The
+    # argument was that two contradictory memories produce a confident wrong
+    # answer — true only when nothing says which is current. Nested under the
+    # fact that replaced it, with the date it stopped being true, there is no
+    # ambiguity left to be confused by, and the assistant can answer "when did
+    # that change?" instead of flatly contradicting somebody who remembers the
+    # old value.
+    #
+    # Nested rather than flat for context economy, which is the real cost:
+    # a prior version carries a sentence and a date, not a second copy of
+    # every field. Capped, because a fact revised fifty times must not become
+    # fifty lines in every retrieval.
     include_history = first(query, "include_superseded", "") == "true"
     current = [x for x in store["memories"]
                if include_history
                or x.get("status", STATUS_APPROVED) == STATUS_APPROVED]
     items = visible_to(filter_items(current, {}), identity, operator)
+    if not include_history:
+        by_id = {x.get("id"): x for x in store["memories"]}
+        items = [dict(x, **({"previously": prior}
+                            if (prior := _prior_versions(by_id, x)) else {}))
+                 for x in items]
     scopes = visible_scopes(identity, operator)
     return 200, {"memories": items[:limit], "total": len(items),
                  "scopes_visible": "all" if scopes is None else sorted(scopes)}
@@ -662,6 +680,33 @@ def link_supersession(handler, new_id: str, body):
         save_store(store)
     return 200, {**new, "replaced": {"id": replaced["id"],
                                      "statement": replaced["statement"]}}
+
+
+MAX_PRIOR_VERSIONS = int(os.environ.get("MEMORY_MAX_PRIOR_VERSIONS", "3"))
+
+
+def _prior_versions(by_id: dict[str, Any], item: dict[str, Any]) -> list[dict]:
+    """The versions this fact replaced, newest first and capped.
+
+    Takes a prebuilt index rather than caching one on the store: anything
+    stashed there is one save_store away from being written to the file on
+    disk, and an index of every memory nested inside the memory file is not a
+    mistake worth risking to save a dict comprehension.
+
+    Walks the `supersedes` links rather than searching, so a fact revised
+    three times costs three lookups, and a whole listing is O(memories).
+    """
+    prior, cursor, guard = [], item.get("supersedes"), set()
+    while cursor in by_id and cursor not in guard and \
+            len(prior) < MAX_PRIOR_VERSIONS:
+        guard.add(cursor)
+        old = by_id[cursor]
+        prior.append({"statement": old.get("statement"),
+                      # When it stopped being true, which is the field that
+                      # makes "which of these is current" unambiguous.
+                      "until": old.get("superseded_at") or old.get("updated_at")})
+        cursor = old.get("supersedes")
+    return prior
 
 
 def memory_history(handler, memory_id: str, body):

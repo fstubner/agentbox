@@ -251,13 +251,42 @@ def test_operator_issued_links_need_no_nonce(portal):
     assert portal.redeem_link(link_id, secret_of(url), "")[0] == "sam"
 
 
-def test_unknown_address_is_indistinguishable(portal):
-    """The sign-in form must not reveal who lives here."""
-    import inspect
-    source = inspect.getsource(portal.PortalHandler._request_link)
-    # One response string, built before the lookup and never branched on.
-    assert source.count("told = ") == 1
-    assert "Location" in source and source.count("told") == 2
+class _CapturingHandler:
+    """Enough of BaseHTTPRequestHandler to see exactly what was sent back."""
+
+    def __init__(self, portal):
+        self.sent = []
+        self._request_link = portal.PortalHandler._request_link.__get__(self)
+
+    def send_response(self, code):
+        self.sent.append(("status", code))
+
+    def send_header(self, key, value):
+        self.sent.append((key, value))
+
+    def end_headers(self):
+        pass
+
+
+def test_unknown_address_is_indistinguishable(portal, monkeypatch):
+    """The sign-in form must not reveal who lives here.
+
+    Exercised rather than grepped: the response to a registered address and an
+    unregistered one must be byte-identical apart from the nonce, and only
+    running both can show that.
+    """
+    monkeypatch.setattr(portal, "IDENTITY_EMAILS", "alex:alex@example.com")
+    monkeypatch.setattr(portal, "send_link_email", lambda a, u: (True, ""))
+
+    def response_for(address):
+        handler = _CapturingHandler(portal)
+        handler._request_link(address)
+        # The nonce differs by design; everything else must not.
+        return [(k, v.split(";")[0] if k == "Set-Cookie" else v)
+                for k, v in handler.sent if k != "Set-Cookie"]
+
+    assert response_for("alex@example.com") == response_for("nobody@example.com")
+    assert ("Location", "/?sent=1") in response_for("nobody@example.com")
 
 
 def test_email_lookup_is_case_insensitive(portal, monkeypatch):
@@ -359,14 +388,22 @@ def test_startup_warns_when_links_cannot_be_delivered(portal):
     assert "never sent" in source
 
 
-def test_delivery_failure_is_never_revealed_to_the_browser(portal):
+def test_delivery_failure_is_never_revealed_to_the_browser(portal, monkeypatch):
     """The other half of the same design: the operator learns, the visitor
     does not."""
     import inspect
-    source = inspect.getsource(portal.PortalHandler._request_link)
-    assert "sys.stderr.write" in source
-    # One response string, regardless of outcome.
-    assert source.count("told = ") == 1
+    monkeypatch.setattr(portal, "IDENTITY_EMAILS", "alex:alex@example.com")
+    assert "sys.stderr.write" in inspect.getsource(
+        portal.PortalHandler._request_link)
+
+    def response_when(sent):
+        monkeypatch.setattr(portal, "send_link_email",
+                            lambda a, u: (sent, "" if sent else "SMTPError"))
+        handler = _CapturingHandler(portal)
+        handler._request_link("alex@example.com")
+        return [(k, v) for k, v in handler.sent if k != "Set-Cookie"]
+
+    assert response_when(True) == response_when(False)
 
 
 # --- editing and classifying at review time ------------------------------------
@@ -501,3 +538,23 @@ def test_an_agent_session_cannot_forget(portal, monkeypatch):
     with pytest.raises(PermissionError):
         portal.forget_memory("alex", portal.ADMIN, "m1",
                              origin=portal.ORIGIN_AGENT)
+
+
+def test_the_signed_out_page_never_echoes_the_url(portal):
+    """A redirect meant for a signed-in page — "Google consent received. An
+    operator has to finish it…" — greeted anyone opening a stale URL, cut off
+    at 120 characters, long after the thing it described was done. It also
+    told an unauthenticated visitor what the box had been doing."""
+    body = portal.render_signin(sent=False).decode()
+    assert "Google consent" not in body
+    assert "class=flash" not in body
+    # The one message that does belong there is fixed text, not from the URL.
+    sent = portal.render_signin(sent=True).decode()
+    assert "a sign-in link is on its way" in sent
+
+
+def test_requesting_a_link_redirects_without_a_message_parameter(portal):
+    source = (REPO / "cli" / "agentbox-portal").read_text()
+    block = source.split("def _request_link")[1].split("def ")[0]
+    assert '"/?sent=1"' in block
+    assert "urlencode({\"m\"" not in block

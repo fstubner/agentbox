@@ -47,7 +47,12 @@ TOOLS = [
      "description": "List stored memories for context retrieval. Returns only "
                     "what the person you are acting for may see: their own "
                     "memories plus the household ones. Another person's "
-                    "private memories are not returned and cannot be.",
+                    "private memories are not returned and cannot be.\n\n"
+                    "Each memory is the CURRENT version. If a fact has been "
+                    "revised, the versions it replaced are nested under it as "
+                    "`previously`, each with the date it stopped being true. "
+                    "Use those to say when something changed — never to "
+                    "contradict the current value.",
      "inputSchema": schema_object({"limit": LIMIT})},
 
     {"name": "whoami", "title": "Who am I acting for, and what may I touch",
