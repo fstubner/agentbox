@@ -458,6 +458,19 @@ def approve_proposal(handler, proposal_id: str, body=None):
         if not proposal:
             raise BridgeError(404, "proposal not found")
         apply_reviewer_edits(proposal, body, identity_of(handler))
+        if not proposal.get("kind"):
+            # Written before this field existed, so it carries no
+            # classification — and `.get("kind") == KIND_FEEDBACK` quietly read
+            # that as "memory", routing every pre-existing proposal into
+            # durable memory however plainly it was feedback. Found the first
+            # time the feature was used on the real queue: three notes about
+            # broken tooling were approved straight into memory, which is the
+            # precise outcome the split exists to prevent. Classify on the way
+            # through rather than defaulting.
+            kind, reason = classify_kind(proposal.get("statement", ""))
+            proposal["kind"] = kind
+            proposal["kind_reason"] = reason
+            proposal["kind_source"] = "auto-at-approval"
         if proposal.get("kind") == KIND_FEEDBACK:
             return _file_as_feedback(store, proposal)
         proposal["status"] = "approved"

@@ -276,3 +276,36 @@ def test_a_tool_name_alone_is_enough_to_suspect_feedback(mem):
     kind, reason = mem.classify_kind("set_home_climate seems unreliable")
     assert kind == mem.KIND_FEEDBACK
     assert "set_home_climate" in reason
+
+
+def test_a_proposal_written_before_kind_existed_is_still_classified(mem):
+    """The store predates this feature. A proposal with no `kind` was read as
+    a memory by `.get("kind") == KIND_FEEDBACK`, so the first real use of the
+    feature approved three notes about broken tooling straight into durable
+    memory — exactly what the split exists to prevent.
+    """
+    # Written the way the old bridge wrote them: no kind field at all.
+    store = mem.load_store()
+    store["proposals"].append({
+        "id": "legacy-1", "scope": "alex", "status": "proposed",
+        "statement": "look_at_camera returned upstream_rejected on every call"})
+    mem.save_store(store)
+
+    mem.approve_proposal(Handler(), "legacy-1", {})
+    after = mem.load_store()
+    assert after["memories"] == []
+    assert len(after["feedback"]) == 1
+    assert after["feedback"][0]["kind_source"] == "auto-at-approval"
+
+
+def test_a_legacy_fact_still_becomes_a_memory(mem):
+    """The rescue must not tip the other way and swallow real memories."""
+    store = mem.load_store()
+    store["proposals"].append({
+        "id": "legacy-2", "scope": "alex", "status": "proposed",
+        "statement": "Sam is allergic to peanuts"})
+    mem.save_store(store)
+    mem.approve_proposal(Handler(), "legacy-2", {})
+    after = mem.load_store()
+    assert len(after["memories"]) == 1
+    assert after.get("feedback", []) == []
