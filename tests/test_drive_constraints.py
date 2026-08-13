@@ -448,3 +448,35 @@ def test_batches_respect_the_api_ceiling(gb, monkeypatch):
                         lambda method, url, **k: calls.append(url) or {})
     gb.resolve_people([f"people/{n}" for n in range(gb.PEOPLE_BATCH_MAX + 50)])
     assert len(calls) == 2
+
+
+def _consent_scopes(monkeypatch, path, enabled):
+    """Load a consent path's GOOGLE_SCOPES under a given env."""
+    import importlib.machinery
+    if enabled is None:
+        monkeypatch.delenv("GOOGLE_ENABLE_DRIVE_READ_ALL", raising=False)
+    else:
+        monkeypatch.setenv("GOOGLE_ENABLE_DRIVE_READ_ALL", enabled)
+    loader = importlib.machinery.SourceFileLoader("consent_path", str(REPO / path))
+    spec = importlib.util.spec_from_loader("consent_path", loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["consent_path"] = module
+    spec.loader.exec_module(module)
+    return module.GOOGLE_SCOPES
+
+
+@pytest.mark.parametrize("path", ["cli/agentbox-portal", "cli/agentbox-invite"])
+def test_every_consent_path_honours_the_same_opt_in(monkeypatch, path):
+    """The flag existed in oauth-setup.py only, while the portal and the
+    invite built their own consent URLs — so the safer default was enforced
+    on one of the three ways to grant a credential and not the other two.
+    A control that one path skips is not a control.
+    """
+    assert "drive.readonly" not in _consent_scopes(monkeypatch, path, None)
+    assert "drive.readonly" in _consent_scopes(monkeypatch, path, "1")
+
+
+@pytest.mark.parametrize("path", ["cli/agentbox-portal", "cli/agentbox-invite"])
+@pytest.mark.parametrize("value", ["", "0", "no", "false", "maybe", " "])
+def test_ambiguous_values_do_not_widen_any_consent_path(monkeypatch, path, value):
+    assert "drive.readonly" not in _consent_scopes(monkeypatch, path, value)

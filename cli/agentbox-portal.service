@@ -48,6 +48,12 @@ Type=simple
 # silently — that is the bug this replaced).
 EnvironmentFile=-%h/.config/agent-control-plane/1password.env
 
+# Broad Drive read, opted into by the operator on 2026-08-13. Without this the
+# assistant sees only files it created, which made "find that lease in my
+# Drive" unanswerable against a full Drive. Read-only: it still cannot write
+# outside its own folder, delete, or share.
+Environment=GOOGLE_ENABLE_DRIVE_READ_ALL=1
+
 # Who is an admin. Everyone else is a member: their own memories and their own
 # connectors, no operations. Empty would mean nobody is an admin, which is the
 # right direction for a misread value to fail in.

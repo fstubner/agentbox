@@ -51,10 +51,16 @@ tiers:
 
     # drive_read is `allowed` for the same reason personal_data_read is: the
     # real control is not an approval prompt but which OAuth scope was granted
-    # at consent time. drive.file alone limits the assistant to files it
-    # created; drive.readonly lets it read everything. That choice is made once,
-    # deliberately, by a human — and it constrains the credential itself, which
-    # an approval on a tool call cannot.
+    # at consent time — and that choice constrains the credential itself,
+    # which an approval on a tool call cannot.
+    #
+    # The operator chose drive.readonly on 2026-08-13, after drive.file alone
+    # made "find that lease in my Drive" unanswerable: it sees only files the
+    # assistant created, so a full Drive returned nothing and read as empty.
+    # The assistant can now read anything the person can read. It still cannot
+    # write outside its own folder, cannot delete, and cannot share — those
+    # are absent rather than gated, because a permission change is how a
+    # private document quietly becomes a public link.
     #
     # drive_write_own_folder mirrors create_agent_calendar_event: confined by
     # construction rather than by permission. Writes go to one folder, only

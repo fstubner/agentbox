@@ -64,6 +64,15 @@ GOOGLE_SCOPES = os.environ.get(
     "https://www.googleapis.com/auth/drive.file "
     "https://www.googleapis.com/auth/drive.activity.readonly "
     "https://www.googleapis.com/auth/contacts.readonly")
+
+# Broad Drive read is opt-in, by the same flag and for the same reason as
+# services/compose/google-workspace-bridge/oauth-setup.py — which had the
+# mechanism while this consent path did not, so the safer default was only
+# actually enforced on one of the three ways to grant a credential.
+if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
+        "1", "true", "yes"):
+    GOOGLE_SCOPES += " https://www.googleapis.com/auth/drive.readonly"
+
 PUBLIC_ORIGIN = os.environ.get("AGENTBOX_INVITE_ORIGIN", "").rstrip("/")
 BIND_HOST = os.environ.get("AGENTBOX_INVITE_HOST", "0.0.0.0")
 BIND_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))

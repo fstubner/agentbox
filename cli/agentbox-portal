@@ -119,6 +119,22 @@ GOOGLE_SCOPES = os.environ.get(
     "https://www.googleapis.com/auth/drive.activity.readonly "
     "https://www.googleapis.com/auth/contacts.readonly")
 
+
+# Broad Drive read is opt-in, by the same flag and for the same reason as
+# services/compose/google-workspace-bridge/oauth-setup.py — which had the
+# mechanism while these two consent paths did not, so the safer default was
+# only actually enforced on one of the three ways to grant a credential.
+#
+# drive.file alone sees ONLY files the assistant created. That is the right
+# default and it is also why "find that lease in my Drive" could not be
+# answered: a full Drive returned nothing and read as empty. With the flag
+# set, the assistant can read anything the person can read — and still cannot
+# write outside its own folder, delete, or share, because those are absent
+# rather than gated.
+if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
+        "1", "true", "yes"):
+    GOOGLE_SCOPES += " https://www.googleapis.com/auth/drive.readonly"
+
 # Same variable and default as cli/agentbox, deliberately. Two names for one
 # endpoint is how a portal ends up quietly pointed at nothing.
 PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
