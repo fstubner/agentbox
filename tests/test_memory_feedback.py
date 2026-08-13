@@ -370,3 +370,123 @@ def test_a_forgotten_memory_is_not_returned_to_the_assistant(mem):
     mem.forget_memory(Handler(), item["id"], {})
     _, payload = mem.list_memories(Handler(operator=False), None)
     assert payload["memories"] == []
+
+
+# --- supersession --------------------------------------------------------------
+#
+# Three end states, not two. "Forgotten" collapsed two different facts into
+# one: a memory that was never true, and a memory that was true and has been
+# replaced. The second is history and worth keeping legible — it is what lets
+# you see why an answer three weeks ago was right at the time.
+
+
+def test_a_new_fact_retires_the_one_it_replaces(mem):
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    _, new = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                           "scope": "household",
+                                           "supersedes": old["id"]})
+    store = mem.load_store()
+    retired = next(x for x in store["memories"] if x["id"] == old["id"])
+    assert retired["status"] == mem.STATUS_SUPERSEDED
+    assert retired["superseded_by"] == new["id"]
+    assert new["replaced"]["statement"] == "Bin day is Tuesday"
+
+
+def test_the_assistant_reads_only_the_current_version(mem):
+    """Two contradictory memories with no marker of which is current is how a
+    confident wrong answer happens."""
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                  "scope": "household", "supersedes": old["id"]})
+    _, payload = mem.list_memories(Handler(operator=False), None)
+    assert [m["statement"] for m in payload["memories"]] == ["Bin day is Wednesday"]
+
+
+def test_the_chain_is_reachable_from_the_oldest_link(mem):
+    """The id somebody has is usually the one they saw in an old answer."""
+    _, first = mem.create_memory(Handler(), {"statement": "Bin day is Monday",
+                                             "scope": "household"})
+    _, second = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                              "scope": "household",
+                                              "supersedes": first["id"]})
+    _, third = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                             "scope": "household",
+                                             "supersedes": second["id"]})
+    for anchor in (first["id"], second["id"], third["id"]):
+        _, history = mem.memory_history(Handler(), anchor, None)
+        assert [h["statement"] for h in history["history"]] == [
+            "Bin day is Monday", "Bin day is Tuesday", "Bin day is Wednesday"]
+        assert history["current"] == third["id"]
+
+
+def test_superseding_something_already_retired_is_refused(mem):
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                  "scope": "household", "supersedes": old["id"]})
+    with pytest.raises(mem.BridgeError) as exc:
+        mem.create_memory(Handler(), {"statement": "Bin day is Friday",
+                                      "scope": "household",
+                                      "supersedes": old["id"]})
+    assert exc.value.status == 409
+
+
+def test_superseding_something_that_does_not_exist_is_refused(mem):
+    with pytest.raises(mem.BridgeError) as exc:
+        mem.create_memory(Handler(), {"statement": "x", "supersedes": "nope"})
+    assert exc.value.status == 404
+
+
+def test_a_near_duplicate_is_suggested_not_applied(mem):
+    """An automatic supersession that is wrong hides a true memory behind a
+    false one and says nothing — strictly worse than leaving both visible."""
+    mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                  "scope": "household"})
+    _, new = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                           "scope": "household"})
+    assert new["possibly_supersedes"], "the obvious case produced no suggestion"
+    assert "Tuesday" in new["possibly_supersedes"][0]["statement"]
+    # Suggested only: both are still current until a human decides.
+    _, payload = mem.list_memories(Handler(operator=False), None)
+    assert len(payload["memories"]) == 2
+
+
+def test_one_shared_word_is_enough_when_the_subject_matches(mem):
+    """"Bin day is Tuesday" and "Bin day is Wednesday" share exactly one
+    content word, because the words that differ are the whole point. Requiring
+    two missed the case this feature exists for."""
+    assert mem._same_subject("Bin day is Tuesday", "Bin day is Wednesday")
+    assert not mem._same_subject("Sam is allergic to peanuts",
+                                 "Bin day is Wednesday")
+
+
+def test_unrelated_memories_are_not_suggested(mem):
+    mem.create_memory(Handler(), {"statement": "Sam is allergic to peanuts",
+                                  "scope": "household"})
+    _, new = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                           "scope": "household"})
+    assert not new.get("possibly_supersedes")
+
+
+def test_another_persons_memory_is_never_suggested(mem):
+    """A suggestion naming someone else's private memory would leak it —
+    the suggestion text quotes the statement it thinks you are replacing."""
+    mem.create_memory(Handler(identity="sam"), {"statement": "Bin day is Tuesday",
+                                                "scope": "sam"})
+    _, new = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
+                                           "scope": "household"})
+    assert not new.get("possibly_supersedes")
+
+
+def test_approving_a_proposal_can_supersede(mem):
+    _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
+                                           "scope": "household"})
+    item = propose(mem, "Bin day is Wednesday", scope="household")
+    _, result = mem.approve_proposal(Handler(), item["id"],
+                                     {"supersedes": old["id"]})
+    assert result["replaced"]["statement"] == "Bin day is Tuesday"
+    store = mem.load_store()
+    assert next(x for x in store["memories"]
+                if x["id"] == old["id"])["status"] == mem.STATUS_SUPERSEDED

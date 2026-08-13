@@ -794,6 +794,30 @@ the file. Setgid keeps the group on anything written later.
 If that is missed, single-use grants are refused with an explicit message
 rather than silently degrading to unlimited-until-expiry.
 
+### When a fact changes
+
+Facts change, and deleting the old one loses the shape of the change. Three
+end states, not two:
+
+| status | meaning | assistant reads it |
+|---|---|---|
+| `approved` | current | yes |
+| `superseded` | was true, something replaced it | no — history |
+| `forgotten` | should never have been stored | no |
+
+```
+cli/agentbox memory add "Bin day is Wednesday" --supersedes <old-id>
+cli/agentbox memory history <any-id-in-the-chain>
+```
+
+`history` resolves from **any** link, because the id you have is usually the
+one you saw in an old answer, not the current one.
+
+Adding a memory that looks like it replaces an existing one prints a
+suggestion rather than acting on it. An automatic supersession that is wrong
+hides a true memory behind a false one and says nothing, which is worse than
+leaving both visible for a human to reconcile.
+
 ### Reviewing memories from Discord
 
 The same process, because it needs the same protections and reimplementing

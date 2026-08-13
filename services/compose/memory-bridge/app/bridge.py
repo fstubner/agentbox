@@ -259,6 +259,9 @@ def clean_memory(body: dict[str, Any], status: str,
         "status": status,
         "created_at": body.get("created_at") or now(),
         "updated_at": now(),
+        # Which memory this replaces, if any. The chain lives on the items
+        # themselves so any link can find the whole history.
+        "supersedes": body.get("supersedes") or None,
         "metadata": body.get("metadata", {}),
     }
 
@@ -393,12 +396,26 @@ def create_memory(handler, body):
     the review token like approval does.
     """
     require_review(handler)
-    item = clean_memory(body or {}, "approved", identity_of(handler))
+    item = clean_memory(body or {}, STATUS_APPROVED, identity_of(handler))
     with _LOCK:
         store = load_store()
+        replaced = None
+        if item.get("supersedes"):
+            replaced = _mark_superseded(store, item["supersedes"], item["id"])
         store["memories"].append(item)
         save_store(store)
-    return 201, item
+        # Only when the caller did not say. Offered, never applied — see
+        # supersession_candidates.
+        suggestions = ([] if replaced else
+                       supersession_candidates(store, item["statement"],
+                                               item["scope"], item["id"]))
+    result = dict(item)
+    if replaced:
+        result["replaced"] = {"id": replaced["id"],
+                              "statement": replaced["statement"]}
+    if suggestions:
+        result["possibly_supersedes"] = suggestions
+    return 201, result
 
 
 def list_memories(handler, body):
@@ -407,7 +424,15 @@ def list_memories(handler, body):
         store = load_store()
     identity = identity_of(handler)
     operator = is_operator(handler)
-    items = visible_to(filter_items(store["memories"], {}), identity, operator)
+    query = query_of(handler)
+    # Superseded facts are history, not context. Two contradictory memories
+    # with no marker of which is current is how a confident wrong answer
+    # happens, so they are excluded unless explicitly asked for.
+    include_history = first(query, "include_superseded", "") == "true"
+    current = [x for x in store["memories"]
+               if include_history
+               or x.get("status", STATUS_APPROVED) == STATUS_APPROVED]
+    items = visible_to(filter_items(current, {}), identity, operator)
     scopes = visible_scopes(identity, operator)
     return 200, {"memories": items[:limit], "total": len(items),
                  "scopes_visible": "all" if scopes is None else sorted(scopes)}
@@ -473,12 +498,27 @@ def approve_proposal(handler, proposal_id: str, body=None):
             proposal["kind_source"] = "auto-at-approval"
         if proposal.get("kind") == KIND_FEEDBACK:
             return _file_as_feedback(store, proposal)
-        proposal["status"] = "approved"
+        proposal["status"] = STATUS_APPROVED
         proposal["updated_at"] = now()
+        replaced = None
+        supersedes = str((body or {}).get("supersedes") or
+                         proposal.get("supersedes") or "")
+        if supersedes:
+            replaced = _mark_superseded(store, supersedes, proposal["id"])
+            proposal["supersedes"] = supersedes
         store["memories"].append(proposal)
         store["proposals"] = [x for x in store["proposals"] if x.get("id") != proposal_id]
         save_store(store)
-    return 200, proposal
+        suggestions = ([] if replaced else
+                       supersession_candidates(store, proposal["statement"],
+                                               proposal["scope"], proposal["id"]))
+    result = dict(proposal)
+    if replaced:
+        result["replaced"] = {"id": replaced["id"],
+                              "statement": replaced["statement"]}
+    if suggestions:
+        result["possibly_supersedes"] = suggestions
+    return 200, result
 
 
 def _file_as_feedback(store: dict[str, Any], proposal: dict[str, Any]):
@@ -497,6 +537,143 @@ def _file_as_feedback(store: dict[str, Any], proposal: dict[str, Any]):
     store.setdefault("feedback", []).append(proposal)
     save_store(store)
     return 200, proposal
+
+
+# --- supersession -----------------------------------------------------------
+#
+# Facts change, and "delete the old one" loses the shape of the change. Bin day
+# was Tuesday and is now Wednesday; the useful record is not one fact plus a
+# tombstone, it is a chain — this replaced that, on this date. That distinction
+# matters when an answer from three weeks ago looks wrong: it lets you see what
+# was believed at the time rather than only what is believed now.
+#
+# So three end states, not two:
+#
+#   approved    current; the assistant reads these
+#   superseded  was true, something replaced it; readable as history
+#   forgotten   should never have been stored; wrong, or a test fixture
+#
+# Only `approved` is returned to the assistant. A superseded memory that stayed
+# readable would be worse than deleting it — two contradictory facts with no
+# marker of which is current is exactly how a confident wrong answer happens.
+
+STATUS_APPROVED = "approved"
+STATUS_SUPERSEDED = "superseded"
+STATUS_FORGOTTEN = "forgotten"
+
+_STOPWORDS = frozenset((
+    "the", "a", "an", "is", "are", "was", "were", "be", "on", "in", "at", "to",
+    "of", "for", "and", "or", "it", "this", "that", "usually", "typically",
+    "his", "her", "their", "my", "our", "goes", "go", "out", "day", "does"))
+
+
+def _ordered_content_words(statement: str) -> list[str]:
+    words = re.findall(r"[a-z0-9']+", statement.lower())
+    return [w for w in words if w not in _STOPWORDS and len(w) > 2]
+
+
+def _content_words(statement: str) -> set[str]:
+    return set(_ordered_content_words(statement))
+
+
+def _same_subject(a: str, b: str) -> bool:
+    """Do two statements lead with the same word?
+
+    Cheap stand-in for "are these about the same thing". Two shared content
+    words was the original bar and it missed the case this exists for: "Bin
+    day is Tuesday" and "Bin day is Wednesday" share exactly one — `bin` —
+    because the words that differ are the whole point. Statements about the
+    same subject nearly always lead with it.
+    """
+    first_a = _ordered_content_words(a)[:1]
+    first_b = _ordered_content_words(b)[:1]
+    return bool(first_a) and first_a == first_b
+
+
+def supersession_candidates(store: dict[str, Any], statement: str,
+                            scope: str, exclude: str = "") -> list[dict]:
+    """Existing memories this statement might be replacing.
+
+    Suggested, never applied. An automatic supersession that is wrong hides a
+    true memory behind a false one and says nothing, which is strictly worse
+    than leaving both visible for a human to reconcile. Word overlap is a crude
+    signal and is meant to be — it only has to be good enough to put the right
+    candidate in front of someone.
+    """
+    words = _content_words(statement)
+    if not words:
+        return []
+    found = []
+    for item in store.get("memories", []):
+        if item.get("status", STATUS_APPROVED) != STATUS_APPROVED:
+            continue
+        if item.get("id") == exclude or item.get("scope") != scope:
+            continue
+        overlap = words & _content_words(item.get("statement", ""))
+        if len(overlap) >= 2 or (overlap and
+                                 _same_subject(statement, item.get("statement", ""))):
+            found.append({"id": item["id"], "statement": item["statement"],
+                          "shared_words": sorted(overlap)})
+    return found
+
+
+def _mark_superseded(store: dict[str, Any], old_id: str, new_id: str) -> dict:
+    """Retire one memory in favour of another. Caller holds the lock."""
+    old = next((x for x in store.get("memories", [])
+                if x.get("id") == old_id), None)
+    if not old:
+        raise BridgeError(404, f"cannot supersede {old_id}: no such memory")
+    if old.get("status", STATUS_APPROVED) != STATUS_APPROVED:
+        raise BridgeError(409, f"{old_id} is already {old.get('status')}")
+    old["status"] = STATUS_SUPERSEDED
+    old["superseded_by"] = new_id
+    old["superseded_at"] = now()
+    old["updated_at"] = now()
+    return old
+
+
+def memory_history(handler, memory_id: str, body):
+    """The whole chain this memory belongs to, oldest first.
+
+    Reachable from any link, not just the newest: the id somebody has is
+    usually the one they saw in an old answer.
+    """
+    with _LOCK:
+        store = load_store()
+    by_id = {x.get("id"): x for x in store.get("memories", [])
+             + store.get("forgotten", [])}
+    if memory_id not in by_id:
+        raise BridgeError(404, "memory not found")
+    # Walk back to the oldest, then forward, so any link finds the whole chain.
+    #
+    # Each direction needs its own cycle guard. Sharing one set means the
+    # backward walk marks every ancestor as visited and the forward walk then
+    # refuses to re-cross them — so anchoring on anything but the oldest link
+    # returned a chain of one. The anchor people actually have is the id from
+    # an old answer, which is precisely the case that broke.
+    root = by_id[memory_id]
+    walked_back = {root["id"]}
+    while root.get("supersedes") in by_id and \
+            root["supersedes"] not in walked_back:
+        root = by_id[root["supersedes"]]
+        walked_back.add(root["id"])
+    chain = [root]
+    walked_forward = {root["id"]}
+    while chain[-1].get("superseded_by") in by_id and \
+            chain[-1]["superseded_by"] not in walked_forward:
+        chain.append(by_id[chain[-1]["superseded_by"]])
+        walked_forward.add(chain[-1]["id"])
+    return 200, {
+        "history": [{"id": x.get("id"), "statement": x.get("statement"),
+                     "status": x.get("status", STATUS_APPROVED),
+                     "created_at": x.get("created_at"),
+                     "superseded_at": x.get("superseded_at"),
+                     "scope": x.get("scope")} for x in chain],
+        "current": next((x.get("id") for x in chain
+                         if x.get("status", STATUS_APPROVED) == STATUS_APPROVED),
+                        None),
+        "length": len(chain),
+    }
 
 
 def forget_memory(handler, memory_id: str, body):
@@ -519,7 +696,7 @@ def forget_memory(handler, memory_id: str, body):
                      if x.get("id") == memory_id), None)
         if not item:
             raise BridgeError(404, "memory not found")
-        item["status"] = "forgotten"
+        item["status"] = STATUS_FORGOTTEN
         item["updated_at"] = now()
         reason = str((body or {}).get("reason", ""))[:500]
         if reason:
@@ -761,6 +938,10 @@ class MemoryBridge(BridgeHandler):
                     proposal_id = path[len(prefix):-len(suffix)]
                     return handler(self, proposal_id, body)
         memory_prefix = "/v1/memories/"
+        if method == "GET" and path.startswith(memory_prefix) and \
+                path.endswith("/history"):
+            return memory_history(
+                self, path[len(memory_prefix):-len("/history")], body)
         if method == "POST" and path.startswith(memory_prefix) and \
                 path.endswith("/forget"):
             return forget_memory(self, path[len(memory_prefix):-len("/forget")],

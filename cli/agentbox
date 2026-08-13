@@ -2087,7 +2087,8 @@ def memory_list(identity: str = "") -> int:
     return 0
 
 
-def memory_add(statement: str, scope: str = "", memory_type: str = "") -> int:
+def memory_add(statement: str, scope: str = "", memory_type: str = "",
+               supersedes: str = "") -> int:
     """Record something the operator states directly, with no review step.
 
     Reviewing your own statement is theatre: the review gate exists so the
@@ -2107,6 +2108,8 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "") -> int:
         report(FAIL, "a statement is required")
         return 1
     payload: dict = {"statement": statement, "source": "stated by the operator"}
+    if supersedes:
+        payload["supersedes"] = supersedes
     if scope:
         payload["scope"] = scope
     if memory_type:
@@ -2116,6 +2119,15 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "") -> int:
         return 1
     report(OK, f"remembered [{result.get('scope', 'household')}]: "
                f"{result.get('statement', statement)}")
+    if result.get("replaced"):
+        report(OK, f"superseded: {result['replaced'].get('statement','')}")
+    for candidate in result.get("possibly_supersedes", []):
+        # Offered, never applied: an automatic supersession that is wrong
+        # hides a true memory behind a false one and says nothing.
+        report(WARN, f"this may replace an existing memory — if so: "
+                     f"cli/agentbox memory forget {candidate['id']}  "
+                     f"(or re-add with --supersedes {candidate['id']})\n"
+                     f"         existing: {candidate['statement'][:70]}")
     # The heuristic runs on the way in. If it disagrees, say so once rather
     # than overruling — the operator asked for a memory and gets one, but a
     # behaviour complaint stored as a fact is the thing worth a second look.
@@ -2143,6 +2155,25 @@ def memory_show(limit: int = 50) -> int:
                   f"{item.get('original_statement','')[:60]})")
     print(f"\n{len(items)} remembered — remove one with: "
           f"cli/agentbox memory forget <id>")
+    return 0
+
+
+def memory_history(memory_id: str) -> int:
+    """How a fact changed over time, oldest first.
+
+    Reachable from any link in the chain, because the id somebody has is
+    usually the one they saw in an old answer rather than the current one.
+    """
+    payload = memory_request(
+        "GET", f"/v1/memories/{urllib.parse.quote(memory_id)}/history")
+    if payload is None:
+        return 1
+    for item in payload.get("history", []):
+        marker = {"approved": "now  ", "superseded": "was  ",
+                  "forgotten": "wrong"}.get(item.get("status"), "?    ")
+        print(f"{marker} {item.get('created_at','')[:10]}  "
+              f"{item.get('statement','')}")
+    print(f"\n{payload.get('length', 0)} version(s)")
     return 0
 
 
@@ -2651,6 +2682,10 @@ def main() -> None:
     add.add_argument("--scope", default="",
                      help="'household' (default) or an identity name")
     add.add_argument("--type", dest="memory_type", default="")
+    add.add_argument("--supersedes", default="",
+                     help="id of the memory this replaces")
+    hist = mem_sub.add_parser("history", help="how a fact changed over time")
+    hist.add_argument("memory_id")
 
     fb = sub.add_parser("feedback",
                         help="things to fix in a skill rather than remember")
@@ -2732,8 +2767,11 @@ def main() -> None:
             sys.exit(memory_show())
         if args.mem_cmd == "forget":
             sys.exit(memory_forget(args.memory_id, args.reason))
+        if args.mem_cmd == "history":
+            sys.exit(memory_history(args.memory_id))
         if args.mem_cmd == "add":
-            sys.exit(memory_add(args.statement, args.scope, args.memory_type))
+            sys.exit(memory_add(args.statement, args.scope, args.memory_type,
+                                args.supersedes))
         sys.exit(memory_decide(args.mem_cmd, args.proposal_id, getattr(args, "reason", "")))
     if args.cmd == "feedback":
         if args.fb_cmd == "list":
