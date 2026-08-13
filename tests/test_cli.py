@@ -59,3 +59,38 @@ def test_validate_passes_on_clean_repo(monkeypatch, cli):
     # actually has to be caught.
     monkeypatch.setenv("AGENTBOX_VALIDATE_SKIP_COMPOSE", "1")
     assert cli.validate() == 0
+
+
+def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
+    """"not responding" covers two conditions needing opposite responses.
+
+    The router was cleanly stopped twice in two days — signal TERM, so
+    Restart=on-failure never applied — and the only symptom was triage_email
+    reporting "router unreachable", which reads like a network fault rather
+    than a service somebody turned off.
+    """
+    import importlib.machinery
+    import importlib.util
+    import subprocess
+    import sys
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    loader = importlib.machinery.SourceFileLoader("abx_hint", str(repo / "cli" / "agentbox"))
+    spec = importlib.util.spec_from_loader("abx_hint", loader)
+    cli = importlib.util.module_from_spec(spec)
+    sys.modules["abx_hint"] = cli
+    spec.loader.exec_module(cli)
+
+    def fake(cmd, **kwargs):
+        state = "inactive" if "agentbox-router" in cmd else "active"
+        return type("R", (), {"stdout": state + "\n", "returncode": 0})()
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    monkeypatch.setattr(cli.subprocess, "run", fake)
+    hint = cli.stopped_hint("router")
+    assert "inactive" in hint
+    assert "systemctl --user start agentbox-router" in hint
+    # A running-but-unreachable service needs the opposite diagnosis.
+    assert "wedged" in cli.stopped_hint("portal")
+    # An endpoint with no unit we can name says nothing rather than guessing.
+    assert cli.stopped_hint("main model") == ""

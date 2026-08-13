@@ -318,6 +318,36 @@ def deploy(service: str, dry_run: bool = False) -> int:
 # --- doctor / status --------------------------------------------------------
 
 
+# Endpoints served by a user unit we can name. Knowing the unit turns "not
+# responding" into an instruction.
+ENDPOINT_UNITS = {"router": "agentbox-router", "portal": "agentbox-portal"}
+
+
+def stopped_hint(name: str) -> str:
+    """Say whether an unreachable service is *stopped*, and how to start it.
+
+    "not responding" covers two conditions that need opposite responses: a
+    process that is running and wedged, and one that is not running at all.
+    The router was cleanly stopped twice in two days — signal TERM, not a
+    crash, so `Restart=on-failure` never applied — and each time the only
+    symptom was `triage_email` failing with "router unreachable", which reads
+    like a network fault rather than a service somebody turned off.
+    """
+    unit = ENDPOINT_UNITS.get(name)
+    if not unit:
+        return ""
+    try:
+        state = subprocess.run(["systemctl", "--user", "is-active", unit],
+                               capture_output=True, text=True, timeout=10,
+                               check=False).stdout.strip()
+    except Exception:  # noqa: BLE001 — a hint must never break the check
+        return ""
+    if state == "active":
+        return "  (unit is running, so it is wedged rather than stopped)"
+    return f"  ({unit} is {state or 'not running'} — "\
+           f"start it: systemctl --user start {unit})"
+
+
 def probe(url: str, timeout: float = 5) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout):
@@ -876,7 +906,7 @@ def doctor() -> int:
         if probe(url):
             report(OK, f"{name} responding: {url}")
         else:
-            report(severity, f"{name} not responding: {url}")
+            report(severity, f"{name} not responding: {url}{stopped_hint(name)}")
             if severity is FAIL:
                 bad += 1
     disk = shutil.disk_usage("/")
