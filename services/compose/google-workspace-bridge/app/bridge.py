@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -75,18 +76,42 @@ def post_form(url, data):
         return json.loads(resp.read().decode("utf-8"))
 
 
+# Access token, cached until shortly before it expires.
+#
+# This was minted per request: every Google call made a full round trip to
+# oauth2.googleapis.com before doing any work. Measured on the live bridge,
+# that was 154ms of a 321ms gmail_search — 48% of the call — and a
+# read-then-clean paid it twice. Tokens are valid for about an hour.
+#
+# The margin exists because the token has to outlive the request it is handed
+# to, not merely be valid at the moment it is fetched.
+_TOKEN_CACHE: dict = {"value": "", "expires_at": 0.0}
+_TOKEN_LOCK = threading.Lock()
+TOKEN_REFRESH_MARGIN = 120
+
+
 def access_token():
     require_config()
-    token = post_form("https://oauth2.googleapis.com/token", {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "refresh_token": REFRESH_TOKEN,
-        "grant_type": "refresh_token",
-    })
-    value = token.get("access_token")
-    if not value:
-        raise BridgeError(502, "Google token response did not include access_token")
-    return value
+    with _TOKEN_LOCK:
+        # Checked inside the lock so a burst of concurrent calls mints once
+        # rather than once each.
+        if _TOKEN_CACHE["value"] and time.time() < _TOKEN_CACHE["expires_at"]:
+            return _TOKEN_CACHE["value"]
+        token = post_form("https://oauth2.googleapis.com/token", {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "refresh_token": REFRESH_TOKEN,
+            "grant_type": "refresh_token",
+        })
+        value = token.get("access_token")
+        if not value:
+            raise BridgeError(502, "Google token response did not include access_token")
+        # Google states expires_in; trust it, but fall back to a short life
+        # rather than assuming an hour if it is ever absent.
+        lifetime = int(token.get("expires_in", 600) or 600)
+        _TOKEN_CACHE["value"] = value
+        _TOKEN_CACHE["expires_at"] = time.time() + max(0, lifetime - TOKEN_REFRESH_MARGIN)
+        return value
 
 
 def google_json(method, url, payload=None, raw_body=None, content_type=None):

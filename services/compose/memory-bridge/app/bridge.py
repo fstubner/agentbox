@@ -61,10 +61,44 @@ def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+# Bumped whenever a field is added that older records will not have. The
+# upgrade below runs on load, so a record written before a field existed does
+# not silently take that field's default.
+#
+# The absence of this cost a real defect: `kind` was added to distinguish a
+# memory from behaviour feedback, every stored proposal predated it,
+# `.get("kind") == KIND_FEEDBACK` read None as "not feedback", and three notes
+# about broken tooling were approved straight into durable memory — the exact
+# outcome the split existed to prevent. Schemaless stores fail this way every
+# time a field is added; the fix is to make the migration explicit rather than
+# to hope the default is right.
+STORE_VERSION = 1
+
+
+def upgrade_store(store: dict[str, Any]) -> dict[str, Any]:
+    """Bring a store written by an older version up to date. Idempotent."""
+    version = int(store.get("version", 0))
+    if version >= STORE_VERSION:
+        store["version"] = STORE_VERSION
+        return store
+    if version < 1:
+        # v0 -> v1: proposals and memories predate `kind`. Classify rather
+        # than defaulting, which is what approve_proposal already does for
+        # this same reason.
+        for item in list(store.get("proposals", [])) + list(store.get("memories", [])):
+            if not item.get("kind"):
+                kind, reason = classify_kind(item.get("statement", ""))
+                item["kind"] = kind
+                item["kind_reason"] = reason
+                item["kind_source"] = "auto-at-upgrade"
+    store["version"] = STORE_VERSION
+    return store
+
+
 def load_store() -> dict[str, Any]:
     if not MEMORY_PATH.exists():
-        return {"memories": [], "proposals": []}
-    return json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+        return {"memories": [], "proposals": [], "version": STORE_VERSION}
+    return upgrade_store(json.loads(MEMORY_PATH.read_text(encoding="utf-8")))
 
 
 def save_store(store: dict[str, Any]) -> None:

@@ -94,3 +94,27 @@ def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
     assert "wedged" in cli.stopped_hint("portal")
     # An endpoint with no unit we can name says nothing rather than guessing.
     assert cli.stopped_hint("main model") == ""
+
+
+def test_the_tool_schema_budget_is_enforced_and_current():
+    """A comment in mcp_base put this cost at ~2,250 tokens per turn. By
+    2026-08-14 it measured 7,778 — 3.5x, drifted silently while the project
+    maintained a document on context economy. Nothing measured it."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    loader = importlib.machinery.SourceFileLoader("abx_budget", str(repo / "cli" / "agentbox"))
+    spec = importlib.util.spec_from_loader("abx_budget", loader)
+    cli = importlib.util.module_from_spec(spec)
+    sys.modules["abx_budget"] = cli
+    spec.loader.exec_module(cli)
+
+    count, tokens, worst = cli.tool_schema_cost()
+    assert count > 0, "could not assemble the tool surface"
+    assert tokens <= cli.TOOL_SCHEMA_TOKEN_BUDGET, (
+        f"{tokens} tokens over budget; biggest: {worst}")
+    # And the stale figure is gone from the shared base.
+    base = (repo / "services/templates/mcp/mcp_base.py").read_text()
+    assert "~2,250 tokens per turn" not in base

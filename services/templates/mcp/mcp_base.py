@@ -368,7 +368,10 @@ class McpHandler(BaseHTTPRequestHandler):
             # Deterministic order. 2026-07-28 makes this a SHOULD explicitly for
             # client-side caching and LLM prompt-cache hit rates; it is harmless
             # and beneficial at any version, and the tool schemas are the single
-            # largest fixed cost in this system at ~2,250 tokens per turn.
+            # largest fixed cost in this system — ~7,750 tokens per turn across
+            # 53 tools as of 2026-08-14. That figure read ~2,250 for months
+            # after it stopped being true; `agentbox validate` now measures it
+            # against a budget so it cannot drift silently again.
             return self._reply(message_id, {
                 "tools": sorted(self.tools, key=lambda tool: tool["name"]),
                 # CacheableResult: let the client hold the tool block rather
