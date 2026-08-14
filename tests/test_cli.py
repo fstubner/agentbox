@@ -145,3 +145,50 @@ def test_a_missing_linter_does_not_read_as_a_pass():
     lint = block[block.index('shutil.which("ruff")'):]
     assert "ruff not installed" in lint
     assert "report(WARN" in lint
+
+
+def test_floating_tags_are_reported_as_they_age():
+    """A floating tag does not float.
+
+    Every third-party image here is pinned to `stable`, `latest`, or no tag,
+    and `deploy` runs `docker compose up -d --build` — which rebuilds what
+    this repo builds and reuses whatever is cached for everything else. Home
+    Assistant sat three weeks behind and Vikunja four months, and nothing
+    reported either: doctor's staleness check compares source SHAs for images
+    built here and had no notion of upstream ones.
+    """
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    assert "def third_party_images(" in source
+    assert "IMAGE_STALE_DAYS" in source
+    # Reported in doctor, not just available as a function.
+    doctor = source.split("def doctor(")[1].split("\ndef ")[0]
+    assert "third_party_images()" in doctor
+
+
+def test_update_is_separate_from_deploy():
+    """`deploy` must ship your change and nothing else.
+
+    If it silently pulled upstream too, a one-line config fix could also jump
+    Home Assistant a minor version, and a failure afterwards would have two
+    candidate causes instead of one.
+    """
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    assert "def update(service: str)" in source
+    deploy = source.split("def deploy(service:")[1].split("\ndef ")[0]
+    # deploy only pulls when explicitly asked
+    assert "pull: bool = False" in source.split("def deploy(service:")[1][:120]
+    assert "if pull:" in deploy
+
+
+def test_pull_reuses_deploys_secret_resolution():
+    """A `docker compose pull` run without it dies interpolating secrets out
+    of compose.yaml — which is exactly what a duplicated invocation got wrong
+    here the first time."""
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    update = source.split("def update(service: str)")[1].split("\ndef ")[0]
+    # update delegates rather than building its own compose command
+    assert "deploy(service, pull=True)" in update
+    assert "docker" not in update

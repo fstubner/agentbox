@@ -30,6 +30,10 @@ REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.pare
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
+# How old a third-party image may get before doctor says so. Two weeks is
+# about one Home Assistant release cycle.
+IMAGE_STALE_DAYS = int(os.environ.get("AGENTBOX_IMAGE_STALE_DAYS", "14"))
+
 
 def report(level: str, msg: str) -> None:
     print(f"[{level.lower()}] {msg}")
@@ -336,7 +340,7 @@ def validate() -> int:
 # --- deploy -----------------------------------------------------------------
 
 
-def deploy(service: str, dry_run: bool = False) -> int:
+def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     """Validate, then bring up services/compose/<service> with its env file.
 
     Env file: $AGENTBOX_ENV_DIR/<service>.env (default ~/.config/agentbox,
@@ -391,6 +395,21 @@ def deploy(service: str, dry_run: bool = False) -> int:
     else:
         report(WARN, f"no env file at {env_file}; deploying without service env")
 
+    if pull:
+        # Same env resolution as the deploy itself — a `docker compose pull`
+        # run without it dies interpolating secrets out of compose.yaml, which
+        # is exactly what a duplicated invocation got wrong here first time.
+        pull_cmd = compose_cmd[:-3] if compose_cmd[-3:] == ["up", "-d", "--build"] \
+            else compose_cmd
+        pull_cmd = [c for c in pull_cmd if c not in ("up", "-d", "--build")] + ["pull"]
+        pulled = subprocess.run(pull_cmd, cwd=compose_dir, env=env,
+                                capture_output=True, text=True, timeout=1800)
+        if pulled.returncode != 0:
+            report(FAIL, f"pull failed: "
+                         f"{(pulled.stderr or pulled.stdout).strip()[-300:]}")
+            return 1
+        report(OK, f"pulled latest images for {service}")
+
     proc = subprocess.run(compose_cmd, cwd=compose_dir, env=env)
     report(OK if proc.returncode == 0 else FAIL, f"deploy {service} finished")
     return proc.returncode
@@ -402,6 +421,44 @@ def deploy(service: str, dry_run: bool = False) -> int:
 # Endpoints served by a user unit we can name. Knowing the unit turns "not
 # responding" into an instruction.
 ENDPOINT_UNITS = {"router": "agentbox-router", "portal": "agentbox-portal"}
+
+
+def third_party_images() -> list[tuple[str, str, int]]:
+    """(image, local build date, age in days) for images this repo does not build.
+
+    Every one of these is pinned to a floating tag — `stable`, `latest`, or no
+    tag at all — and `deploy` runs `docker compose up -d --build`, which
+    rebuilds what this repo builds and reuses whatever is already cached for
+    everything else. So a floating tag never floats: it freezes at whenever it
+    was first pulled and stays there.
+
+    Found on 2026-08-14 while asking why Home Assistant was three weeks
+    behind. Vikunja's image was four months old. Nothing reported either,
+    because `doctor`'s staleness check compares source SHAs for images built
+    here and has no notion of upstream ones.
+    """
+    import datetime
+    out = []
+    for compose in sorted((REPO / "services" / "compose").glob("*/compose.yaml")):
+        for line in compose.read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line.startswith("image:"):
+                continue
+            image = line.split("image:", 1)[1].strip().strip('"\'')
+            if not image or "${" in image or image.startswith("agentbox/"):
+                continue
+            created = subprocess.run(
+                ["docker", "image", "inspect", image, "--format", "{{.Created}}"],
+                capture_output=True, text=True, check=False).stdout.strip()
+            if not created:
+                continue
+            try:
+                when = datetime.datetime.fromisoformat(created.split(".")[0])
+            except ValueError:
+                continue
+            age = (datetime.datetime.now() - when).days
+            out.append((image, when.date().isoformat(), age))
+    return out
 
 
 def stopped_hint(name: str) -> str:
@@ -990,6 +1047,14 @@ def doctor() -> int:
             report(severity, f"{name} not responding: {url}{stopped_hint(name)}")
             if severity is FAIL:
                 bad += 1
+    for image, when, age in third_party_images():
+        if age > IMAGE_STALE_DAYS:
+            report(WARN, f"{image} is {age} days old (pulled {when}); floating "
+                         f"tags never re-pull. Update: cli/agentbox update "
+                         f"{image.split('/')[-1].split(':')[0]}")
+        else:
+            report(OK, f"{image} is {age} days old")
+
     disk = shutil.disk_usage("/")
     pct = disk.used * 100 // disk.total
     report(OK if pct < 90 else WARN, f"disk usage {pct}%")
@@ -1022,6 +1087,25 @@ def status() -> int:
 
 BACKUP_DIR = Path(os.environ.get(
     "AGENTBOX_BACKUP_DIR", str(Path("~/.local/state/agentbox/backups").expanduser())))
+
+
+def update(service: str) -> int:
+    """Pull a newer third-party image and redeploy that service.
+
+    Explicit rather than automatic, and separate from `deploy`, because these
+    are somebody else's releases. `deploy` should ship *your* change and
+    nothing else — if it silently pulled upstream too, a one-line config fix
+    could also jump Home Assistant a minor version, and a failure afterwards
+    would have two candidate causes instead of one.
+
+    Floating tags do not float on their own: `docker compose up` reuses a
+    cached image forever. Home Assistant sat three weeks behind and Vikunja
+    four months, with nothing reporting either.
+    """
+    if not (REPO / "services" / "compose" / service / "compose.yaml").is_file():
+        report(FAIL, f"no compose file for '{service}'")
+        return 1
+    return deploy(service, pull=True)
 
 
 def backup(keep: int = 14) -> int:
@@ -2838,6 +2922,9 @@ def main() -> None:
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
     check = pol_sub.add_parser("check")
     check.add_argument("action")
+    up = sub.add_parser("update",
+                        help="pull a newer third-party image and redeploy")
+    up.add_argument("service")
     rc = sub.add_parser("restore-check",
                         help="rehearse a restore from the newest backup")
     rc.add_argument("--archive", default="", help="a specific archive name")
@@ -2953,6 +3040,8 @@ def main() -> None:
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":
         sys.exit(policy_check(args.action))
+    if args.cmd == "update":
+        sys.exit(update(args.service))
     if args.cmd == "restore-check":
         sys.exit(restore_check(args.archive))
     if args.cmd == "backup":
