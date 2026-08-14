@@ -201,7 +201,7 @@ SETTINGS: tuple[Setting, ...] = (
         clean=clean_names,
         env="AGENTBOX_ADMINS",
         placeholder="alex",
-        group="Who lives here",
+        group="Roles and addresses",
     ),
     Setting(
         key="identity_emails",
@@ -213,7 +213,7 @@ SETTINGS: tuple[Setting, ...] = (
         clean=clean_identity_emails,
         env="AGENTBOX_IDENTITY_EMAILS",
         placeholder="alex:alex@example.com, sam:sam@example.com",
-        group="Who lives here",
+        group="Roles and addresses",
     ),
     Setting(
         key="smtp_host",

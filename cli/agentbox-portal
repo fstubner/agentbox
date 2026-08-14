@@ -102,6 +102,7 @@ def _sibling(name: str):
 
 agentbox_settings = _sibling("agentbox_settings")
 agentbox_household = _sibling("agentbox_household")
+agentbox_status = _sibling("agentbox_status")
 
 STATE = Path(os.environ.get(
     "AGENTBOX_PORTAL_DIR",
@@ -204,6 +205,7 @@ FLASHES = {
                         "to finish connecting."),
     "chat_unlinked": "Discord disconnected. Sign-in links will not go there.",
     "settings_saved": "Saved.",
+    "invite_sent": "Invited. Their sign-in link is on its way.",
     "settings_unchanged": "Nothing to change \u2014 those are the current values.",
     "household_saved": "Saved. The bridge picks this up on its next call.",
     "agent_link_cannot_configure": ("This link was created by the assistant, "
@@ -289,6 +291,9 @@ AGENT_WITHHELD = frozenset({
     # Widening what the assistant may actuate in the house is likewise not
     # something a session the assistant created gets to do.
     "ops:write_household",
+    # Creating an identity is granting access. If the assistant could invite,
+    # the assistant could decide who lives here.
+    "ops:invite",
 })
 
 # What each role may do. Enumerated rather than computed: a capability that
@@ -311,6 +316,7 @@ ROLE_CAPABILITIES = {
         "ops:stage_messaging_credential",
         "ops:write_settings",
         "ops:write_household",
+        "ops:invite",
     }),
 }
 
@@ -1038,6 +1044,13 @@ STYLE = """
  .scope{display:inline-block;font-size:.75rem;background:#eef;color:#334;
         border-radius:.25rem;padding:.1rem .4rem;margin-bottom:.4rem}
  .stmt{margin:0 0 .75rem}
+ .row{display:flex;align-items:baseline;gap:.5rem;padding:.2rem 0}
+ .row .name{flex:1}
+ .dot{width:.55rem;height:.55rem;border-radius:50%;flex:none;
+      display:inline-block;position:relative;top:-.1rem}
+ .dot.ok{background:#2e7d32} .dot.warn{background:#c77700}
+ .dot.fail{background:#c62828}
+ .when{color:#888;font-size:.8rem}
  button{font:inherit;padding:.45rem .9rem;border-radius:.35rem;cursor:pointer;
         border:1px solid #bbb;background:#fff;margin-right:.4rem}
  button.yes{background:#1a7f37;border-color:#1a7f37;color:#fff}
@@ -1301,6 +1314,137 @@ def render_connectors(identity: str, role: str, flash: str,
                 chrome(identity, role, origin, "/connectors", "".join(parts)))
 
 
+def _ago(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    return f"{seconds // 3600}h ago"
+
+
+def render_status_card() -> str:
+    """What is actually running, rather than a paragraph about why it matters.
+
+    This card replaced one headed "Connector health" whose entire content was
+    an explanation of why checking health would be a good idea. An admin
+    opening Operations wants to know whether the house works; everything to
+    answer that was already computed by `doctor` and reachable only from a
+    terminal.
+
+    Read-only by construction — see agentbox_status for why there is no
+    restart button here.
+    """
+    snap = agentbox_status.cached()
+    age = _ago(max(0, now() - snap.taken_at))
+
+    problems = sorted(snap.problems,
+                      key=lambda c: 0 if c.severity == agentbox_status.FAIL else 1)
+    if problems:
+        worst = "fail" if snap.failing else "warn"
+        headline = (f"{len(problems)} thing{'s' if len(problems) != 1 else ''} "
+                    f"need{'' if len(problems) != 1 else 's'} attention")
+    else:
+        worst, headline = "ok", "Everything is running"
+
+    rows = [f"<div class=row><span class='dot {worst}'></span>"
+            f"<span class=name><b>{html.escape(headline)}</b></span>"
+            f"<span class=when>checked {html.escape(age)}</span></div>"]
+
+    for check in problems:
+        rows.append(
+            f"<div class=row><span class='dot {check.level}'></span>"
+            f"<span class=name>{html.escape(check.name)}"
+            f"<div class=sub style='margin:0'>{html.escape(check.detail)}</div>"
+            f"</span></div>")
+
+    body = "".join(rows)
+    if not snap.services:
+        body += ("<p class=sub style='margin:.6rem 0 0'>No containers are "
+                 "visible from here, so this list is incomplete rather than "
+                 "empty — Docker did not answer.</p>")
+    else:
+        lines = []
+        for service in snap.services:
+            if not service.running:
+                level, note = "fail", "not running"
+            elif service.stale:
+                # Worth saying: a security fix once sat in git for three weeks
+                # without reaching the running container.
+                level, note = "warn", "running older code than is committed"
+            else:
+                level, note = "ok", service.status
+            lines.append(
+                f"<div class=row><span class='dot {level}'></span>"
+                f"<span class=name>{html.escape(service.label)}</span>"
+                f"<span class=when>{html.escape(note)}</span></div>")
+        body += ("<div style='margin:.7rem 0 0;padding-top:.5rem;"
+                 "border-top:1px solid #eee'>" + "".join(lines) + "</div>")
+
+    return f"<div class=card><b>How things are</b><div style='margin:.5rem 0 0'>{body}</div></div>"
+
+
+def render_people_card(flash_error: str = "") -> str:
+    """Who lives here, how each of them gets in, and a way to add somebody.
+
+    Adding a person used to mean an operator editing a unit file and then
+    running a terminal command to mint a link — so in practice the second
+    person in a household could not be onboarded by the first. The form below
+    does both, and the list above it exists because the failure it prevents is
+    silent: an identity with no address and no Discord account is configured
+    and cannot sign in, and nothing anywhere said so.
+    """
+    emails = email_map()                    # address -> identity
+    by_identity = {name: address for address, name in emails.items()}
+    reachable = discord_identities()
+    known = sorted(set(by_identity) | admin_names() | reachable)
+
+    rows = []
+    for identity in known:
+        address = by_identity.get(identity, "")
+        ways = []
+        if address:
+            ways.append(html.escape(address))
+        if identity in reachable:
+            ways.append("Discord")
+        connected = any(c["connected"] for c in connector_status(identity))
+        if ways:
+            level = "ok"
+            detail = " · ".join(ways)
+        else:
+            # Configured but unreachable: the exact state that used to be
+            # invisible.
+            level = "warn"
+            detail = "no way to receive a sign-in link"
+        role = " (admin)" if identity in admin_names() else ""
+        google = " · Google connected" if connected else ""
+        rows.append(
+            f"<div class=row><span class='dot {level}'></span>"
+            f"<span class=name>{html.escape(identity)}{role}"
+            f"<div class=sub style='margin:0'>{detail}{google}</div></span></div>")
+
+    if not rows:
+        rows.append("<p class=sub style='margin:0'>Nobody is configured yet.</p>")
+
+    error = (f"<div class=flash style='margin:.35rem 0 .2rem'>"
+             f"{html.escape(flash_error)}</div>" if flash_error else "")
+
+    return (
+        f"<div class=card><b>Who lives here</b>"
+        f"<div style='margin:.5rem 0 .2rem'>{''.join(rows)}</div>"
+        f"<div style='margin:.8rem 0 0;padding-top:.7rem;"
+        f"border-top:1px solid #eee'>"
+        f"<b style='font-size:.95rem'>Invite someone</b>"
+        f"<p class=sub style='margin:.3rem 0 .5rem'>Adds them and sends a "
+        f"sign-in link. If there is no way to deliver it, the link is shown "
+        f"here for you to pass on — it is single use and expires.</p>"
+        f"<form method=post action=/admin/invite>"
+        f"<input name=name placeholder='name, e.g. sam' autocomplete=off "
+        f"style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<input name=email type=email placeholder='email (optional)' "
+        f"autocomplete=off style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<button class=yes>Invite</button></form>{error}</div></div>")
+
+
 def _field(setting, value: str, error: str) -> str:
     """One labelled input. Secrets are never echoed back into the page.
 
@@ -1384,16 +1528,15 @@ def render_admin(identity: str, flash: str,
                  errors: dict | None = None,
                  submitted: dict | None = None,
                  household_error: str = "",
-                 household_submitted: str | None = None) -> bytes:
+                 household_submitted: str | None = None,
+                 invite_error: str = "") -> bytes:
     parts = ["<h1>Operations</h1>",
-             "<p class=sub>Admin only. Connector health and messaging setup.</p>"]
+             "<p class=sub>Admin only. How the box is doing, who lives here, "
+             "and how everything is set up.</p>"]
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-    parts.append(
-        "<div class=card><b>Connector health</b>"
-        "<p class=sub style='margin:.4rem 0 0'>Revoking access at Google leaves "
-        "this box holding a dead refresh token; without a check the first "
-        "symptom is a confusing tool failure days later.</p></div>")
+    parts.append(render_status_card())
+    parts.append(render_people_card(invite_error))
 
     # How sign-in links actually reach people. Shown because the failure is
     # invisible by construction: the sign-in page must answer identically for
@@ -1665,6 +1808,67 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _invite(self, session, form) -> None:
+        """Add a person and send them a sign-in link.
+
+        Creating an identity is granting access, so this is withheld from
+        agent- and chat-minted links exactly like editing the admin list: the
+        assistant being able to invite somebody would be the assistant being
+        able to decide who lives here.
+
+        The link is minted as operator-issued, because that is what it is —
+        an admin deliberately handing access to a person they know. There is
+        no browser to bind it to, the same as `agentbox-portal link`.
+        """
+        if not can(session["role"], "ops:invite",
+                   session.get("origin", ORIGIN_AGENT)):
+            self._redirect("/admin?m=agent_link_cannot_configure")
+            return
+
+        name = (form.get("name") or [""])[0].strip()
+        address = (form.get("email") or [""])[0].strip()
+
+        def fail(message: str) -> None:
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                invite_error=message))
+
+        try:
+            name = agentbox_settings.clean_names(name)
+            address = agentbox_settings.clean_email_or_blank(address)
+        except agentbox_settings.InvalidSetting as exc:
+            return fail(str(exc))
+        if not name or "," in name:
+            return fail("Give one name, for example sam.")
+
+        # Append rather than replace. Saving the whole map from a two-field
+        # form would silently drop everybody not mentioned in it.
+        if address:
+            existing = email_map()
+            existing = {a: n for a, n in existing.items() if n != name}
+            existing[address.lower()] = name
+            pairs = ",".join(f"{n}:{a}" for a, n in sorted(existing.items()))
+            try:
+                SETTINGS.save({"identity_emails": pairs})
+            except agentbox_settings.InvalidSetting as exc:
+                return fail(str(exc))
+
+        try:
+            url, _ = mint_link(name, PUBLIC_URL, origin=ORIGIN_OPERATOR)
+        except RuntimeError as exc:
+            return fail(str(exc))
+
+        if deliver_link(name, address, url):
+            self._redirect("/admin?m=invite_sent")
+            return
+        # Nowhere to send it. Showing the admin the link is the honest
+        # fallback — it is what the terminal command does, and the alternative
+        # is telling somebody an invite was sent when it was not.
+        self._send(200, render_admin(
+            session["identity"], "", session.get("origin", ORIGIN_AGENT),
+            invite_error=f"{name} has no way to receive a link yet. Hand this "
+                         f"over directly — single use, and it expires: {url}"))
+
     def _save_settings(self, session, form) -> None:
         """Write the household settings, or re-render the form with errors.
 
@@ -1851,6 +2055,10 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if path == "/connectors/start":
             self._connector_action(session, form)
+            return
+
+        if path == "/admin/invite":
+            self._invite(session, form)
             return
 
         if path == "/admin/settings":

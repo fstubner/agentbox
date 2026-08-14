@@ -28,6 +28,31 @@ from typing import Any
 
 REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.parent))
 
+
+_status_module = None
+
+
+def _status():
+    """Load cli/agentbox_status.py, once.
+
+    Imported lazily rather than at module scope: `scaffold` execs this file
+    inside a generated temp repo where the sibling may not be present, and a
+    hard import would turn that into a startup crash instead of a missing
+    optional feature.
+    """
+    global _status_module
+    if _status_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_status", Path(__file__).resolve().parent / "agentbox_status.py")
+        module = _ilu.module_from_spec(spec)
+        # A module loaded by path must be in sys.modules before it executes, or
+        # any dataclass inside it fails to resolve its own annotations.
+        sys.modules["agentbox_status"] = module
+        spec.loader.exec_module(module)
+        _status_module = module
+    return _status_module
+
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
 # How old a third-party image may get before doctor says so. Two weeks is
@@ -43,38 +68,14 @@ def report(level: str, msg: str) -> None:
 
 
 def source_sha(service: str) -> str:
-    """Hash exactly the files the Dockerfile copies, plus the compose file.
+    """Delegates to agentbox_status, which is the one definition of this.
 
-    Derived from the Dockerfile's own COPY lines rather than a directory walk,
-    so it measures precisely what determines the image. Shared sources live in
-    services/templates and policies/ and are copied from the repo root at build
-    time — reading the COPY lines means the hash follows them without anyone
-    maintaining a second list.
-
-    This replaced a directory walk that hashed the README, so a doc edit marked
-    a service stale. A freshness check that fires on documentation is one people
-    learn to click past, and this one exists because a security fix once sat in
-    git for three weeks without reaching the running container.
+    The portal needs the same answer to say whether a service is stale, and a
+    second implementation written for that page hashed git history instead of
+    file contents — reporting every service on the box as stale. One function,
+    imported by both, is the only way that stays true.
     """
-    svc_dir = REPO / "services" / "compose" / service
-    dockerfile = svc_dir / "Dockerfile"
-    paths = []
-    if dockerfile.exists():
-        paths.append(dockerfile)
-        for line in dockerfile.read_text(encoding="utf-8").splitlines():
-            m = re.match(r"^COPY\s+(\S+)\s", line.strip())
-            if m:
-                paths.append(REPO / m.group(1))
-    for candidate in ("compose.yaml", "compose.yml"):
-        if (svc_dir / candidate).exists():
-            paths.append(svc_dir / candidate)
-    h = hashlib.sha256()
-    for f in sorted(set(paths), key=lambda x: str(x)):
-        if not f.is_file():
-            continue
-        h.update(str(f.relative_to(REPO)).encode())
-        h.update(f.read_bytes())
-    return h.hexdigest()[:16]
+    return _status().source_sha(service)
 
 
 def load_policy() -> dict:
