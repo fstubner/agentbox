@@ -76,8 +76,15 @@ class Setting:
 
     key: str
     label: str
+    # The long form: why this setting is the way it is. Kept, because every
+    # one of these paragraphs is the record of a decision somebody will
+    # otherwise re-litigate — but folded away behind "Why", because an admin
+    # adding their partner should not have to read three of them first.
     help: str
     clean: Callable[[str], str]
+    # One line, shown next to the field. When empty the long form is shown
+    # inline instead, so a setting added without a hint is still explained.
+    hint: str = ""
     env: str = ""
     placeholder: str = ""
     # Rendered as a password field and never echoed back into the form. The
@@ -194,6 +201,7 @@ def clean_snowflakes(raw: str) -> str:
 SETTINGS: tuple[Setting, ...] = (
     Setting(
         key="admins",
+        hint="Who can see Operations and decide household memories.",
         label="Admins",
         help="Who can see Operations and decide household memories. Everyone "
              "else manages only their own. Empty means nobody is an admin, "
@@ -205,6 +213,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="identity_emails",
+        hint="Which address belongs to which person.",
         label="Sign-in addresses",
         help="Which address belongs to which person, so they can ask for their "
              "own sign-in link. An address here is not a credential — it only "
@@ -217,6 +226,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="smtp_host",
+        hint="Leave blank to send no email. Discord needs none of this.",
         label="Mail server",
         help="Leave blank to send no email at all. Discord pairing needs none "
              "of this.",
@@ -227,6 +237,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="smtp_port",
+        hint="587 for STARTTLS.",
         label="Port",
         clean=clean_port,
         env="AGENTBOX_SMTP_PORT",
@@ -237,6 +248,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="smtp_user",
+        hint="Mail is sent as this address.",
         label="Account",
         help="Mail is sent as this address, so it is the name people will see "
              "the link come from.",
@@ -247,6 +259,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="smtp_password",
+        hint="For Gmail, an app password — not the account password.",
         label="Password",
         help="For Gmail this is an app password, not the account password, and "
              "it needs 2-Step Verification switched on.",
@@ -257,6 +270,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="approval_channel",
+        hint="Where the assistant asks when a tool needs permission.",
         label="Approval channel",
         help="The Discord channel the assistant asks in when a tool needs "
              "permission. Blank stops the approval loop from starting at all, "
@@ -269,6 +283,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="approval_user_ids",
+        hint="Whose replies the approval loop acts on.",
         label="Who may approve",
         help="Discord ids whose replies the approval loop will act on. "
              "Everyone else is ignored, including the assistant — bot "

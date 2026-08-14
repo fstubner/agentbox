@@ -1044,6 +1044,7 @@ STYLE = """
  .scope{display:inline-block;font-size:.75rem;background:#eef;color:#334;
         border-radius:.25rem;padding:.1rem .4rem;margin-bottom:.4rem}
  .stmt{margin:0 0 .75rem}
+ h2{font-size:1.05rem;margin:1.6rem 0 .2rem;letter-spacing:-.01em}
  .row{display:flex;align-items:baseline;gap:.5rem;padding:.2rem 0}
  .row .name{flex:1}
  .dot{width:.55rem;height:.55rem;border-radius:50%;flex:none;
@@ -1094,13 +1095,97 @@ def chrome(identity: str, role: str, origin: str, active: str,
             f"<nav class=tabs>{rendered}</nav>{body}</div>")
 
 
+def render_overview(identity: str, role: str, waiting: int,
+                    has_memories: bool) -> str:
+    """What this is, what needs you, and what it can reach.
+
+    The landing page used to open straight onto a memory-approval queue. For
+    somebody signing in for the first time that is a list of statements about
+    themselves, from a thing they have not been told anything about, with two
+    buttons — and the first person to see it had no way to know what Agentbox
+    even was. The queue is still the page's job; this is the sentence that
+    should have come before it.
+
+    The introduction is shown to people who have nothing stored and nothing
+    waiting, which is the closest available reading of "new here". Everyone
+    else gets the one-line version, because a household member reading this
+    for the hundredth time does not need to be told what a household
+    assistant is.
+    """
+    parts = []
+    if not has_memories and not waiting:
+        parts.append(
+            "<div class=card><b>What this is</b>"
+            "<p class=sub style='margin:.4rem 0 0'>Agentbox is your "
+            "household's own assistant, running on a box in your home. It can "
+            "reach your mail, calendar, tasks and the house — and it "
+            "remembers things about you, but only the ones you approve here. "
+            "Nothing is saved because it decided to; every memory on this page "
+            "is waiting for you to say yes.</p></div>")
+
+    lines = []
+    if waiting:
+        lines.append(
+            f"<div class=row><span class='dot warn'></span><span class=name>"
+            f"{waiting} memor{'ies' if waiting != 1 else 'y'} waiting for you"
+            f"</span></div>")
+
+    connected = [c["name"] for c in connector_status(identity) if c["connected"]]
+    chat = chat_account_for(identity)
+    if connected or chat:
+        reach = ", ".join(connected + (["Discord"] if chat else []))
+        lines.append(
+            f"<div class=row><span class='dot ok'></span><span class=name>"
+            f"Connected: {html.escape(reach)}</span>"
+            f"<span class=when><a href='/connectors'>manage</a></span></div>")
+    else:
+        lines.append(
+            "<div class=row><span class='dot warn'></span><span class=name>"
+            "No accounts connected yet</span>"
+            "<span class=when><a href='/connectors'>set up</a></span></div>")
+
+    requests = pending_requests(identity)
+    if requests:
+        lines.append(
+            f"<div class=row><span class='dot warn'></span><span class=name>"
+            f"{len(requests)} account change waiting on the household admin"
+            f"</span></div>")
+
+    # Only admins see the box itself, and only admins pay for the checks that
+    # answer it — this runs a docker call and eight probes.
+    if role == ADMIN:
+        snap = agentbox_status.cached()
+        if snap.evaluating:
+            level, text = "warn", "Paused for an evaluation"
+        elif snap.failing:
+            level, text = "fail", f"{len(snap.failing)} service(s) down"
+        elif snap.problems or snap.stale_services:
+            level, text = "warn", "Some things need attention"
+        else:
+            level, text = "ok", "Everything is running"
+        lines.append(
+            f"<div class=row><span class='dot {level}'></span>"
+            f"<span class=name>{html.escape(text)}</span>"
+            f"<span class=when><a href='/admin'>operations</a></span></div>")
+
+    parts.append(f"<div class=card>{''.join(lines)}</div>")
+    return "".join(parts)
+
+
 def render_home(identity: str, role: str, flash: str,
                 origin: str = ORIGIN_EMAIL) -> bytes:
     try:
         proposals, reachable = own_proposals(identity, role), True
     except BridgeUnreachable:
         proposals, reachable = [], False
-    parts = ["<h1>Memories</h1>",
+    try:
+        stored, _ = stored_memories(identity, role)
+    except BridgeUnreachable:
+        stored = []
+    parts = ["<h1>Agentbox</h1>",
+             f"<p class=sub>Hi {html.escape(identity)}.</p>",
+             render_overview(identity, role, len(proposals), bool(stored)),
+             "<h2>Memories</h2>",
              "<p class=sub>What Agentbox would like to remember about you. "
              "Nothing is saved until you say so.</p>"]
     if origin == ORIGIN_AGENT:
@@ -1483,7 +1568,14 @@ def _field(setting, value: str, error: str) -> str:
         f"placeholder='{html.escape(setting.placeholder)}' "
         f"style='display:block;width:100%;margin:.25rem 0 .2rem;"
         f"padding:.4rem .5rem'>"
-        f"<span class=sub>{html.escape(setting.help)}</span>"
+        + (f"<span class=sub>{html.escape(setting.hint)}</span>"
+           f"<details style='margin:.15rem 0 0'>"
+           f"<summary class=sub style='cursor:pointer;font-size:.8rem'>Why"
+           f"</summary>"
+           f"<div class=sub style='margin:.25rem 0 0'>"
+           f"{html.escape(setting.help)}</div></details>"
+           if setting.hint else
+           f"<span class=sub>{html.escape(setting.help)}</span>")
         + (f"<div class=flash style='margin:.35rem 0 0'>"
            f"{html.escape(error)}</div>" if error else "")
         + "</label>")
