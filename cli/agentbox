@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import urllib.error
@@ -953,6 +954,8 @@ def backup(keep: int = 14) -> int:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     archive = BACKUP_DIR / f"agentbox-{stamp}.tar.gz"
     staging = BACKUP_DIR / f".staging-{stamp}"
+    staging.mkdir(parents=True, exist_ok=True)
+    staging.chmod(0o700)
     (staging / "vikunja").mkdir(parents=True, exist_ok=True)
     (staging / "memory").mkdir(parents=True, exist_ok=True)
 
@@ -964,16 +967,34 @@ def backup(keep: int = 14) -> int:
 
     # The memory store lives in a docker volume, so it is read out through a
     # throwaway container rather than from the host filesystem.
+    #
+    # The container chowns what it copied back to this user before exiting.
+    # Without that the files land owned by the container's uid, this process
+    # cannot delete them, and the cleanup below fails — which is exactly what
+    # happened for thirteen consecutive runs: thirteen archives, thirteen
+    # orphaned staging directories, the oldest owned by root, each holding a
+    # readable copy of every private household memory.
     volume = os.environ.get("AGENTBOX_MEMORY_VOLUME", "memory-bridge_memory_data")
     proc = subprocess.run(
         ["docker", "run", "--rm", "-v", f"{volume}:/src:ro",
-         "-v", f"{staging / 'memory'}:/dst", "alpine", "sh", "-c", "cp -a /src/. /dst/"],
+         "-v", f"{staging / 'memory'}:/dst", "alpine", "sh", "-c",
+         f"cp -a /src/. /dst/ && chown -R {os.getuid()}:{os.getgid()} /dst"],
         capture_output=True, text=True)
     if proc.returncode != 0:
         report(WARN, f"memory volume not archived: {proc.stderr.strip()[:120]}")
 
     subprocess.run(["tar", "-czf", str(archive), "-C", str(staging), "."], check=False)
-    shutil.rmtree(staging, ignore_errors=True)
+    # Private memories, so not group- or world-readable. The staging tree was
+    # mode 644 and the archives 664 until 2026-08-14.
+    archive.chmod(0o600)
+
+    # Not ignore_errors: a cleanup that cannot run is the whole defect above,
+    # and it hid for thirteen runs precisely because nothing reported it.
+    try:
+        shutil.rmtree(staging)
+    except OSError as exc:
+        report(FAIL, f"could not remove {staging}: {exc}. It holds an "
+                     f"unencrypted copy of the memory store — remove it by hand.")
 
     # An archive nobody has opened is not a backup. Verify before pruning, so a
     # broken run cannot delete the last good copy.
@@ -989,6 +1010,76 @@ def backup(keep: int = 14) -> int:
     for old in archives[:-keep] if len(archives) > keep else []:
         old.unlink()
         report(OK, f"pruned {old.name}")
+    return 0
+
+
+def restore_check(archive_name: str = "") -> int:
+    """Rehearse a restore: unpack an archive and prove it could rebuild state.
+
+    Untested restore is the standard way people find out they have no backups.
+    `tar -tzf` proved only that the file was readable — not that the memory
+    store parses, not that it holds anything, not that Vikunja's data came
+    along. Nothing verified any of that, and no restore had ever been run.
+
+    Deliberately a drill, not a live restore. Putting data back means stopping
+    services and overwriting a volume, which is the operator's decision to make
+    deliberately; this answers the question that has to be answered *before*
+    that, which is whether the archive is worth restoring at all.
+    """
+    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"), reverse=True)
+    if archive_name:
+        archives = [a for a in archives if a.name == archive_name]
+    if not archives:
+        report(FAIL, f"no archive found in {BACKUP_DIR}")
+        return 1
+    archive = archives[0]
+
+    with tempfile.TemporaryDirectory(prefix="agentbox-restore-check-") as tmp:
+        target = Path(tmp)
+        proc = subprocess.run(["tar", "-xzf", str(archive), "-C", str(target)],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            report(FAIL, f"{archive.name} would not extract: "
+                         f"{proc.stderr.strip()[:200]}")
+            return 1
+
+        problems = []
+        memory = target / "memory" / "memory.json"
+        if not memory.is_file():
+            problems.append("no memory/memory.json in the archive")
+        else:
+            try:
+                store = json.loads(memory.read_text(encoding="utf-8"))
+            except ValueError as exc:
+                problems.append(f"memory store does not parse: {exc}")
+            else:
+                # Shape, not just parseability: an empty dict is valid JSON and
+                # would restore a household that remembers nothing.
+                for key in ("memories", "proposals"):
+                    if not isinstance(store.get(key), list):
+                        problems.append(f"memory store has no '{key}' list")
+                counts = {k: len(v) for k, v in store.items()
+                          if isinstance(v, list)}
+                report(OK, f"memory store restores: {counts}")
+
+        vikunja = target / "vikunja"
+        files = list(vikunja.rglob("*")) if vikunja.is_dir() else []
+        if not any(f.is_file() for f in files):
+            problems.append("vikunja directory is empty — tasks would not "
+                            "come back")
+        else:
+            report(OK, f"vikunja restores: {sum(1 for f in files if f.is_file())} file(s)")
+
+        if problems:
+            for problem in problems:
+                report(FAIL, problem)
+            report(FAIL, f"{archive.name} would NOT fully restore")
+            return 1
+
+    report(OK, f"{archive.name} verified — extracts, parses, and holds state")
+    print("\nTo restore for real: stop the services, replace the memory volume "
+          "and the vikunja state dir from this archive, then redeploy.\n"
+          "See docs/runbook.md — do it deliberately, not from this command.")
     return 0
 
 
@@ -2667,6 +2758,9 @@ def main() -> None:
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
     check = pol_sub.add_parser("check")
     check.add_argument("action")
+    rc = sub.add_parser("restore-check",
+                        help="rehearse a restore from the newest backup")
+    rc.add_argument("--archive", default="", help="a specific archive name")
     bk = sub.add_parser("backup", help="archive the task and memory stores")
     bk.add_argument("--keep", type=int, default=14, help="archives to retain (default 14)")
     bk_sub = bk.add_subparsers(dest="backup_cmd")
@@ -2779,6 +2873,8 @@ def main() -> None:
         sys.exit(status())
     if args.cmd == "policy" and args.pol_cmd == "check":
         sys.exit(policy_check(args.action))
+    if args.cmd == "restore-check":
+        sys.exit(restore_check(args.archive))
     if args.cmd == "backup":
         sys.exit(backup_list() if getattr(args, "backup_cmd", None) == "list" else backup(args.keep))
     if args.cmd == "scaffold":
