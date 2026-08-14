@@ -204,6 +204,8 @@ FLASHES = {
     "pairing_started": ("Send the code below to the Agentbox bot on Discord "
                         "to finish connecting."),
     "chat_unlinked": "Discord disconnected. Sign-in links will not go there.",
+    "admin_only": ("That is admin only. Your account can manage its own "
+                   "memories and accounts, but not the household's settings."),
     "settings_saved": "Saved.",
     "invite_sent": "Invited. Their sign-in link is on its way.",
     "settings_unchanged": "Nothing to change \u2014 those are the current values.",
@@ -368,6 +370,23 @@ def can(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> bool:
     if origin in (ORIGIN_EMAIL, ORIGIN_OPERATOR):
         return True
     return capability not in AGENT_WITHHELD
+
+
+def refusal(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> str:
+    """Which gate refused, as a flash key. Empty when nothing refused.
+
+    `can` collapses two independent gates into one boolean, which is right for
+    deciding and wrong for explaining. A member refused an admin-only action
+    was being told their *link* was the problem and sent to request another
+    one — which produces an identical refusal, because the link was never the
+    issue. Saying "sign in differently" to somebody whose role is the
+    constraint is worse than saying nothing.
+    """
+    if capability not in ROLE_CAPABILITIES.get(role, frozenset()):
+        return "admin_only"
+    if origin in (ORIGIN_EMAIL, ORIGIN_OPERATOR):
+        return ""
+    return "" if capability not in AGENT_WITHHELD else "agent_link_cannot_configure"
 
 
 def require(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> None:
@@ -1927,9 +1946,10 @@ class PortalHandler(BaseHTTPRequestHandler):
         an admin deliberately handing access to a person they know. There is
         no browser to bind it to, the same as `agentbox-portal link`.
         """
-        if not can(session["role"], "ops:invite",
-                   session.get("origin", ORIGIN_AGENT)):
-            self._redirect("/admin?m=agent_link_cannot_configure")
+        why = refusal(session["role"], "ops:invite",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
             return
 
         name = (form.get("name") or [""])[0].strip()
@@ -1986,9 +2006,10 @@ class PortalHandler(BaseHTTPRequestHandler):
         arbitrary sentence, and echoing input through `?m=` would give that
         back. Re-rendering also keeps the rest of the form filled in.
         """
-        if not can(session["role"], "ops:write_settings",
-                   session.get("origin", ORIGIN_AGENT)):
-            self._redirect("/admin?m=agent_link_cannot_configure")
+        why = refusal(session["role"], "ops:write_settings",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
             return
         submitted = {setting.key: (form.get(setting.key) or [""])[0]
                      for setting in agentbox_settings.SETTINGS}
@@ -2008,9 +2029,10 @@ class PortalHandler(BaseHTTPRequestHandler):
                        + ("settings_saved" if changed else "settings_unchanged"))
 
     def _save_household(self, session, form) -> None:
-        if not can(session["role"], "ops:write_household",
-                   session.get("origin", ORIGIN_AGENT)):
-            self._redirect("/admin?m=agent_link_cannot_configure")
+        why = refusal(session["role"], "ops:write_household",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
             return
         raw = (form.get("entities") or [""])[0]
         try:

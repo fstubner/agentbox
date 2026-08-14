@@ -131,3 +131,35 @@ def test_household_policy_is_not_in_the_portal_state_directory(portal, tmp_path)
     assert tmp_path in portal.SETTINGS.path.parents
     portal.HOUSEHOLD.save("media_player.tv")
     assert portal.HOUSEHOLD.path.read_text()
+
+
+def test_a_member_is_not_told_their_link_is_the_problem(portal):
+    """Found by testing the live box, not by a unit test.
+
+    `can` collapses two gates into one boolean, and all three admin-only
+    handlers assumed a refusal meant the origin. A member was told to sign in
+    from a different link — which produces exactly the same refusal, because
+    the link was never the issue.
+    """
+    assert portal.refusal(portal.MEMBER, "ops:write_settings",
+                          portal.ORIGIN_OPERATOR) == "admin_only"
+    assert portal.refusal(portal.MEMBER, "ops:invite",
+                          portal.ORIGIN_EMAIL) == "admin_only"
+    # The origin message stays for the case it is actually true of.
+    assert portal.refusal(portal.ADMIN, "ops:write_settings",
+                          portal.ORIGIN_AGENT) == "agent_link_cannot_configure"
+    assert portal.refusal(portal.ADMIN, "ops:invite",
+                          portal.ORIGIN_CHAT) == "agent_link_cannot_configure"
+    # And nothing is refused when nothing should be.
+    assert portal.refusal(portal.ADMIN, "ops:invite", portal.ORIGIN_EMAIL) == ""
+
+
+def test_every_refusal_reason_has_a_message(portal):
+    """A key with no entry renders nothing, so a wrong key is a silent page."""
+    for role in (portal.MEMBER, portal.ADMIN):
+        for origin in (portal.ORIGIN_EMAIL, portal.ORIGIN_OPERATOR,
+                       portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
+            for cap in ("ops:write_settings", "ops:write_household", "ops:invite"):
+                key = portal.refusal(role, cap, origin)
+                if key:
+                    assert portal.flash_text(key), key
