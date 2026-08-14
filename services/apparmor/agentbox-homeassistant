@@ -94,6 +94,24 @@ profile agentbox-homeassistant flags=(attach_disconnected,mediate_deleted) {
        bus=system
        path=/org/bluez/**,
 
+  # Device discovery. BlueZ announces a device appearing or disappearing with
+  # InterfacesAdded / InterfacesRemoved on the ObjectManager — at the ROOT path
+  # `/`, not under /org/bluez, and from its unique connection name (:1.3)
+  # rather than the well-known org.bluez. Neither rule above matches either
+  # fact, so every announcement was denied.
+  #
+  # Silently: the kernel logged 449 denials between 1 and 14 August, Home
+  # Assistant never complained, and the household's SwitchBot sensors simply
+  # never appeared. A profile written to make Bluetooth work was the thing
+  # stopping it, and nothing in this platform reads the audit log to notice.
+  #
+  # Scoped to the one interface that carries the announcement, so this does not
+  # become a general permission to receive signals from anything on the bus.
+  dbus receive
+       bus=system
+       path=/
+       interface=org.freedesktop.DBus.ObjectManager,
+
   # Peer-scoped, not interface-scoped. An unscoped rule on these three
   # interfaces permits introspecting *any* service on the bus — written that
   # way first, and systemd1 and login1 were both reachable through it. Every

@@ -235,3 +235,29 @@ def test_supervisor_and_reload_services_are_refused(service):
                                       "entity_id": "light.hall"}}
     with pytest.raises(auto.AutomationRefused):
         check("alias: x", body)
+
+
+def test_the_apparmor_profile_permits_bluetooth_device_discovery():
+    """BlueZ announces a device appearing with InterfacesAdded on the root
+    path, from its unique connection name — not under /org/bluez and not from
+    the well-known org.bluez. The profile permitted only those two, so every
+    announcement was denied: 446 times between 13 and 14 August, silently,
+    while the household's SwitchBot sensors never appeared in Home Assistant.
+    """
+    from pathlib import Path
+    profile = (Path(__file__).resolve().parents[1]
+               / "services/apparmor/agentbox-homeassistant").read_text()
+    rules = "".join(line.split("#")[0] for line in profile.splitlines())
+    assert "path=/ interface=org.freedesktop.DBus.ObjectManager" in \
+        rules.replace("\n", " ").replace("       ", " ").replace("  ", " ")
+
+
+def test_the_discovery_rule_is_scoped_to_one_interface():
+    """A bare `dbus receive bus=system path=/` would permit receiving signals
+    from anything on the bus, which is a much wider grant than the problem
+    needed."""
+    from pathlib import Path
+    profile = (Path(__file__).resolve().parents[1]
+               / "services/apparmor/agentbox-homeassistant").read_text()
+    block = profile.split("Device discovery")[1].split("dbus receive")[1][:200]
+    assert "interface=org.freedesktop.DBus.ObjectManager" in block
