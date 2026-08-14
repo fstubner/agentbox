@@ -29,7 +29,23 @@ from typing import Any
 REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.parent))
 
 
+_keepalive_module = None
 _status_module = None
+
+
+def _keepalive():
+    """Load cli/agentbox_keepalive.py, once. See _status for why it is lazy."""
+    global _keepalive_module
+    if _keepalive_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_keepalive",
+            Path(__file__).resolve().parent / "agentbox_keepalive.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_keepalive"] = module
+        spec.loader.exec_module(module)
+        _keepalive_module = module
+    return _keepalive_module
 
 
 def _status():
@@ -3013,6 +3029,10 @@ def main() -> None:
     cs = con_sub.add_parser("sync")
     cs.add_argument("--quiet", action="store_true",
                     help="say nothing when there is nothing to do")
+    ka = sub.add_parser("keepalive",
+                        help="restore the model stack if an evaluation left it down")
+    ka.add_argument("--quiet", action="store_true",
+                    help="say nothing unless something was restored")
     pr = sub.add_parser("proposals", help="review code changes the assistant has proposed")
     pr_sub = pr.add_subparsers(dest="proposals_cmd", required=True)
     pr_sub.add_parser("list")
@@ -3133,6 +3153,8 @@ def main() -> None:
         sys.exit(rules_remove(args.name))
     if args.cmd == "connectors":
         sys.exit(connectors_sync(args.quiet))
+    if args.cmd == "keepalive":
+        sys.exit(_keepalive().main(["--quiet"] if args.quiet else []))
     if args.cmd == "proposals":
         if args.proposals_cmd == "list":
             sys.exit(proposals_list())

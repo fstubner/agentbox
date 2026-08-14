@@ -1339,25 +1339,40 @@ def render_status_card() -> str:
 
     problems = sorted(snap.problems,
                       key=lambda c: 0 if c.severity == agentbox_status.FAIL else 1)
-    if problems:
+    if snap.evaluating:
+        # Not a fault. A benchmark cannot share the memory budget with the
+        # production model, so it stops it on purpose and starts it again
+        # afterwards. Saying so is the difference between "the box is broken"
+        # and "the box is busy" — and a page that shows red during every
+        # evaluation is one people stop reading.
+        worst = "warn"
+        headline = "Paused for an evaluation"
+        note = ("<p class=sub style='margin:.5rem 0 0'>A benchmark is running. "
+                "It needs the whole memory budget, so the assistant is stopped "
+                "until it finishes — runs have taken over three hours. The "
+                "stack comes back on its own; nothing needs doing.</p>")
+    elif problems:
         worst = "fail" if snap.failing else "warn"
         headline = (f"{len(problems)} thing{'s' if len(problems) != 1 else ''} "
                     f"need{'' if len(problems) != 1 else 's'} attention")
+        note = ""
     else:
-        worst, headline = "ok", "Everything is running"
+        worst, headline, note = "ok", "Everything is running", ""
 
     rows = [f"<div class=row><span class='dot {worst}'></span>"
             f"<span class=name><b>{html.escape(headline)}</b></span>"
             f"<span class=when>checked {html.escape(age)}</span></div>"]
 
-    for check in problems:
+    # During an evaluation the stopped services are the expected state, so
+    # listing them as problems would be repeating the headline as alarm.
+    for check in ([] if snap.evaluating else problems):
         rows.append(
             f"<div class=row><span class='dot {check.level}'></span>"
             f"<span class=name>{html.escape(check.name)}"
             f"<div class=sub style='margin:0'>{html.escape(check.detail)}</div>"
             f"</span></div>")
 
-    body = "".join(rows)
+    body = "".join(rows) + note
     if not snap.services:
         body += ("<p class=sub style='margin:.6rem 0 0'>No containers are "
                  "visible from here, so this list is incomplete rather than "

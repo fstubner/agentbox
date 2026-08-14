@@ -264,12 +264,32 @@ def lan_exposure() -> list[Check]:
     return exposed
 
 
+def evaluation_running() -> bool:
+    """Whether a benchmark currently owns the machine.
+
+    This is the difference between "the box is broken" and "the box is busy",
+    and without it the Operations page shows four red rows during every
+    evaluation — which is how somebody learns to ignore a red page.
+
+    A compare run quiesces the production model deliberately: it needs the
+    whole of a 16 GB unified-memory budget and cannot share it. Runs have
+    lasted upwards of three hours, so this is not a rare state.
+    """
+    try:
+        found = subprocess.run(["pgrep", "-f", "agentbox-eval"],
+                               capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return found.returncode == 0
+
+
 @dataclass
 class Snapshot:
     taken_at: int
     endpoints: list[Check] = field(default_factory=list)
     services: list[Service] = field(default_factory=list)
     other: list[Check] = field(default_factory=list)
+    evaluating: bool = False
 
     @property
     def problems(self) -> list[Check]:
@@ -293,7 +313,8 @@ def take() -> Snapshot:
     return Snapshot(taken_at=int(time.time()),
                     endpoints=endpoint_checks(),
                     services=services(),
-                    other=[disk_check(), *lan_exposure()])
+                    other=[disk_check(), *lan_exposure()],
+                    evaluating=evaluation_running())
 
 
 # A page load should not pay for eight probes and a docker call every time
