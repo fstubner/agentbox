@@ -10,6 +10,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      # The policy this bridge enforces, read from the read-only mount rather
+      # than the copy baked into the image. Editing a tier used to mean
+      # rebuilding every bridge; grants.json has always been read live from
+      # this same mount, and a grant is the sharper decision of the two.
+      # Unset falls back to /app/approval-policy.yaml, and a missing file
+      # fails closed — every tool drops to approval_required.
+      AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       AGENTBOX_SPEAKER_URL: "${AGENTBOX_SPEAKER_URL:-http://host.docker.internal:8772}"
       AGENTBOX_SPEAKER_TOKEN: "${AGENTBOX_SPEAKER_TOKEN:-}"
       AGENTBOX_PORTAL_INTERNAL_URL: "${AGENTBOX_PORTAL_INTERNAL_URL:-http://host.docker.internal:8771}"

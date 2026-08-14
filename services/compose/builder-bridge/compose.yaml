@@ -5,6 +5,13 @@ services:
       dockerfile: services/compose/builder-bridge/Dockerfile
     image: agentbox/builder-bridge:local
     environment:
+      # The policy this bridge enforces, read from the read-only mount rather
+      # than the copy baked into the image. Editing a tier used to mean
+      # rebuilding every bridge; grants.json has always been read live from
+      # this same mount, and a grant is the sharper decision of the two.
+      # Unset falls back to /app/approval-policy.yaml, and a missing file
+      # fails closed — every tool drops to approval_required.
+      AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       BUILDER_BRIDGE_TOKEN: "${BUILDER_BRIDGE_TOKEN:-}"
       BUILDER_REPO: "/repo"
       # uid 65532 has no home directory; git wants a writable one

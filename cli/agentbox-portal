@@ -211,6 +211,12 @@ FLASHES = {
                                "yourself to do it."),
     "admin_only": ("That is admin only. Your account can manage its own "
                    "memories and accounts, but not the household's settings."),
+    "agent_link_cannot_read_ops": ("Operations is not visible from a link the "
+                                   "assistant created \u2014 it lists who "
+                                   "lives here and where their sign-in links "
+                                   "go, and the assistant can read any link it "
+                                   "sends. Ask the bot for one with `link`, or "
+                                   "open a link you requested yourself."),
     "settings_saved": "Saved.",
     "invite_sent": "Invited. Their sign-in link is on its way.",
     "settings_unchanged": "Nothing to change \u2014 those are the current values.",
@@ -304,6 +310,26 @@ AGENT_WITHHELD = frozenset({
     "ops:invite",
 })
 
+# Withheld from assistant-minted links only, not from chat-delivered ones.
+#
+# AGENT_WITHHELD above covers both because for *writes* they are the same
+# risk: neither proves the person doing it is the person who asked. Reading is
+# where they part company, and conflating them was costing something real.
+#
+#   ORIGIN_AGENT  the assistant made this link and can read it, so anything
+#                 the link can see, the assistant can see.
+#   ORIGIN_CHAT   a person has this link on their phone. It is downgraded
+#                 because it was not opened in the browser that asked for it,
+#                 not because anyone untrusted holds it.
+#
+# Operations lists who lives here, their sign-in addresses and their Discord
+# ids. Withholding it from both would have stopped an admin checking on the
+# box from their phone — an ordinary thing to want — in order to keep it from
+# the assistant. Withholding it from the assistant alone costs nothing.
+AGENT_ONLY_WITHHELD = frozenset({
+    "ops:read_health",
+})
+
 # What each role may do. Enumerated rather than computed: a capability that
 # nobody granted should be absent, not merely unreachable by the current UI.
 # Deny by default — an action missing from this table is refused.
@@ -377,7 +403,11 @@ def can(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> bool:
         return False
     if origin in (ORIGIN_EMAIL, ORIGIN_OPERATOR):
         return True
-    return capability not in AGENT_WITHHELD
+    if capability in AGENT_WITHHELD:
+        return False
+    # Anything not explicitly a chat origin is treated as agent-minted, which
+    # is the safe direction for a value that arrived from disk.
+    return origin == ORIGIN_CHAT or capability not in AGENT_ONLY_WITHHELD
 
 
 def refusal(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> str:
@@ -394,7 +424,11 @@ def refusal(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> str:
         return "admin_only"
     if origin in (ORIGIN_EMAIL, ORIGIN_OPERATOR):
         return ""
-    return "" if capability not in AGENT_WITHHELD else "agent_link_cannot_configure"
+    if capability in AGENT_WITHHELD:
+        return "agent_link_cannot_configure"
+    if origin != ORIGIN_CHAT and capability in AGENT_ONLY_WITHHELD:
+        return "agent_link_cannot_read_ops"
+    return ""
 
 
 def require(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> None:
@@ -1884,10 +1918,16 @@ class PortalHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/admin":
-            if not can(session["role"], "ops:read_health"):
+            # The origin was not passed here, so the second gate never ran on
+            # this route at all — every capability check in the system takes
+            # both, and this one silently took the default. That is why a link
+            # the assistant minted could read Operations.
+            why = refusal(session["role"], "ops:read_health",
+                          session.get("origin", ORIGIN_AGENT))
+            if why:
                 self._send(403, page("Not allowed",
-                                     "<h1>Not allowed</h1><p>Operations is "
-                                     "admin only.</p>"))
+                                     f"<h1>Not allowed</h1>"
+                                     f"<p>{html.escape(flash_text(why))}</p>"))
                 return
             self._send(200, render_admin(
                 session["identity"], flash,
@@ -2254,7 +2294,8 @@ def cmd_link(args) -> int:
     a link handed over by the operator is honest about who is delivering it.
     """
     try:
-        url, link_id = mint_link(args.identity, args.base_url)
+        url, link_id = mint_link(args.identity, args.base_url,
+                                 origin=getattr(args, "origin", ORIGIN_OPERATOR))
     except RuntimeError as exc:
         print(f"[fail] {exc}", file=sys.stderr)
         return 1
@@ -2303,6 +2344,11 @@ def main() -> int:
     link.add_argument("identity")
     link.add_argument("--base-url", default=os.environ.get(
         "AGENTBOX_PORTAL_URL", "http://agentbox.local:8771"))
+    link.add_argument("--origin", choices=(ORIGIN_OPERATOR, ORIGIN_CHAT),
+                      default=ORIGIN_OPERATOR,
+                      help="operator: handed over directly, full privilege. "
+                           "chat: delivered over a channel the assistant can "
+                           "read, so it can look but not act.")
     link.set_defaults(func=cmd_link)
 
     serve = sub.add_parser("serve", help="run the portal")

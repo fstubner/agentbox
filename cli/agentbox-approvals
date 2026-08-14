@@ -212,6 +212,7 @@ PORTAL_DIR = Path(os.environ.get(
 
 
 CHAT_LINKS = PORTAL_DIR / "chat-links.json"
+LINK_CURSOR = PORTAL_DIR / "link-requests.json"
 
 # The same settings the portal writes. Imported as an ordinary module — it is
 # a plain .py sitting beside this script, and this script runs as the operator,
@@ -316,6 +317,105 @@ def complete_pairings(token: str) -> None:
                             f"Agentbox, and sign-in links will come here.")})
             log(f"paired {identity} to a Discord account")
             return
+
+
+def send_link_on_request(token: str) -> None:
+    """A paired person DMs `link` and gets one back.
+
+    The mechanical route to a sign-in link, needed because the two other ways
+    each have a gap: the assistant's `request_signin_link` produces a link
+    that deliberately cannot see Operations, and `agentbox-portal link` needs
+    a terminal. Somebody who wants to check on the box from their phone had
+    neither.
+
+    Sending from a paired account is the whole authentication. Pairing already
+    established that this Discord account belongs to this identity, and only
+    the holder of an account can send from it — the same proof the pairing
+    itself rests on.
+
+    Minted as ORIGIN_CHAT, never ORIGIN_OPERATOR. It arrives over a channel
+    the assistant can read, so it must be worth little to whoever reads it: it
+    can look at everything, including Operations, and cannot approve a memory,
+    connect or disconnect an account, invite anybody, or change a setting. An
+    operator link delivered this way would hand full privilege to anything
+    with read access to Discord.
+    """
+    try:
+        data = json.loads(CHAT_LINKS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    linked = data.get("linked", {})
+    if not linked:
+        return
+    by_user = {str(v.get("user_id")): name for name, v in linked.items()}
+
+    channels = discord("GET", "/users/@me/channels", token) or []
+    for channel in channels:
+        messages = discord("GET", f"/channels/{channel.get('id')}/messages?limit=10",
+                           token) or []
+        for message in messages:
+            author = message.get("author") or {}
+            if author.get("bot"):
+                continue
+            if str(message.get("content", "")).strip().lower() != "link":
+                continue
+            if int(message.get("id", 0)) <= int(link_cursor().get(
+                    str(channel.get("id")), 0) or 0):
+                continue          # already answered this one
+            identity = by_user.get(str(author.get("id")))
+            remember_link_request(str(channel.get("id")), str(message.get("id")))
+            if not identity:
+                discord("POST", f"/channels/{channel.get('id')}/messages", token, {
+                    "content": ("This Discord account is not connected to an "
+                                "Agentbox identity yet. Connect it from the "
+                                "Accounts page of your portal first.")})
+                continue
+            try:
+                out = subprocess.run(
+                    [str(REPO / "cli" / "agentbox-portal"), "link", identity,
+                     "--origin", "chat"],
+                    capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as exc:
+                log(f"could not mint a link for {identity}: {exc}")
+                continue
+            url = (out.stdout or "").strip().splitlines()
+            if out.returncode != 0 or not url:
+                detail = (out.stderr or "").strip().splitlines()
+                discord("POST", f"/channels/{channel.get('id')}/messages", token, {
+                    "content": detail[-1] if detail else
+                               "Could not mint a link just now."})
+                continue
+            discord("POST", f"/channels/{channel.get('id')}/messages", token, {
+                "content": (f"{url[0]}\n\nSingle use, and it expires shortly. "
+                            f"It can look at everything \u2014 memories, "
+                            f"accounts, Operations \u2014 and cannot change "
+                            f"anything, because anyone who can read this "
+                            f"message can open it.")})
+            log(f"sent {identity} a chat-origin link on request")
+
+
+def link_cursor() -> dict:
+    try:
+        return json.loads(LINK_CURSOR.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def remember_link_request(channel: str, message_id: str) -> None:
+    """Record the message answered, so a standing `link` DM is not a loop.
+
+    Without this the bot re-answers the same message every poll — five seconds
+    apart, until the hourly mint cap stops it and the person is left with a
+    channel full of dead links.
+    """
+    seen = link_cursor()
+    seen[channel] = message_id
+    try:
+        LINK_CURSOR.parent.mkdir(parents=True, exist_ok=True)
+        LINK_CURSOR.write_text(json.dumps(seen), encoding="utf-8")
+        LINK_CURSOR.chmod(0o600)
+    except OSError as exc:
+        log(f"could not record the link request cursor: {exc}")
 
 
 def deliver_pending_links(token: str) -> None:
@@ -578,6 +678,7 @@ def main() -> int:
         channel = approval_channel()
         operators = approval_operators()
         complete_pairings(token)
+        send_link_on_request(token)
         deliver_pending_links(token)
         announce_proposals(channel, token, state)
         for request in pending_requests():
