@@ -141,6 +141,52 @@ PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
 MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
                                    "http://127.0.0.1:3471")
 
+
+# Messages the portal shows after an action, keyed rather than spelled out in
+# the URL.
+#
+# `?m=<free text>` was truncated at 120 characters, so a redirect meant for a
+# signed-in page greeted the operator with "…so ask now if y" — a sentence cut
+# mid-word, still there on every refresh, long after the thing it described
+# had been finished. Keys fix all three: the text lives here in full, nothing
+# from the URL is ever rendered, and adding a message cannot lengthen a URL.
+FLASHES = {
+    "memory_saved": "Memory saved.",
+    "memory_saved_edited": "Memory saved, with your edit.",
+    "memory_rejected": "Rejected.",
+    "memory_forgotten": "Forgotten.",
+    "filed_as_feedback": ("Filed as feedback. It is on the list to fix "
+                          "properly, and was not saved as a memory."),
+    "consent_received": ("Google consent received. An operator has to finish "
+                         "it \u2014 authorisation codes expire in about ten "
+                         "minutes, so ask now if you can."),
+    "disconnect_requested": ("Disconnect requested. An operator will revoke "
+                             "the credential and remove it from this box."),
+    "unknown_connector": "Unknown connector.",
+    "unknown_action": "Unknown action.",
+    "google_not_configured": "Google sign-in is not configured on this box.",
+    "agent_link_cannot_decide": ("This link was created by the assistant, so "
+                                 "it cannot approve memories. Sign in from the "
+                                 "email link to decide this one."),
+    "agent_link_cannot_disconnect": ("This link was created by the assistant, "
+                                     "so it cannot disconnect an account. Sign "
+                                     "in from the email link to do that."),
+    "agent_link_cannot_forget": ("This link was created by the assistant, so "
+                                 "it cannot remove memories. Sign in from the "
+                                 "email link to do that."),
+    "memory_service_down": "The memory service did not respond. Nothing changed.",
+    "not_yours": "That is not yours to decide.",
+    "google_did_not_complete": ("Google did not complete the connection. "
+                                "Try again, or ask the operator to check the "
+                                "portal log."),
+}
+
+
+def flash_text(key: str) -> str:
+    """Look up a message. An unknown key renders nothing rather than itself."""
+    return FLASHES.get(key, "")
+
+
 ADMIN = "admin"
 MEMBER = "member"
 
@@ -525,14 +571,14 @@ def forget_memory(identity: str, role: str, memory_id: str,
     try:
         current, _ = stored_memories(identity, role)
     except BridgeUnreachable:
-        return False, "The memory service did not respond. Nothing changed."
+        return False, "memory_service_down"
     if memory_id not in {m.get("id") for m in current}:
-        return False, "That memory is not yours to remove."
+        return False, "not_yours"
     result = memory_call("POST", f"/v1/memories/{memory_id}/forget",
                          {"reason": "removed from the portal"})
     if result is None:
-        return False, "The memory service did not respond. Nothing changed."
-    return True, "Forgotten."
+        return False, "memory_service_down"
+    return True, "memory_forgotten"
 
 
 def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
@@ -553,9 +599,9 @@ def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
     try:
         visible = {p.get("id"): p for p in own_proposals(identity, role)}
     except BridgeUnreachable:
-        return False, "The memory service did not respond. Nothing changed."
+        return False, "memory_service_down"
     if proposal_id not in visible:
-        return False, "That proposal is not yours to decide."
+        return False, "not_yours"
 
     payload: dict = {}
     edited = statement.strip()[:2000]
@@ -575,14 +621,13 @@ def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
 
     result = memory_call("POST", f"/v1/proposals/{proposal_id}/{route}", payload)
     if result is None:
-        return False, "The memory service did not respond. Nothing changed."
+        return False, "memory_service_down"
     if verb == "feedback":
-        return True, ("Filed as feedback. It is on the list to fix properly, "
-                      "and was not saved as a memory.")
+        return True, "filed_as_feedback"
     if verb == "approve":
-        return True, ("Memory saved, with your edit."
-                      if "statement" in payload else "Memory saved.")
-    return True, "Rejected."
+        return True, ("memory_saved_edited" if "statement" in payload
+                      else "memory_saved")
+    return True, "memory_rejected"
 
 
 # --- connectors ----------------------------------------------------------------
@@ -1138,7 +1183,7 @@ class PortalHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
-        flash = (query.get("m") or [""])[0][:120]
+        flash = flash_text((query.get("m") or [""])[0][:40])
 
         if parsed.path == "/login":
             identity, origin, reason = redeem_link(
@@ -1249,12 +1294,11 @@ class PortalHandler(BaseHTTPRequestHandler):
         action = (form.get("action") or [""])[0]
         connector = (form.get("connector") or [""])[0]
         if connector != "google":
-            self._redirect("/connectors?m=Unknown+connector.")
+            self._redirect("/connectors?m=unknown_connector")
             return
         if action == "reconnect":
             if not can(role, "connector:read_own") or not GOOGLE_CLIENT_ID:
-                self._redirect("/connectors?" + urllib.parse.urlencode(
-                    {"m": "Google sign-in is not configured on this box."}))
+                self._redirect("/connectors?m=google_not_configured")
                 return
             # Google will only accept a loopback redirect, so the callback
             # always goes to 127.0.0.1 — which is *this browser's* own machine.
@@ -1271,10 +1315,7 @@ class PortalHandler(BaseHTTPRequestHandler):
         if action == "disconnect":
             if not can(role, "connector:disconnect_own",
                        session.get("origin", ORIGIN_AGENT)):
-                self._redirect("/connectors?" + urllib.parse.urlencode(
-                    {"m": "This link was created by the assistant, so it "
-                          "cannot disconnect an account. Sign in from the "
-                          "email link to do that."}))
+                self._redirect("/connectors?m=agent_link_cannot_disconnect")
                 return
             save_request({
                 "id": secrets.token_urlsafe(9),
@@ -1284,11 +1325,9 @@ class PortalHandler(BaseHTTPRequestHandler):
                 "created_at": now(),
                 "completed_at": None,
             })
-            self._redirect("/connectors?" + urllib.parse.urlencode(
-                {"m": "Disconnect requested. An operator will revoke the "
-                      "credential and remove it from this box."}))
+            self._redirect("/connectors?m=disconnect_requested")
             return
-        self._redirect("/connectors?m=Unknown+action.")
+        self._redirect("/connectors?m=unknown_action")
 
     def _google_callback(self, session, query) -> None:
         """Receive Google's authorisation code and spool it for the operator.
@@ -1307,9 +1346,11 @@ class PortalHandler(BaseHTTPRequestHandler):
             return
         code = (query.get("code") or [""])[0]
         if not code:
+            # Google's error string is upstream prose and must not be
+            # reflected into a page. Logged for the operator, keyed for the user.
             reason = (query.get("error") or ["no code returned"])[0]
-            self._redirect("/connectors?" + urllib.parse.urlencode(
-                {"m": f"Google did not complete the connection: {reason}"}))
+            sys.stderr.write(f"[portal] google callback error: {reason[:200]}\n")
+            self._redirect("/connectors?m=google_did_not_complete")
             return
         save_request({
             "id": secrets.token_urlsafe(9),
@@ -1321,10 +1362,7 @@ class PortalHandler(BaseHTTPRequestHandler):
             "created_at": now(),
             "completed_at": None,
         })
-        self._redirect("/connectors?" + urllib.parse.urlencode(
-            {"m": "Google consent received. An operator has to finish it — "
-                  "authorisation codes expire in about ten minutes, so ask "
-                  "now if you can."}))
+        self._redirect("/connectors?m=consent_received")
 
     def _request_link(self, address: str) -> None:
         """Handle a sign-in request.
@@ -1383,10 +1421,8 @@ class PortalHandler(BaseHTTPRequestHandler):
                     (form.get("id") or [""])[0],
                     session.get("origin", ORIGIN_AGENT))
             except PermissionError:
-                message = ("This link was created by the assistant, so it "
-                           "cannot remove memories. Sign in from the email "
-                           "link to do that.")
-            self._redirect("/?" + urllib.parse.urlencode({"m": message}))
+                message = "agent_link_cannot_forget"
+            self._redirect(f"/?m={urllib.parse.quote(message)}")
             return
 
         if path == "/memory/decide":
@@ -1399,10 +1435,8 @@ class PortalHandler(BaseHTTPRequestHandler):
                     session.get("origin", ORIGIN_AGENT),
                     statement=(form.get("statement") or [""])[0])
             except PermissionError:
-                message = ("This link was created by the assistant, so it "
-                           "cannot approve memories. Sign in from the email "
-                           "link to decide this one.")
-            self._redirect("/?" + urllib.parse.urlencode({"m": message}))
+                message = "agent_link_cannot_decide"
+            self._redirect(f"/?m={urllib.parse.quote(message)}")
             return
         self._send(404, page("Not found", "<h1>Not found</h1>"))
 

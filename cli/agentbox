@@ -2032,11 +2032,24 @@ def gateway_routing_applied(identity: str) -> bool:
     """
     suffix = identity.upper().replace("-", "_")
     expected = f"http://{identity}-google-bridge:8080"
-    running = subprocess.run(
-        ["docker", "exec", "agentbox-mcp-agentbox-mcp-1",
-         "printenv", f"GOOGLE_BRIDGE_URL_{suffix}"],
-        capture_output=True, text=True, timeout=30, check=False)
-    if running.returncode == 0 and running.stdout.strip() == expected:
+    gateway_env = Path(env_dir()) / "agentbox-mcp.env"
+
+    def running_value(name: str) -> str:
+        out = subprocess.run(
+            ["docker", "exec", "agentbox-mcp-agentbox-mcp-1", "printenv", name],
+            capture_output=True, text=True, timeout=30, check=False)
+        return out.stdout.strip() if out.returncode == 0 else ""
+
+    # The URL and the TOKEN both have to match what is on disk. Checking only
+    # the URL was a real bug: a reconnect recreates the identity's bridge with
+    # a fresh bridge token, the URL is unchanged, so this reported "already
+    # routing correctly" and left the gateway holding the old token. Every
+    # Google call for that person then failed 401 — a reconnect that appeared
+    # to succeed and broke the thing it was fixing.
+    on_disk = read_env_file(gateway_env)
+    token_matches = (running_value(f"GOOGLE_BRIDGE_TOKEN_{suffix}")
+                     == on_disk.get(f"GOOGLE_BRIDGE_TOKEN_{suffix}", ""))
+    if running_value(f"GOOGLE_BRIDGE_URL_{suffix}") == expected and token_matches:
         return True  # already routing correctly; no need to disturb the gateway
 
     report(WARN, "restarting the gateway so it picks up the new routing")

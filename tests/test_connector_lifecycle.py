@@ -279,13 +279,40 @@ def test_a_gateway_already_routing_correctly_is_left_alone(cli, monkeypatch):
     routing is actually missing."""
     deployed = []
     monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)
-    monkeypatch.setattr(
-        cli.subprocess, "run",
-        lambda *a, **k: type("R", (), {
-            "returncode": 0, "stdout": "http://sam-google-bridge:8080\n",
-            "stderr": ""})())
+    monkeypatch.setattr(cli, "read_env_file",
+                        lambda path: {"GOOGLE_BRIDGE_TOKEN_SAM": "tok-123"})
+
+    def running(cmd, *a, **k):
+        value = ("http://sam-google-bridge:8080" if cmd[-1].startswith("GOOGLE_BRIDGE_URL")
+                 else "tok-123")
+        return type("R", (), {"returncode": 0, "stdout": value + "\n", "stderr": ""})()
+
+    monkeypatch.setattr(cli.subprocess, "run", running)
     assert cli.gateway_routing_applied("sam") is True
     assert deployed == []
+
+
+def test_a_stale_bridge_token_forces_a_redeploy(cli, monkeypatch):
+    """The URL does not change on reconnect but the token does.
+
+    Checking only the URL reported "already routing correctly" and left the
+    gateway holding the previous bridge token, so every Google call for that
+    person failed 401 — a reconnect that looked successful and broke the thing
+    it was fixing. Hit live on 2026-08-14.
+    """
+    deployed = []
+    monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)
+    monkeypatch.setattr(cli, "read_env_file",
+                        lambda path: {"GOOGLE_BRIDGE_TOKEN_SAM": "new-token"})
+
+    def running(cmd, *a, **k):
+        value = ("http://sam-google-bridge:8080" if cmd[-1].startswith("GOOGLE_BRIDGE_URL")
+                 else "OLD-token")
+        return type("R", (), {"returncode": 0, "stdout": value + "\n", "stderr": ""})()
+
+    monkeypatch.setattr(cli.subprocess, "run", running)
+    assert cli.gateway_routing_applied("sam") is True
+    assert deployed == ["agentbox-mcp"]
 
 
 def test_a_failed_gateway_restart_is_reported_not_swallowed(cli, monkeypatch, capsys):

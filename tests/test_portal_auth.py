@@ -160,7 +160,8 @@ def test_member_cannot_decide_another_identity_proposal(portal, monkeypatch):
                       {"id": "p2", "scope": "sam", "statement": "hers"}]})
     ok, message = portal.decide_memory("sam", portal.MEMBER, "p1", True)
     assert not ok
-    assert "not yours" in message
+    assert message == "not_yours"
+    assert "not yours" in portal.flash_text(message)
     assert portal.decide_memory("sam", portal.MEMBER, "p2", True)[0] is True
 
 
@@ -173,7 +174,8 @@ def test_admin_decides_household_but_not_another_private_scope(portal, monkeypat
     assert portal.decide_memory("alex", portal.ADMIN, "h", True)[0] is True
     ok, message = portal.decide_memory("alex", portal.ADMIN, "m", True)
     assert not ok
-    assert "not yours" in message
+    assert message == "not_yours"
+    assert "not yours" in portal.flash_text(message)
 
 
 def test_member_sees_only_their_own_scope(portal, monkeypatch):
@@ -194,7 +196,8 @@ def test_bridge_failure_does_not_report_success(portal, monkeypatch):
     monkeypatch.setattr(portal, "memory_call", lambda *a, **k: None)
     ok, message = portal.decide_memory("sam", portal.MEMBER, "p1", True)
     assert not ok
-    assert "Nothing changed" in message
+    assert message == "memory_service_down"
+    assert "Nothing changed" in portal.flash_text(message)
 
 
 # --- containment ---------------------------------------------------------------
@@ -443,7 +446,8 @@ def test_filing_as_feedback_sends_the_kind_to_the_bridge(portal, monkeypatch):
     assert ok
     assert sent["path"].endswith("/approve")
     assert sent["payload"]["kind"] == "feedback"
-    assert "not saved as a memory" in message
+    assert message == "filed_as_feedback"
+    assert "not saved as a memory" in portal.flash_text(message)
 
 
 def test_an_edited_statement_reaches_the_bridge(portal, monkeypatch):
@@ -458,7 +462,8 @@ def test_an_edited_statement_reaches_the_bridge(portal, monkeypatch):
         statement="Alex dislikes meetings before 10am")
     assert ok
     assert sent["payload"]["statement"] == "Alex dislikes meetings before 10am"
-    assert "with your edit" in message
+    assert message == "memory_saved_edited"
+    assert "with your edit" in portal.flash_text(message)
 
 
 def test_an_agent_minted_session_still_cannot_decide(portal):
@@ -528,7 +533,8 @@ def test_forgetting_out_of_scope_is_refused(portal, monkeypatch):
                              "statement": "x"}]))
     ok, message = portal.forget_memory("alex", portal.MEMBER, "someone-elses")
     assert not ok
-    assert "not yours" in message
+    assert message == "not_yours"
+    assert "not yours" in portal.flash_text(message)
 
 
 def test_an_agent_session_cannot_forget(portal, monkeypatch):
@@ -559,3 +565,45 @@ def test_requesting_a_link_redirects_without_a_message_parameter(portal):
     block = source.split("def _request_link")[1].split("def ")[0]
     assert '"/?sent=1"' in block
     assert "urlencode({\"m\"" not in block
+
+
+# --- flash messages ------------------------------------------------------------
+
+
+def test_no_page_renders_free_text_from_the_url(portal):
+    """`?m=<prose>` was truncated at 120 characters, so a redirect meant for a
+    signed-in page greeted the operator with a sentence cut mid-word — "…so
+    ask now if y" — still there on every refresh, long after the thing it
+    described had been finished."""
+    from conftest import code_of
+    source = code_of("cli/agentbox-portal")
+    assert 'urlencode({"m"' not in source
+    # The only thing read from the URL is a short key, looked up in a table.
+    assert "flash_text(" in source
+
+
+def test_an_unknown_key_renders_nothing_rather_than_itself(portal):
+    """Otherwise `?m=<script>` is reflected content, keyed or not."""
+    assert portal.flash_text("no_such_key") == ""
+    assert portal.flash_text("<b>hi</b>") == ""
+
+
+def test_every_key_the_portal_redirects_to_actually_exists(portal):
+    """A typo'd key would render a blank message and look like nothing
+    happened — the silent-success failure this project keeps hunting."""
+    import re
+
+    from conftest import code_of
+    source = code_of("cli/agentbox-portal")
+    used = set(re.findall(r'[?&]m=([a-z_]+)"', source))
+    used |= set(re.findall(r'message = "([a-z_]+)"', source))
+    unknown = sorted(k for k in used if k not in portal.FLASHES)
+    assert not unknown, f"redirects to keys with no message: {unknown}"
+
+
+def test_messages_are_not_truncated(portal):
+    """The whole point: the text lives in code, so it is whole."""
+    assert portal.flash_text("consent_received").endswith("if you can.")
+    for key, text in portal.FLASHES.items():
+        assert text.strip(), key
+        assert not text.endswith(("…", " if y")), key
