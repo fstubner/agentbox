@@ -785,6 +785,74 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
     return True, ""
 
 
+# --- delivery ------------------------------------------------------------------
+#
+# A sign-in link has to reach a person; how is a household preference, not a
+# security property. What makes the link safe is that it is bound to the
+# browser that asked for it — a nonce cookie set at request time, required at
+# redemption — so a link sitting in a Discord DM or an inbox is useless to
+# anyone who merely reads it, including the assistant, which can read both.
+#
+# That is why Discord delivery is safe here and worth having: it needs no SMTP
+# credential, no personal address in the From line, and it lands where the
+# household already talks to the assistant.
+#
+# The portal does not hold the Discord bot token. It writes a delivery request
+# to the same spool the connector flow uses, and cli/agentbox-approvals — which
+# runs as the operator, holds the token, and never passes through the model —
+# sends the DM. Same two-phase split, same reason: a LAN-reachable page should
+# not hold a credential that can message the household.
+
+
+def deliver_link(identity: str, address: str, url: str) -> bool:
+    """Send a sign-in link by every channel configured. True if any worked.
+
+    Both are attempted rather than one preferred: a household that has set up
+    both probably wants the link wherever they are looking, and the failure of
+    one must not silently swallow the request.
+    """
+    delivered = False
+
+    if SMTP_HOST and address:
+        sent, detail = send_link_email(address, url)
+        if sent:
+            delivered = True
+        else:
+            sys.stderr.write(f"[portal] email to {identity} failed: {detail}\n")
+
+    if identity in discord_identities():
+        try:
+            save_request({
+                "id": secrets.token_urlsafe(9),
+                "identity": identity,
+                "connector": "portal",
+                "action": "deliver_link",
+                "url": url,
+                "created_at": now(),
+                "completed_at": None,
+            })
+            delivered = True
+        except OSError as exc:
+            sys.stderr.write(f"[portal] could not spool a Discord link: {exc}\n")
+
+    return delivered
+
+
+def discord_identities() -> set[str]:
+    """Identities reachable by Discord DM, from `alex:123,sam:456`.
+
+    Read from the same variable the approvals loop uses, so the portal never
+    offers a channel that cannot actually deliver.
+    """
+    raw = os.environ.get("AGENTBOX_DISCORD_IDENTITIES", "")
+    out = set()
+    for pair in raw.replace(" ", ",").split(","):
+        name, _, user = pair.partition(":")
+        if name.strip() and user.strip():
+            out.add(name.strip())
+    return out
+
+
 # --- pages ---------------------------------------------------------------------
 
 STYLE = """
@@ -1051,6 +1119,36 @@ def render_admin(identity: str, flash: str,
         "<p class=sub style='margin:.4rem 0 0'>Revoking access at Google leaves "
         "this box holding a dead refresh token; without a check the first "
         "symptom is a confusing tool failure days later.</p></div>")
+
+    # How sign-in links actually reach people. Shown because the failure is
+    # invisible by construction: the sign-in page must answer identically for
+    # a registered and an unregistered address, so it can never say "that went
+    # nowhere". This is the only place a person finds out.
+    channels = []
+    if SMTP_HOST:
+        channels.append(f"Email via {html.escape(SMTP_HOST)} as "
+                        f"{html.escape(SMTP_USER or 'an unnamed account')}")
+    reachable = sorted(discord_identities())
+    if reachable:
+        channels.append("Discord DM to " + ", ".join(html.escape(n) for n in reachable))
+    if channels:
+        body = "".join(f"<div style='padding:.15rem 0'>{c}</div>" for c in channels)
+        note = ("<p class=sub style='margin:.5rem 0 0'>Both are attempted when "
+                "both are configured. A link is bound to the browser that "
+                "requested it, so it is useless to anyone who merely reads "
+                "it \u2014 which is why a chat channel is a safe place to send "
+                "one.</p>")
+    else:
+        body = ("<div style='padding:.15rem 0'>Nothing configured \u2014 links "
+                "are minted and reach nobody.</div>")
+        note = ("<p class=sub style='margin:.5rem 0 0'>Set "
+                "<code>AGENTBOX_SMTP_HOST</code> and friends for email, or "
+                "<code>AGENTBOX_DISCORD_IDENTITIES</code> for Discord DMs. "
+                "Until one exists, an operator hands links over directly with "
+                "<code>agentbox-portal link &lt;name&gt;</code>.</p>")
+    parts.append(f"<div class=card><b>How sign-in links are delivered</b>"
+                 f"<div class=sub style='margin:.4rem 0 0'>{body}</div>"
+                 f"{note}</div>")
     parts.append("<footer><a href='/logout'>Sign out</a></footer>")
     return page("Operations \u2014 Agentbox",
                 chrome(identity, ADMIN, origin, "/admin", "".join(parts)))
@@ -1376,11 +1474,12 @@ class PortalHandler(BaseHTTPRequestHandler):
         if identity:
             try:
                 url, _ = mint_link(identity, PUBLIC_URL, request_nonce=nonce)
-                sent, detail = send_link_email(address, url)
-                if not sent:
+                delivered = deliver_link(identity, address, url)
+                if not delivered:
                     # Visible to the operator, never to the browser.
                     sys.stderr.write(
-                        f"[portal] link for {identity} not delivered: {detail}\n")
+                        f"[portal] link for {identity} not delivered by any "
+                        f"channel\n")
             except RuntimeError as exc:
                 sys.stderr.write(f"[portal] {exc}\n")
         self.send_response(303)

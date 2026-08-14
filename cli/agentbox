@@ -812,12 +812,25 @@ def portal_email_delivery() -> int:
         unit_env[key] = value
     if not unit_env.get("AGENTBOX_IDENTITY_EMAILS"):
         return 0
+    # Email is one channel, not the only one. Discord DM delivery needs no
+    # SMTP credential and no personal address in the From line, and it is safe
+    # for the same reason email is: the link is bound to the browser that
+    # requested it, so reading it is not enough to use it.
+    channels = []
     if unit_env.get("AGENTBOX_SMTP_HOST"):
-        report(OK, "portal can deliver sign-in links by email")
+        channels.append("email")
+    if unit_env.get("AGENTBOX_DISCORD_IDENTITIES"):
+        channels.append("Discord DM")
+    if channels:
+        report(OK, f"portal can deliver sign-in links by "
+                   f"{' and '.join(channels)}")
         return 0
-    report(WARN, "portal has addresses configured but no AGENTBOX_SMTP_HOST — "
-                 "sign-in links are minted and never sent, and the page cannot "
-                 "say so. Use: cli/agentbox-portal link <name>")
+    report(WARN, "portal has addresses configured but no delivery channel — "
+                 "sign-in links are minted and reach nobody, and the page "
+                 "cannot say so because answering differently for a registered "
+                 "address would reveal who lives here. Set AGENTBOX_SMTP_HOST "
+                 "or AGENTBOX_DISCORD_IDENTITIES, or hand links over with: "
+                 "cli/agentbox-portal link <name>")
     return 0
 
 

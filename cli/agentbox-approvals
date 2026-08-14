@@ -206,6 +206,61 @@ def dm_channel(user_id: str, token: str) -> str:
     return str((created or {}).get("id", ""))
 
 
+PORTAL_DIR = Path(os.environ.get(
+    "AGENTBOX_PORTAL_DIR",
+    str(Path("~/.local/state/agentbox/portal").expanduser())))
+
+
+def deliver_pending_links(token: str) -> None:
+    """Send sign-in links the portal spooled, as a Discord DM.
+
+    The portal mints the link and writes a request; this process delivers it.
+    That split exists because the portal is LAN-reachable and must not hold the
+    bot token — the same reason it cannot exchange an OAuth code.
+
+    Safe to send over a channel the assistant can read: the link is bound to
+    the browser that requested it by a nonce cookie, so reading it is not
+    enough to use it. That property is what makes this delivery method
+    possible at all, and it is the portal's, not this file's — if it were ever
+    relaxed, this would have to stop.
+    """
+    directory = PORTAL_DIR / "requests"
+    if not directory.is_dir():
+        return
+    mapping = identity_discord_map()
+    for entry in sorted(directory.glob("*.json")):
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("action") != "deliver_link" or record.get("completed_at"):
+            continue
+        identity = str(record.get("identity", ""))
+        user = mapping.get(identity)
+        if not user:
+            log(f"no Discord id for {identity}; sign-in link not delivered")
+            continue
+        channel = dm_channel(user, token)
+        if not channel:
+            continue
+        posted = discord("POST", f"/channels/{channel}/messages", token, {
+            "content": (f"Here is your Agentbox sign-in link.\n{record.get('url')}\n"
+                        f"It works once, expires shortly, and **only in the "
+                        f"browser you asked for it from** — so it is no use to "
+                        f"anyone else who reads this, including me.")})
+        if not posted:
+            continue
+        # The URL is a credential until it expires. Drop it as soon as it is
+        # sent, the same way a spent authorisation code is dropped.
+        record.pop("url", None)
+        record["completed_at"] = int(time.time())
+        try:
+            entry.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        except OSError as exc:
+            log(f"delivered {identity}'s link but could not mark it done: {exc}")
+        log(f"delivered a sign-in link to {identity} by DM")
+
+
 def announce_proposals(channel: str, token: str, state: dict) -> None:
     """Post proposals nobody has been shown yet, to the right audience."""
     payload = memory_call("GET", "/v1/proposals?limit=50")
@@ -395,6 +450,7 @@ def main() -> int:
     state = load_cursor()
 
     while True:
+        deliver_pending_links(token)
         announce_proposals(channel, token, state)
         for request in pending_requests():
             tool = request.get("tool", "")

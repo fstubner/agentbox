@@ -843,6 +843,39 @@ suggestion rather than acting on it. An automatic supersession that is wrong
 hides a true memory behind a false one and says nothing, which is worse than
 leaving both visible for a human to reconcile.
 
+### Getting a sign-in link to someone
+
+Three channels, and the household picks. All three deliver the *same* link,
+and the link is bound to the browser that asked for it — a nonce cookie set at
+request time, required at redemption. Reading it is not enough to use it,
+which is what makes a chat channel a safe place to send one.
+
+| channel | needs | notes |
+|---|---|---|
+| Operator hands it over | nothing | `cli/agentbox-portal link <name>` — works today |
+| Discord DM | `AGENTBOX_DISCORD_IDENTITIES` | no SMTP, no personal From address |
+| Email | `AGENTBOX_SMTP_*` | mail comes from whichever account you authenticate as |
+
+Discord delivery uses the same two-phase split as the connector flow: the
+portal writes a delivery request, and `cli/agentbox-approvals` — which runs as
+the operator, holds the bot token, and never passes through the model — sends
+the DM and drops the URL as soon as it is sent. The portal never holds the bot
+token, for the same reason it cannot exchange an OAuth code.
+
+```
+AGENTBOX_DISCORD_IDENTITIES="alex:123456789,sam:987654321"
+```
+
+The Operations tab lists which channels will actually deliver. That page is
+the only place a person can find out, because the sign-in form must answer
+identically for a registered and an unregistered address — anything else turns
+it into a way to enumerate who lives here.
+
+**How many people?** As many as you configure. `AGENTBOX_IDENTITIES` takes a
+list, each person gets a private memory scope plus the shared household one,
+and each connecting Google gets their own bridge container holding only their
+credential. There is no two-person assumption anywhere.
+
 ### Reviewing memories from Discord
 
 The same process, because it needs the same protections and reimplementing
