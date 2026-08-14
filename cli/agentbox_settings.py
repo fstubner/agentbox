@@ -164,6 +164,31 @@ def clean_free(raw: str) -> str:
     return raw.strip()
 
 
+# Discord ids are snowflakes: decimal integers, currently 17-20 digits. Checked
+# for shape only. The real check is that the approval loop refuses to accept
+# instructions from an id that is not on the operator list, so a mistyped id
+# grants nothing to anybody — it just quietly stops working for you, which is
+# the safe direction but a confusing one, hence validating what we can here.
+SNOWFLAKE = re.compile(r"^[0-9]{15,25}$")
+
+
+def clean_snowflake(raw: str) -> str:
+    value = raw.strip()
+    if value and not SNOWFLAKE.match(value):
+        raise InvalidSetting(
+            f"'{value}' is not a Discord id. Turn on Developer Mode in "
+            f"Discord, then right-click and Copy ID — it is a long number, "
+            f"not a username")
+    return value
+
+
+def clean_snowflakes(raw: str) -> str:
+    ids = [i.strip() for i in raw.replace("\n", ",").split(",") if i.strip()]
+    for value in ids:
+        clean_snowflake(value)
+    return ",".join(ids)
+
+
 # --- the settings themselves ---------------------------------------------------
 
 SETTINGS: tuple[Setting, ...] = (
@@ -230,7 +255,37 @@ SETTINGS: tuple[Setting, ...] = (
         secret=True,
         group="Email delivery",
     ),
+    Setting(
+        key="approval_channel",
+        label="Approval channel",
+        help="The Discord channel the assistant asks in when a tool needs "
+             "permission. Blank stops the approval loop from starting at all, "
+             "which is the right failure: a loop with nowhere to ask would "
+             "otherwise sit there looking healthy.",
+        clean=clean_snowflake,
+        env="AGENTBOX_APPROVAL_CHANNEL_ID",
+        placeholder="100000000000000001",
+        group="Discord",
+    ),
+    Setting(
+        key="approval_user_ids",
+        label="Who may approve",
+        help="Discord ids whose replies the approval loop will act on. "
+             "Everyone else is ignored, including the assistant — bot "
+             "messages are skipped before this list is consulted, so an "
+             "injected instruction cannot approve itself.",
+        clean=clean_snowflakes,
+        env="AGENTBOX_APPROVAL_USER_IDS",
+        placeholder="221334455667788990",
+        group="Discord",
+    ),
 )
+
+# Deliberately not here: the Discord bot token. It stays in 1Password, which
+# gives rotation and an audit trail and keeps it off this disk entirely.
+# Moving it into this file to save a lookup would be trading a managed secret
+# for a local one — the opposite direction from everything else in this table,
+# which moves *configuration* out of local files and leaves credentials alone.
 
 BY_KEY = {setting.key: setting for setting in SETTINGS}
 GROUPS = tuple(dict.fromkeys(setting.group for setting in SETTINGS))
