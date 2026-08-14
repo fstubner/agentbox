@@ -140,20 +140,14 @@ def google_bytes(method, url):
         raise BridgeError(exc.code, {"google_error": detail}) from None
 
 
-def google_delete(url):
-    req = urllib.request.Request(url, method="DELETE")
-    req.add_header("Authorization", f"Bearer {access_token()}")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            resp.read()
-            return {"ok": True}
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        try:
-            detail = json.loads(raw)
-        except json.JSONDecodeError:
-            detail = raw[:500]
-        raise BridgeError(exc.code, {"google_error": detail}) from None
+# There is deliberately no google_delete here.
+#
+# One existed, fully implemented and called by nothing, until 2026-08-14.
+# Deleting mail and files is always_denied in policy and has no tool, so it
+# was absent from the assistant's surface while sitting in the process that
+# holds the OAuth credential — one call site from being reachable. "Absent
+# beats gated" is this platform's own rule, and unused code implementing a
+# forbidden capability is the weakest form of absent there is.
 
 
 def decode_b64url(value):

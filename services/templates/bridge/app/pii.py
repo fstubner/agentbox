@@ -44,7 +44,12 @@ import re
 PATTERNS: list[tuple[str, re.Pattern]] = [
     ("EMAIL", re.compile(
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
-    ("IBAN", re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")),
+    # Optional single spaces between characters, because that is how IBANs
+    # are actually written: banks, invoices and letters print them in groups
+    # of four. The compact form matched and the spaced form did not, so the
+    # one format this will ever meet was the one it missed. mod-97 below is
+    # what stops the looser pattern over-matching.
+    ("IBAN", re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b")),
     ("CARD", re.compile(r"\b(?:\d[ -]?){13,19}\b")),
     ("NINO", re.compile(
         r"\b[ABCEGHJKLMNOPRSTWXYZ][ABCEGHJKLMNPRSTWXYZ]\s?"
@@ -98,7 +103,8 @@ def _valid(kind: str, text: str) -> bool:
         digits = re.sub(r"[ -]", "", text)
         return 13 <= len(digits) <= 19 and _luhn_ok(digits)
     if kind == "IBAN":
-        return _iban_ok(text.upper())
+        # Spaces stripped before the checksum, exactly as CARD does above.
+        return _iban_ok(re.sub(r"\s", "", text).upper())
     if kind == "PHONE":
         # Guard against swallowing ordinary numbers: require enough digits to
         # actually be a phone number, and reject runs that are clearly a year,

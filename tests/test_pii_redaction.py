@@ -215,3 +215,29 @@ def test_strip_respects_checksums(pii):
     substitution."""
     text = "order 1234567812345678 shipped"
     assert pii.strip_sensitive(text) == text
+
+
+# --- the format IBANs are actually written in ---------------------------------
+
+
+@pytest.mark.parametrize("value", [
+    "GB82 WEST 1234 5698 7654 32",      # UK, spaced — the common form
+    "GB82WEST12345698765432",           # compact
+    "DE89 3704 0044 0532 0130 00",      # German
+    "FR14 2004 1010 0505 0001 3M02 606",  # French, with letters mid-string
+])
+def test_real_ibans_are_stripped_in_every_written_form(pii, value):
+    """Only the compact form matched until 2026-08-14. Banks, invoices and
+    letters print IBANs in groups of four, so the one format this would ever
+    meet was the one it missed."""
+    assert pii.strip_sensitive(value) == "[IBAN removed]"
+
+
+@pytest.mark.parametrize("value", [
+    "GB00 WEST 1234 5698 7654 32",        # checksum fails
+    "Order AB12 3456 7890 was shipped",   # ordinary text
+    "the meeting is at 10 00 today",
+])
+def test_the_looser_pattern_does_not_over_match(pii, value):
+    """mod-97 is what makes it safe to allow spaces in the pattern."""
+    assert pii.strip_sensitive(value) == value

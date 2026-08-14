@@ -480,3 +480,19 @@ def test_every_consent_path_honours_the_same_opt_in(monkeypatch, path):
 @pytest.mark.parametrize("value", ["", "0", "no", "false", "maybe", " "])
 def test_ambiguous_values_do_not_widen_any_consent_path(monkeypatch, path, value):
     assert "drive.readonly" not in _consent_scopes(monkeypatch, path, value)
+
+
+def test_no_delete_helper_exists_in_the_credential_holder():
+    """"Absent beats gated" applied to the bridge itself.
+
+    google_delete() was implemented and called by nothing until 2026-08-14.
+    Deleting mail and files is always_denied and has no tool, so it was absent
+    from the assistant's surface while sitting in the process holding the
+    OAuth credential, one call site from reachable. Unused code implementing a
+    forbidden capability is the weakest form of absent there is.
+    """
+    source = (REPO / "services/compose/google-workspace-bridge"
+              / "app" / "bridge.py").read_text()
+    code = "".join(line.split("#")[0] for line in source.splitlines())
+    assert "def google_delete" not in code
+    assert 'method="DELETE"' not in code

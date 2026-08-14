@@ -63,6 +63,15 @@ MAX_FILES_PER_PROPOSAL = int(os.environ.get("BUILDER_MAX_FILES", "25"))
 # Matched as path prefixes against the repo-relative path, after normalisation,
 # so `policies/../policies/x` and `./policies/x` both resolve into the check.
 #
+# Protecting the rulebook and leaving the enforcement writable was the gap
+# found on 2026-08-14: policies/ and policy_gate.py were refused, while
+# mcp_base.py — which holds the ONLY call site of policy_gate.check, and the
+# fail-closed auth routine — was accepted, as were the memory review gate, the
+# rule-approval fingerprints and the router. A proposal is only a branch and a
+# human must merge it, but "a human reads it carefully" is precisely the
+# control this list exists because nobody trusts. A tidy refactor that drops
+# one line is the diff that gets approved.
+#
 # Deliberately a denylist of *specific, named* things rather than an allowlist
 # of writable areas: the whole point is that the assistant can propose changes
 # anywhere it might usefully work, including its own MCP servers and bridges.
@@ -71,7 +80,11 @@ MAX_FILES_PER_PROPOSAL = int(os.environ.get("BUILDER_MAX_FILES", "25"))
 PROTECTED = (
     "policies/",                                  # the tiers that gate it
     "services/templates/mcp/policy_gate.py",      # the MCP-side gate
+    "services/templates/mcp/mcp_base.py",         # the only caller of that gate
     "services/templates/bridge/app/bridge_base.py",  # the authoritative gate
+    "services/compose/memory-bridge/",            # the memory review gate
+    "services/compose/agentbox-mcp/app/evaluator.py",  # rule approval pinning
+    "router/",                                    # unauthenticated inference
     "services/compose/builder-bridge/",           # itself
     "services/compose/builder-mcp/",              # its own front door
     "cli/",                                       # grant, deploy, doctor, backup

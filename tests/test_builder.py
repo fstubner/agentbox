@@ -362,3 +362,42 @@ def test_reading_a_protected_file_is_allowed_but_marked_unwritable(git_repo):
     assert payload["writable"] is False
     _, ordinary = builder.read_file(FakeHandler("?path=docs/readme.md"), None)
     assert ordinary["writable"] is True
+
+
+def test_the_code_that_enforces_the_policy_is_protected_too():
+    """Protecting the rulebook while leaving the enforcement writable.
+
+    policies/ and policy_gate.py were refused; mcp_base.py — which holds the
+    ONLY call site of policy_gate.check and the fail-closed auth routine — was
+    accepted, as were the memory review gate, the rule-approval fingerprints
+    and the router. Probed live on 2026-08-14: all four accepted.
+    """
+    import importlib.machinery
+    import importlib.util
+    import sys
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo / "services/templates/bridge/app"))
+    loader = importlib.machinery.SourceFileLoader(
+        "builder_protected", str(repo / "services/compose/builder-bridge/app/bridge.py"))
+    spec = importlib.util.spec_from_loader("builder_protected", loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["builder_protected"] = module
+    spec.loader.exec_module(module)
+
+    must_refuse = [
+        "services/templates/mcp/mcp_base.py",
+        "services/compose/memory-bridge/app/bridge.py",
+        "services/compose/agentbox-mcp/app/evaluator.py",
+        "router/agentbox_router.py",
+        # the ones that already worked, so a reordering cannot lose them
+        "policies/approval-policy.yaml",
+        "services/templates/mcp/policy_gate.py",
+        "cli/agentbox",
+    ]
+    for path in must_refuse:
+        try:
+            module.refuse_if_protected(path)
+        except Exception:
+            continue
+        raise AssertionError(f"{path} is not protected")
