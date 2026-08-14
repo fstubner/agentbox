@@ -298,7 +298,7 @@ def test_unknown_address_is_indistinguishable(portal, monkeypatch):
     unregistered one must be byte-identical apart from the nonce, and only
     running both can show that.
     """
-    monkeypatch.setattr(portal, "IDENTITY_EMAILS", "alex:alex@example.com")
+    portal.SETTINGS.save({"identity_emails": "alex:alex@example.com"})
     monkeypatch.setattr(portal, "send_link_email", lambda a, u: (True, ""))
 
     def response_for(address):
@@ -313,7 +313,7 @@ def test_unknown_address_is_indistinguishable(portal, monkeypatch):
 
 
 def test_email_lookup_is_case_insensitive(portal, monkeypatch):
-    monkeypatch.setattr(portal, "IDENTITY_EMAILS", "sam:Sam@Example.com")
+    portal.SETTINGS.save({"identity_emails": "sam:Sam@Example.com"})
     assert portal.identity_for_email("sam@example.COM") == "sam"
     assert portal.identity_for_email("someone@else.com") == ""
 
@@ -407,15 +407,19 @@ def test_startup_warns_when_links_cannot_be_delivered(portal):
     """
     import inspect
     source = inspect.getsource(portal.cmd_serve)
-    assert "IDENTITY_EMAILS and not SMTP_HOST" in source
+    # Addresses configured with no way to deliver to them.
+    assert 'SETTINGS.value("identity_emails")' in source
+    assert 'not SETTINGS.value("smtp_host")' in source
     assert "never sent" in source
+    # And it names the two ways out, since the page cannot.
+    assert "Discord" in source
 
 
 def test_delivery_failure_is_never_revealed_to_the_browser(portal, monkeypatch):
     """The other half of the same design: the operator learns, the visitor
     does not."""
     import inspect
-    monkeypatch.setattr(portal, "IDENTITY_EMAILS", "alex:alex@example.com")
+    portal.SETTINGS.save({"identity_emails": "alex:alex@example.com"})
     assert "sys.stderr.write" in inspect.getsource(
         portal.PortalHandler._request_link)
 

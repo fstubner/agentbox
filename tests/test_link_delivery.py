@@ -174,7 +174,8 @@ def test_operations_shows_which_channels_will_actually_deliver(portal):
 
 
 def test_it_says_plainly_when_nothing_is_configured(portal, monkeypatch):
-    monkeypatch.setattr(portal, "SMTP_HOST", "")
+    monkeypatch.setattr(portal.SETTINGS, "value",
+                        lambda key: "" if key.startswith("smtp") else "")
     monkeypatch.setattr(portal, "discord_identities", lambda: set())
     body = portal.render_admin("alex", "").decode()
     assert "reach nobody" in body
@@ -182,8 +183,8 @@ def test_it_says_plainly_when_nothing_is_configured(portal, monkeypatch):
 
 
 def test_email_is_listed_when_smtp_is_set(portal, monkeypatch):
-    monkeypatch.setattr(portal, "SMTP_HOST", "smtp.gmail.com")
-    monkeypatch.setattr(portal, "SMTP_USER", "agentbox@example.com")
+    portal.SETTINGS.save({"smtp_host": "smtp.gmail.com",
+                          "smtp_user": "agentbox@example.com"})
     body = portal.render_admin("alex", "").decode()
     assert "smtp.gmail.com" in body
     assert "agentbox@example.com" in body

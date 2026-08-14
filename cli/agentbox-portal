@@ -65,6 +65,7 @@ import argparse
 import hashlib
 import hmac
 import html
+import importlib.util as _importlib_util
 import json
 import os
 import secrets
@@ -75,6 +76,32 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+
+def _sibling(name: str):
+    """Load a module that ships beside this script.
+
+    The portal is deployed as a single executable rather than an installed
+    package, so its modules are loaded by path. Keeping them as real files
+    rather than inlining everything is what stops this script becoming the
+    only place any of it can be understood.
+    """
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = _importlib_util.spec_from_file_location(
+        name, Path(__file__).resolve().parent / f"{name}.py")
+    module = _importlib_util.module_from_spec(spec)
+    # Registered before execution, not after: @dataclass resolves
+    # sys.modules[cls.__module__] while the class body runs, and gets None if
+    # the module is not there yet. Loading a module by path without this works
+    # right up until the module contains a dataclass.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+agentbox_settings = _sibling("agentbox_settings")
+agentbox_household = _sibling("agentbox_household")
 
 STATE = Path(os.environ.get(
     "AGENTBOX_PORTAL_DIR",
@@ -94,13 +121,10 @@ AGENT_TOKEN = os.environ.get("AGENTBOX_PORTAL_AGENT_TOKEN", "").strip()
 # identity -> email, as "alex:alex@example.com,sam:sam@example.com".
 # Addresses live beside the identity list rather than in it so that adding an
 # address never risks disturbing an authentication token.
-IDENTITY_EMAILS = os.environ.get("AGENTBOX_IDENTITY_EMAILS", "")
 
-SMTP_HOST = os.environ.get("AGENTBOX_SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("AGENTBOX_SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("AGENTBOX_SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("AGENTBOX_SMTP_PASSWORD", "")
-SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", SMTP_USER)
+# The one mail value with no page: the envelope From, which is almost always
+# the account itself and is only separate for relays that require it.
+SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", "")
 
 # A client id is not a secret, which is what makes the split below work: this
 # page can *start* Google's consent flow and receive an authorisation code, but
@@ -179,6 +203,12 @@ FLASHES = {
     "pairing_started": ("Send the code below to the Agentbox bot on Discord "
                         "to finish connecting."),
     "chat_unlinked": "Discord disconnected. Sign-in links will not go there.",
+    "settings_saved": "Saved.",
+    "settings_unchanged": "Nothing to change \u2014 those are the current values.",
+    "household_saved": "Saved. The bridge picks this up on its next call.",
+    "agent_link_cannot_configure": ("This link was created by the assistant, "
+                                    "so it cannot change settings. Sign in "
+                                    "from a link you asked for yourself."),
     "google_did_not_complete": ("Google did not complete the connection. "
                                 "Try again, or ask the operator to check the "
                                 "portal log."),
@@ -189,6 +219,13 @@ def flash_text(key: str) -> str:
     """Look up a message. An unknown key renders nothing rather than itself."""
     return FLASHES.get(key, "")
 
+
+SETTINGS = agentbox_settings.SettingsStore(directory=STATE)
+# Device permissions go on the policy mount, not in the portal's private
+# directory — a container has to read them. See agentbox_household.
+HOUSEHOLD = agentbox_household.HouseholdPolicy(directory=Path(os.environ.get(
+    "AGENTBOX_POLICY_DIR",
+    os.path.expanduser("~/.local/state/agentbox/policy"))))
 
 ADMIN = "admin"
 MEMBER = "member"
@@ -244,6 +281,14 @@ AGENT_WITHHELD = frozenset({
     "memory:decide_own",
     "memory:decide_household",
     "connector:disconnect_own",
+    # `admins` decides who may approve a household memory and who sees this
+    # page at all, and `identity_emails` decides where a sign-in link is
+    # delivered. A link the assistant minted must not be able to move either:
+    # that is the difference between a convenience and a privilege escalation.
+    "ops:write_settings",
+    # Widening what the assistant may actuate in the house is likewise not
+    # something a session the assistant created gets to do.
+    "ops:write_household",
 })
 
 # What each role may do. Enumerated rather than computed: a capability that
@@ -264,6 +309,8 @@ ROLE_CAPABILITIES = {
         "connector:disconnect_own",
         "ops:read_health",
         "ops:stage_messaging_credential",
+        "ops:write_settings",
+        "ops:write_household",
     }),
 }
 
@@ -279,16 +326,15 @@ def admin_names() -> set[str]:
     """Identities with the admin role.
 
     Empty means nobody is an admin, which is the correct failure direction: a
-    misread env file should remove privilege, never hand it out.
+    misread setting should remove privilege, never hand it out.
     """
-    raw = os.environ.get("AGENTBOX_ADMINS", "")
-    return {n.strip() for n in raw.split(",") if n.strip()}
+    return {n.strip() for n in SETTINGS.value("admins").split(",") if n.strip()}
 
 
 def email_map() -> dict[str, str]:
     """Lowercased email -> identity."""
     mapping: dict[str, str] = {}
-    for pair in IDENTITY_EMAILS.split(","):
+    for pair in SETTINGS.value("identity_emails").split(","):
         name, _, address = pair.partition(":")
         if name.strip() and address.strip():
             mapping[address.strip().lower()] = name.strip()
@@ -862,13 +908,15 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
     the browser differently from a success, or the page becomes an oracle for
     which addresses are registered.
     """
-    if not SMTP_HOST:
+    host = SETTINGS.value("smtp_host")
+    if not host:
         return False, "no SMTP host configured"
+    user = SETTINGS.value("smtp_user")
     import email.message
     import smtplib
     message = email.message.EmailMessage()
     message["Subject"] = "Your Agentbox sign-in link"
-    message["From"] = SMTP_FROM or SMTP_USER
+    message["From"] = user or SMTP_FROM
     message["To"] = address
     message.set_content(
         f"Open this link to sign in to Agentbox:\n\n{url}\n\n"
@@ -877,10 +925,11 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
         f"If you did not ask for this, you can ignore it \u2014 on its own the "
         f"link is not enough to sign in as you.\n")
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+        port = int(SETTINGS.value("smtp_port") or 587)
+        with smtplib.SMTP(host, port, timeout=15) as smtp:
             smtp.starttls()
-            if SMTP_USER:
-                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            if user:
+                smtp.login(user, SETTINGS.value("smtp_password"))
             smtp.send_message(message)
     except Exception as exc:  # noqa: BLE001
         return False, f"{type(exc).__name__}"
@@ -915,7 +964,7 @@ def deliver_link(identity: str, address: str, url: str) -> bool:
     """
     delivered = False
 
-    if SMTP_HOST and address:
+    if SETTINGS.value("smtp_host") and address:
         sent, detail = send_link_email(address, url)
         if sent:
             delivered = True
@@ -1220,10 +1269,10 @@ def render_connectors(identity: str, role: str, flash: str,
                if rec.get("identity") == identity
                and int(rec.get("expires_at", 0)) > now()]
     if account:
-        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>Connected "
-                f"\u2014 sign-in links come to you on Discord.</p>"
-                f"<form method=post action=/chat/unlink style='display:inline'>"
-                f"<button>Disconnect Discord</button></form>")
+        body = ("<p class=sub style='margin:.3rem 0 .8rem'>Connected "
+                "\u2014 sign-in links come to you on Discord.</p>"
+                "<form method=post action=/chat/unlink style='display:inline'>"
+                "<button>Disconnect Discord</button></form>")
     elif pending:
         body = (f"<p class=sub style='margin:.3rem 0 .6rem'>Send this to the "
                 f"Agentbox bot on Discord, as a direct message:</p>"
@@ -1236,11 +1285,11 @@ def render_connectors(identity: str, role: str, flash: str,
                 f"account is what proves it is yours \u2014 anyone can type a "
                 f"username into a form.</p>")
     else:
-        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>Not connected. "
-                f"Connect it and you can ask for your own sign-in links "
-                f"instead of someone handing you one.</p>"
-                f"<form method=post action=/chat/pair style='display:inline'>"
-                f"<button class=yes>Connect Discord</button></form>")
+        body = ("<p class=sub style='margin:.3rem 0 .8rem'>Not connected. "
+                "Connect it and you can ask for your own sign-in links "
+                "instead of someone handing you one.</p>"
+                "<form method=post action=/chat/pair style='display:inline'>"
+                "<button class=yes>Connect Discord</button></form>")
     parts.append(f"<div class=card><b>Discord</b>{body}</div>")
 
     parts.append(
@@ -1252,8 +1301,90 @@ def render_connectors(identity: str, role: str, flash: str,
                 chrome(identity, role, origin, "/connectors", "".join(parts)))
 
 
+def _field(setting, value: str, error: str) -> str:
+    """One labelled input. Secrets are never echoed back into the page.
+
+    A secret renders as an empty password box plus whether one is currently
+    stored, and a blank submission means "keep what is there" (see
+    SettingsStore.save). Round-tripping the value through the HTML would put
+    the SMTP password in every admin's browser history and page cache to save
+    one re-typing.
+    """
+    kind = "password" if setting.secret else "text"
+    shown = "" if setting.secret else value
+    note = ""
+    if setting.secret:
+        note = ("<span class=sub> \u2014 stored; leave blank to keep</span>"
+                if value else "<span class=sub> \u2014 not set</span>")
+    return (
+        f"<label style='display:block;margin:.7rem 0 0'>"
+        f"<b>{html.escape(setting.label)}</b>{note}"
+        f"<input type={kind} name='{html.escape(setting.key)}' "
+        f"value='{html.escape(shown)}' autocomplete=off "
+        f"placeholder='{html.escape(setting.placeholder)}' "
+        f"style='display:block;width:100%;margin:.25rem 0 .2rem;"
+        f"padding:.4rem .5rem'>"
+        f"<span class=sub>{html.escape(setting.help)}</span>"
+        + (f"<div class=flash style='margin:.35rem 0 0'>"
+           f"{html.escape(error)}</div>" if error else "")
+        + "</label>")
+
+
+def render_settings_card(errors: dict, submitted: dict) -> str:
+    """The settings form, rendered from the table rather than by hand.
+
+    Adding a setting is an entry in agentbox_settings.SETTINGS; there is no
+    markup here that knows about any particular one, so there is no per-setting
+    guard to forget.
+    """
+    sections = []
+    for group in agentbox_settings.GROUPS:
+        fields = "".join(
+            _field(setting,
+                   submitted.get(setting.key, SETTINGS.value(setting.key)),
+                   errors.get(setting.key, ""))
+            for setting in agentbox_settings.SETTINGS
+            if setting.group == group)
+        sections.append(f"<div class=card><b>{html.escape(group)}</b>{fields}</div>")
+    return (f"<form method=post action=/admin/settings>{''.join(sections)}"
+            f"<div style='margin:.8rem 0 0'><button class=yes>Save settings"
+            f"</button></div></form>")
+
+
+def render_household_card(error: str, submitted: str | None) -> str:
+    """Which entities the assistant may act on.
+
+    Separate form and separate file from the settings above, because this one
+    is read by a container. See agentbox_household for why that means it
+    cannot live alongside the admin list.
+    """
+    current = (submitted if submitted is not None
+               else "\n".join(HOUSEHOLD.controllable()))
+    refused = ", ".join(agentbox_household.NEVER_CONTROLLABLE)
+    return (
+        f"<div class=card><b>What the assistant may control</b>"
+        f"<p class=sub style='margin:.4rem 0 0'>One entity id per line. "
+        f"Lights and switches work without listing them; this is for anything "
+        f"else you want reachable. The {html.escape(refused)} domains are "
+        f"refused by the bridge whatever this says, so naming one is rejected "
+        f"here rather than accepted and quietly ignored.</p>"
+        f"<form method=post action=/admin/household>"
+        f"<textarea name=entities rows=6 autocomplete=off "
+        f"style='display:block;width:100%;margin:.5rem 0 .2rem;"
+        f"padding:.4rem .5rem;font-family:ui-monospace,monospace'>"
+        f"{html.escape(current)}</textarea>"
+        + (f"<div class=flash style='margin:.35rem 0 .2rem'>"
+           f"{html.escape(error)}</div>" if error else "")
+        + "<button class=yes style='margin:.5rem 0 0'>Save devices</button>"
+        "</form></div>")
+
+
 def render_admin(identity: str, flash: str,
-                 origin: str = ORIGIN_EMAIL) -> bytes:
+                 origin: str = ORIGIN_EMAIL,
+                 errors: dict | None = None,
+                 submitted: dict | None = None,
+                 household_error: str = "",
+                 household_submitted: str | None = None) -> bytes:
     parts = ["<h1>Operations</h1>",
              "<p class=sub>Admin only. Connector health and messaging setup.</p>"]
     if flash:
@@ -1269,9 +1400,10 @@ def render_admin(identity: str, flash: str,
     # a registered and an unregistered address, so it can never say "that went
     # nowhere". This is the only place a person finds out.
     channels = []
-    if SMTP_HOST:
-        channels.append(f"Email via {html.escape(SMTP_HOST)} as "
-                        f"{html.escape(SMTP_USER or 'an unnamed account')}")
+    if SETTINGS.value("smtp_host"):
+        channels.append(
+            f"Email via {html.escape(SETTINGS.value('smtp_host'))} as "
+            f"{html.escape(SETTINGS.value('smtp_user') or 'an unnamed account')}")
     reachable = sorted(discord_identities())
     if reachable:
         channels.append("Discord DM to " + ", ".join(html.escape(n) for n in reachable))
@@ -1286,13 +1418,15 @@ def render_admin(identity: str, flash: str,
         body = ("<div style='padding:.15rem 0'>Nothing configured \u2014 links "
                 "are minted and reach nobody.</div>")
         note = ("<p class=sub style='margin:.5rem 0 0'>Set "
-                "<code>AGENTBOX_SMTP_HOST</code> and friends for email, or "
-                "<code>AGENTBOX_DISCORD_IDENTITIES</code> for Discord DMs. "
-                "Until one exists, an operator hands links over directly with "
+                "a mail server below, or connect Discord on your Accounts "
+                "page. Until one exists, an operator hands links over "
+                "directly with "
                 "<code>agentbox-portal link &lt;name&gt;</code>.</p>")
     parts.append(f"<div class=card><b>How sign-in links are delivered</b>"
                  f"<div class=sub style='margin:.4rem 0 0'>{body}</div>"
                  f"{note}</div>")
+    parts.append(render_settings_card(errors or {}, submitted or {}))
+    parts.append(render_household_card(household_error, household_submitted))
     parts.append("<footer><a href='/logout'>Sign out</a></footer>")
     return page("Operations \u2014 Agentbox",
                 chrome(identity, ADMIN, origin, "/admin", "".join(parts)))
@@ -1531,6 +1665,52 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _save_settings(self, session, form) -> None:
+        """Write the household settings, or re-render the form with errors.
+
+        Errors are rendered from this POST rather than carried through a
+        redirect, because a validation message quotes what the person typed.
+        Flash messages travel in the URL as *keys* into a fixed table
+        precisely so no one can craft a link that shows another admin an
+        arbitrary sentence, and echoing input through `?m=` would give that
+        back. Re-rendering also keeps the rest of the form filled in.
+        """
+        if not can(session["role"], "ops:write_settings",
+                   session.get("origin", ORIGIN_AGENT)):
+            self._redirect("/admin?m=agent_link_cannot_configure")
+            return
+        submitted = {setting.key: (form.get(setting.key) or [""])[0]
+                     for setting in agentbox_settings.SETTINGS}
+        errors: dict[str, str] = {}
+        try:
+            changed = SETTINGS.save(submitted)
+        except agentbox_settings.InvalidSetting as exc:
+            # The store validates everything before writing anything, so a
+            # rejection here means nothing was stored — the form is showing
+            # the truth when it shows what was typed.
+            errors[exc.key] = str(exc)
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                errors=errors, submitted=submitted))
+            return
+        self._redirect("/admin?m="
+                       + ("settings_saved" if changed else "settings_unchanged"))
+
+    def _save_household(self, session, form) -> None:
+        if not can(session["role"], "ops:write_household",
+                   session.get("origin", ORIGIN_AGENT)):
+            self._redirect("/admin?m=agent_link_cannot_configure")
+            return
+        raw = (form.get("entities") or [""])[0]
+        try:
+            HOUSEHOLD.save(raw)
+        except agentbox_household.InvalidEntity as exc:
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                household_error=str(exc), household_submitted=raw))
+            return
+        self._redirect("/admin?m=household_saved")
+
     def _connector_action(self, session, form) -> None:
         identity, role = session["identity"], session["role"]
         action = (form.get("action") or [""])[0]
@@ -1673,6 +1853,14 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._connector_action(session, form)
             return
 
+        if path == "/admin/settings":
+            self._save_settings(session, form)
+            return
+
+        if path == "/admin/household":
+            self._save_household(session, form)
+            return
+
         if path == "/memory/forget":
             try:
                 _, message = forget_memory(
@@ -1736,10 +1924,13 @@ def cmd_serve(args) -> int:
     # anything else would reveal which addresses are registered — so an
     # unconfigured SMTP host produces a link nobody receives and a page that
     # looks like it worked. This is the only place a human finds out.
-    if IDENTITY_EMAILS and not SMTP_HOST:
-        print("[warn] addresses are configured but AGENTBOX_SMTP_HOST is not: "
-              "sign-in links will be minted and never sent. Use "
-              "`agentbox-portal link <name>` until SMTP is set.", file=sys.stderr)
+    if SETTINGS.value("identity_emails") and not SETTINGS.value("smtp_host"):
+        print("[warn] sign-in addresses are configured but no mail server is: "
+              "links will be minted and never sent, and the page cannot say so "
+              "because answering differently for a registered address would "
+              "reveal who lives here. Set one under Operations, connect "
+              "Discord on the Accounts page, or hand links over with "
+              "`agentbox-portal link <name>`.", file=sys.stderr)
     print(f"[..] admins: {', '.join(sorted(admin_names())) or 'none'}",
           file=sys.stderr)
     try:

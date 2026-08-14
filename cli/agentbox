@@ -17,8 +17,8 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -305,7 +305,15 @@ def validate() -> int:
     ruff_configured = any((REPO / name).is_file()
                           for name in ("pyproject.toml", "ruff.toml", ".ruff.toml"))
     if shutil.which("ruff") and ruff_configured:
-        lint = subprocess.run(["ruff", "check", "--quiet", "."],
+        # `.` alone silently skips every file without a .py suffix, which is
+        # all three CLI entry points — the largest Python in the repo, and the
+        # ones holding the auth and settings logic. They went unlinted from
+        # the day this gate was added until somebody read its output closely.
+        # Globbed rather than listed so a new entry point is covered by
+        # existing, not by somebody remembering to add it here.
+        scripts = [str(p) for p in (REPO / "cli").glob("agentbox*")
+                   if p.is_file() and p.suffix == ""]
+        lint = subprocess.run(["ruff", "check", "--quiet", ".", *scripts],
                               cwd=str(REPO), capture_output=True, text=True,
                               timeout=120)
         if lint.returncode != 0:
@@ -371,8 +379,11 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     env["AGENTBOX_SOURCE_SHA"] = source_sha(service)
     project = service
 
-    compose_cmd = ["docker", "compose", "-p", project, "-f", "compose.yaml",
-                   "config", "--no-interpolate"] if dry_run else                   ["docker", "compose", "-p", project, "-f", "compose.yaml", "up", "-d", "--build"]
+    compose = ["docker", "compose", "-p", project, "-f", "compose.yaml"]
+    # --build is not optional: without it compose reuses the existing image and
+    # the deploy reports success having shipped nothing but the git commit.
+    compose_cmd = (compose + ["config", "--no-interpolate"] if dry_run
+                   else compose + ["up", "-d", "--build"])
 
     if env_file.exists():
         text = env_file.read_text(encoding="utf-8")
@@ -1038,7 +1049,8 @@ def deploy_freshness() -> int:
             continue
         current = source_sha(service)
         if label != current:
-            report(FAIL, f"stale: {service} running source {label} != current {current} — run cli/agentbox deploy {service}")
+            report(FAIL, f"stale: {service} running source {label} != "
+                         f"current {current} — run cli/agentbox deploy {service}")
             stale += 1
         else:
             report(OK, f"deploy fresh: {service}")
@@ -1578,7 +1590,7 @@ def load_runtime_tiers() -> dict[str, list[str]]:
         if not line.startswith(" "):
             break
         stripped = line.strip()
-        if stripped.endswith(":") or stripped.endswith(": []"):
+        if stripped.endswith((":", ": []")):
             current = stripped.split(":", 1)[0].strip()
             tiers.setdefault(current, [])
         elif stripped.startswith("- ") and current:
@@ -2908,6 +2920,9 @@ def scenarios() -> int:
     spec = _ilu.spec_from_file_location(
         "agentbox_scenarios", Path(__file__).resolve().parent / "agentbox_scenarios.py")
     lib = _ilu.module_from_spec(spec)
+    # See the note in agentbox-portal's _sibling: a module loaded by path must
+    # be in sys.modules before it executes, or any dataclass inside it fails.
+    sys.modules["agentbox_scenarios"] = lib
     spec.loader.exec_module(lib)
 
     token = smoke_token("agentbox-mcp")
