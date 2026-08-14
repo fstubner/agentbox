@@ -12,6 +12,10 @@ services:
     environment:
       AGENTBOX_SPEAKER_URL: "${AGENTBOX_SPEAKER_URL:-http://host.docker.internal:8772}"
       AGENTBOX_SPEAKER_TOKEN: "${AGENTBOX_SPEAKER_TOKEN:-}"
+      AGENTBOX_PORTAL_INTERNAL_URL: "${AGENTBOX_PORTAL_INTERNAL_URL:-http://host.docker.internal:8771}"
+      # Lets the assistant mint ORIGIN_AGENT sign-in links. Unset means the
+      # tool refuses rather than the gateway failing to start.
+      AGENTBOX_PORTAL_AGENT_TOKEN: "${AGENTBOX_PORTAL_AGENT_TOKEN:-}"
 
       # The model router, also on the host. Unauthenticated because it is bound
       # to loopback and offers no tools — the worst a caller can do is spend

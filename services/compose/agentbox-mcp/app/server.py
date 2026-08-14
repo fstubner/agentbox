@@ -63,6 +63,7 @@ from integrations import (
     harness,
     homeassistant,
     memory,
+    portal,
     rulebook,
     speaker,
     vikunja,
@@ -78,6 +79,7 @@ INTEGRATIONS = {
     "speaker": speaker,
     "rulebook": rulebook,
     "harness": harness,
+    "portal": portal,
 }
 
 

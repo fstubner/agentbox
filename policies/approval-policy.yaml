@@ -47,6 +47,7 @@ tiers:
     - drive_read                     # see the note below on which scope was granted
     - drive_write_own_folder         # the agent's own Drive folder only
     - speak_aloud                    # quiet hours enforced in the speaker service
+    - request_signin_link            # what it mints is bounded, not the minting
     - email_state_change             # archive / mark read; reversible, stays in the account
 
     # drive_read is `allowed` for the same reason personal_data_read is: the
@@ -83,6 +84,19 @@ tiers:
     #
     # The real control is the same as everywhere else in this file: the bridge
     # decides what `modify` may do, and it accepts exactly two verbs.
+
+    # request_signin_link is `allowed` for the same reason, and it is the
+    # clearest case of it in this file. Gating it would put an approval in
+    # front of somebody asking for their own sign-in link — the exact
+    # everyday request that trains people to approve without reading. What
+    # keeps it safe is that the link is ORIGIN_AGENT and the portal refuses
+    # every consequential action from one: no approving a memory, no
+    # disconnecting or connecting an account, no inviting, no settings. The
+    # thing minted is bounded, so the minting need not be gated.
+    #
+    # It also cannot be aimed: there is no identity parameter, the person
+    # comes from the bearer token, and the portal caps links per person per
+    # hour.
 
     # speak_aloud is `allowed` because the thing that makes 3am speech
     # impossible is a clamp in the process holding the speaker, not this tier.
@@ -137,6 +151,7 @@ tools:
   list_rules: home_read_state
 
   # speaker
+  request_signin_link: request_signin_link
   speak_aloud: speak_aloud
   list_speakers: home_read_state
 
