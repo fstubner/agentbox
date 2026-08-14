@@ -880,9 +880,17 @@ the operator, holds the bot token, and never passes through the model — sends
 the DM and drops the URL as soon as it is sent. The portal never holds the bot
 token, for the same reason it cannot exchange an OAuth code.
 
-```
-AGENTBOX_DISCORD_IDENTITIES="alex:123456789,sam:987654321"
-```
+**Connecting Discord is done from the page, not a config file.** On the
+Accounts tab, *Connect Discord* shows a six-character code; send
+`link ABC123` to the Agentbox bot as a direct message and it is paired.
+Sending it from that account is the proof — anyone can type a user id into a
+form, only its holder can send a message from it. A bot's own message is
+ignored, so the assistant cannot pair an identity to itself.
+
+The mapping lives in the portal's state directory, which no container mounts:
+it decides where a sign-in link is sent, so the assistant must not be able to
+write it. `AGENTBOX_DISCORD_IDENTITIES` is still read for boxes configured
+before pairing existed.
 
 The Operations tab lists which channels will actually deliver. That page is
 the only place a person can find out, because the sign-in form must answer
@@ -918,9 +926,17 @@ injected instruction makes it type the words.
 proposal can be private to one person. Household proposals go to the channel;
 private ones go only to that person's DM, which needs a mapping:
 
-```
-AGENTBOX_DISCORD_IDENTITIES="alex:123456789,sam:987654321"
-```
+**Connecting Discord is done from the page, not a config file.** On the
+Accounts tab, *Connect Discord* shows a six-character code; send
+`link ABC123` to the Agentbox bot as a direct message and it is paired.
+Sending it from that account is the proof — anyone can type a user id into a
+form, only its holder can send a message from it. A bot's own message is
+ignored, so the assistant cannot pair an identity to itself.
+
+The mapping lives in the portal's state directory, which no container mounts:
+it decides where a sign-in link is sent, so the assistant must not be able to
+write it. `AGENTBOX_DISCORD_IDENTITIES` is still read for boxes configured
+before pairing existed.
 
 Without a mapping a private proposal is not posted anywhere — it stays in the
 portal rather than defaulting to a channel someone else can read.

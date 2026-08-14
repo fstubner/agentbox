@@ -32,7 +32,10 @@ def _load(name: str, filename: str):
 def portal(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTBOX_PORTAL_DIR", str(tmp_path / "portal"))
     monkeypatch.setenv("AGENTBOX_IDENTITY_EMAILS", "sam:sam@example.com")
-    monkeypatch.setenv("AGENTBOX_DISCORD_IDENTITIES", "sam:99887766")
+    # Deliberately no AGENTBOX_DISCORD_IDENTITIES: the env var is the legacy
+    # path, and a fixture that sets it globally hides whether the pairing
+    # store actually works.
+    monkeypatch.delenv("AGENTBOX_DISCORD_IDENTITIES", raising=False)
     monkeypatch.delenv("AGENTBOX_SMTP_HOST", raising=False)
     return _load("portal_delivery", "agentbox-portal")
 
@@ -40,8 +43,15 @@ def portal(tmp_path, monkeypatch):
 @pytest.fixture
 def approvals(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTBOX_PORTAL_DIR", str(tmp_path / "portal"))
-    monkeypatch.setenv("AGENTBOX_DISCORD_IDENTITIES", "sam:99887766")
+    monkeypatch.delenv("AGENTBOX_DISCORD_IDENTITIES", raising=False)
     return _load("approvals_delivery", "agentbox-approvals")
+
+
+def link_account(portal, identity="sam", user_id="99887766"):
+    """Pair somebody the way the bot does, for tests about what follows."""
+    data = portal.load_chat_links()
+    data["linked"][identity] = {"user_id": user_id, "linked_at": 1}
+    portal.save_chat_links(data)
 
 
 # --- the portal side -----------------------------------------------------------
@@ -50,6 +60,7 @@ def approvals(tmp_path, monkeypatch):
 def test_a_link_is_spooled_for_discord_when_no_smtp_exists(portal):
     """The whole point: a household with no mail credential can still invite
     somebody."""
+    link_account(portal)
     assert portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     spooled = portal.pending_requests("sam")
     assert len(spooled) == 1
@@ -75,6 +86,7 @@ def test_an_identity_with_no_discord_id_is_not_spooled(portal, monkeypatch):
 
 
 def test_the_spooled_link_is_not_world_readable(portal):
+    link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     path = portal.request_path(portal.pending_requests("sam")[0]["id"])
     assert path.stat().st_mode & 0o777 == 0o600
@@ -84,6 +96,7 @@ def test_the_spooled_link_is_not_world_readable(portal):
 
 
 def test_the_operator_process_delivers_and_spends_the_link(approvals, portal):
+    link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     sent = []
 
@@ -110,6 +123,7 @@ def test_the_dm_states_the_limit_accurately(approvals, portal):
     opening it there actually gets you — which is a session that can read and
     not change. Claiming the link is useless elsewhere would be false now that
     a mismatched nonce downgrades rather than refuses."""
+    link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     sent = []
     approvals.discord = lambda m, p, t, payload=None: (
@@ -120,15 +134,21 @@ def test_the_dm_states_the_limit_accurately(approvals, portal):
     assert "That includes me." in sent[0]
 
 
-def test_an_unmapped_identity_is_logged_not_delivered(approvals, portal, monkeypatch, capsys):
+def test_a_link_spooled_before_a_disconnect_is_not_delivered(approvals, portal,
+                                                             capsys):
+    """Somebody disconnects Discord between requesting a link and the loop
+    picking it up. The link must not follow them to an account they have just
+    detached."""
+    link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/x")
-    monkeypatch.setattr(approvals, "identity_discord_map", dict)
+    portal.unlink_chat("sam")
     approvals.discord = lambda *a, **k: pytest.fail("must not send")
     approvals.deliver_pending_links("tok")
     assert "no Discord id" in capsys.readouterr().out
 
 
 def test_a_completed_request_is_not_delivered_twice(approvals, portal):
+    link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     calls = []
     approvals.discord = lambda m, p, t, payload=None: (
@@ -143,6 +163,7 @@ def test_a_completed_request_is_not_delivered_twice(approvals, portal):
 
 
 def test_operations_shows_which_channels_will_actually_deliver(portal):
+    link_account(portal)
     """Delivery failure is invisible by construction: the sign-in page must
     answer identically for a registered and an unregistered address, so it can
     never say "that went nowhere". This page is the only place a person finds
@@ -213,3 +234,112 @@ def test_the_page_explains_the_limit_and_how_to_lift_it(portal):
     assert "Opened in a different browser" in body
     assert "Phone apps usually open links in their own browser" in body
     assert "Send me a link for this browser" in body
+
+
+# --- pairing a chat account from the page --------------------------------------
+#
+# Who receives a sign-in link by DM was an environment variable, so adding a
+# person meant an operator editing a unit file and restarting a service. That
+# put the household's job in the operator's hands for no security benefit.
+
+
+def test_a_person_can_start_pairing_themselves(portal):
+    code = portal.start_pairing("sam")
+    assert len(code) == 6
+    # Read off a screen and typed into a phone: no 0/O or 1/I.
+    assert not (set(code) & set("01OI"))
+    pending = portal.load_chat_links()["pending"]
+    assert pending[code]["identity"] == "sam"
+
+
+def test_starting_again_replaces_the_previous_code(portal):
+    first = portal.start_pairing("sam")
+    second = portal.start_pairing("sam")
+    pending = portal.load_chat_links()["pending"]
+    assert second in pending and first not in pending
+
+
+def test_the_mapping_is_not_world_readable(portal):
+    portal.start_pairing("sam")
+    assert portal.chat_links_path().stat().st_mode & 0o777 == 0o600
+
+
+def test_an_env_var_configured_box_still_works(portal, monkeypatch):
+    """Boxes set up before pairing existed must not break."""
+    monkeypatch.setenv("AGENTBOX_DISCORD_IDENTITIES", "sam:555")
+    assert portal.chat_account_for("sam") == "555"
+    assert "sam" in portal.discord_identities()
+
+
+def test_a_paired_account_beats_nothing_and_survives_unlink(portal):
+    assert portal.chat_account_for("sam") == ""
+    data = portal.load_chat_links()
+    data["linked"]["sam"] = {"user_id": "999", "linked_at": 1}
+    portal.save_chat_links(data)
+    assert portal.chat_account_for("sam") == "999"
+    portal.unlink_chat("sam")
+    assert portal.chat_account_for("sam") == ""
+
+
+def test_the_bot_completes_a_pairing_from_a_dm(approvals, portal):
+    """Receiving the code from that account is the proof. Anyone can type a
+    user id into a form; only its holder can send a message from it."""
+    code = portal.start_pairing("sam")
+    sent = []
+
+    def fake(method, path, token, payload=None):
+        if path == "/users/@me/channels":
+            return [{"id": "dm-7"}]
+        if "messages" in path and method == "GET":
+            return [{"content": f"link {code}",
+                     "author": {"id": "424242", "bot": False}}]
+        sent.append((payload or {}).get("content", ""))
+        return {"id": "ok"}
+
+    approvals.discord = fake
+    approvals.complete_pairings("tok")
+    assert portal.chat_account_for("sam") == "424242"
+    assert "You are **sam**" in sent[0]
+
+
+def test_a_bot_cannot_pair_itself(approvals, portal):
+    """The assistant is in the same Discord. If it could answer its own
+    pairing code it would redirect somebody's sign-in links to itself."""
+    code = portal.start_pairing("sam")
+    approvals.discord = lambda method, path, token, payload=None: (
+        [{"id": "dm-7"}] if path == "/users/@me/channels"
+        else [{"content": f"link {code}", "author": {"id": "666", "bot": True}}]
+        if method == "GET" else {"id": "ok"})
+    approvals.complete_pairings("tok")
+    assert portal.chat_account_for("sam") == ""
+
+
+def test_an_expired_code_does_not_pair(approvals, portal):
+    code = portal.start_pairing("sam")
+    data = portal.load_chat_links()
+    data["pending"][code]["expires_at"] = 1
+    portal.save_chat_links(data)
+    approvals.discord = lambda method, path, token, payload=None: (
+        [{"id": "dm-7"}] if path == "/users/@me/channels"
+        else [{"content": f"link {code}", "author": {"id": "424242", "bot": False}}]
+        if method == "GET" else {"id": "ok"})
+    approvals.complete_pairings("tok")
+    assert portal.chat_account_for("sam") == ""
+
+
+def test_a_wrong_code_does_not_pair(approvals, portal):
+    portal.start_pairing("sam")
+    approvals.discord = lambda method, path, token, payload=None: (
+        [{"id": "dm-7"}] if path == "/users/@me/channels"
+        else [{"content": "link ZZZZZZ", "author": {"id": "424242", "bot": False}}]
+        if method == "GET" else {"id": "ok"})
+    approvals.complete_pairings("tok")
+    assert portal.chat_account_for("sam") == ""
+
+
+def test_the_accounts_page_offers_the_connect_button(portal):
+    body = portal.render_connectors("sam", portal.MEMBER, "").decode()
+    assert "Connect Discord" in body
+    portal.start_pairing("sam")
+    body = portal.render_connectors("sam", portal.MEMBER, "").decode()
+    assert "link " in body and "Agentbox bot" in body

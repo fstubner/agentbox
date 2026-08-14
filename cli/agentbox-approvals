@@ -211,6 +211,67 @@ PORTAL_DIR = Path(os.environ.get(
     str(Path("~/.local/state/agentbox/portal").expanduser())))
 
 
+CHAT_LINKS = PORTAL_DIR / "chat-links.json"
+
+
+def complete_pairings(token: str) -> None:
+    """Finish Discord pairings started in the portal.
+
+    Somebody clicks "Connect Discord" on their own page, gets a short code,
+    and sends it to this bot as a direct message. Receiving it from their
+    account is the proof: anyone can type a user id into a form, only the
+    holder of an account can send from it.
+
+    Replaces an environment variable that an operator had to edit and restart
+    a unit to change — which put the household's job in the operator's hands
+    for no security benefit.
+    """
+    try:
+        data = json.loads(CHAT_LINKS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    pending = {k: v for k, v in data.get("pending", {}).items()
+               if int(v.get("expires_at", 0)) > time.time()}
+    if not pending:
+        return
+
+    # Only unread DMs, and only ones the bot can see because the person opened
+    # a conversation with it.
+    channels = discord("GET", "/users/@me/channels", token) or []
+    for channel in channels:
+        messages = discord("GET", f"/channels/{channel.get('id')}/messages?limit=10",
+                           token) or []
+        for message in messages:
+            author = message.get("author") or {}
+            # A bot cannot pair an identity to itself.
+            if author.get("bot"):
+                continue
+            words = str(message.get("content", "")).strip().split()
+            if len(words) != 2 or words[0].lower() != "link":
+                continue
+            code = words[1].strip().upper()
+            record = pending.get(code)
+            if not record:
+                continue
+            identity = str(record.get("identity", ""))
+            data.setdefault("linked", {})[identity] = {
+                "user_id": str(author.get("id")),
+                "linked_at": int(time.time()),
+            }
+            data["pending"].pop(code, None)
+            try:
+                CHAT_LINKS.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                CHAT_LINKS.chmod(0o600)
+            except OSError as exc:
+                log(f"could not record pairing for {identity}: {exc}")
+                continue
+            discord("POST", f"/channels/{channel.get('id')}/messages", token, {
+                "content": (f"Connected. You are **{identity}** on this "
+                            f"Agentbox, and sign-in links will come here.")})
+            log(f"paired {identity} to a Discord account")
+            return
+
+
 def deliver_pending_links(token: str) -> None:
     """Send sign-in links the portal spooled, as a Discord DM.
 
@@ -228,6 +289,11 @@ def deliver_pending_links(token: str) -> None:
     if not directory.is_dir():
         return
     mapping = identity_discord_map()
+    try:
+        linked = json.loads(CHAT_LINKS.read_text(encoding="utf-8"))["linked"]
+        mapping = {**mapping, **{k: v["user_id"] for k, v in linked.items()}}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
     for entry in sorted(directory.glob("*.json")):
         try:
             record = json.loads(entry.read_text(encoding="utf-8"))
@@ -454,6 +520,7 @@ def main() -> int:
     state = load_cursor()
 
     while True:
+        complete_pairings(token)
         deliver_pending_links(token)
         announce_proposals(channel, token, state)
         for request in pending_requests():

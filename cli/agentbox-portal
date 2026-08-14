@@ -176,6 +176,9 @@ FLASHES = {
                                  "email link to do that."),
     "memory_service_down": "The memory service did not respond. Nothing changed.",
     "not_yours": "That is not yours to decide.",
+    "pairing_started": ("Send the code below to the Agentbox bot on Discord "
+                        "to finish connecting."),
+    "chat_unlinked": "Discord disconnected. Sign-in links will not go there.",
     "google_did_not_complete": ("Google did not complete the connection. "
                                 "Try again, or ask the operator to check the "
                                 "portal log."),
@@ -772,6 +775,83 @@ def connector_status(identity: str) -> list[dict]:
     }]
 
 
+# --- pairing a chat account, from the page rather than a config file ----------
+#
+# Who receives a sign-in link by DM used to be an environment variable, which
+# meant adding a person required editing a unit file and restarting a service.
+# That is the operator's job leaking into the household's: Sam should be able
+# to connect her own Discord without anyone touching the box.
+#
+# The mapping lives here, in the portal's state directory, because it decides
+# where a sign-in link is sent. If the assistant could write it, it could
+# redirect somebody's link to itself — so this path is deliberately one no
+# container mounts. The env var is still read as a fallback for boxes
+# configured the old way.
+#
+# Pairing is a code the person sends *from* the account being linked. That is
+# the proof: anyone can type a user id into a form, but only the holder of an
+# account can send a message from it.
+
+PAIRING_TTL_SECONDS = int(os.environ.get("AGENTBOX_PAIRING_TTL", "600"))
+
+
+def chat_links_path() -> Path:
+    return STATE / "chat-links.json"
+
+
+def load_chat_links() -> dict:
+    try:
+        data = json.loads(chat_links_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"linked": {}, "pending": {}}
+    data.setdefault("linked", {})
+    data.setdefault("pending", {})
+    return data
+
+
+def save_chat_links(data: dict) -> None:
+    path = chat_links_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path.chmod(0o600)
+
+
+def start_pairing(identity: str) -> str:
+    """Mint a short code for this person to send from their chat account."""
+    data = load_chat_links()
+    # Unambiguous characters only: this gets read off a screen and typed into
+    # a phone, and 0/O and 1/I are where that goes wrong.
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    code = "".join(secrets.choice(alphabet) for _ in range(6))
+    data["pending"] = {k: v for k, v in data["pending"].items()
+                       if v.get("identity") != identity
+                       and int(v.get("expires_at", 0)) > now()}
+    data["pending"][code] = {"identity": identity,
+                             "expires_at": now() + PAIRING_TTL_SECONDS}
+    save_chat_links(data)
+    return code
+
+
+def chat_account_for(identity: str) -> str:
+    """The chat account this person receives links on, if any."""
+    linked = load_chat_links()["linked"].get(identity)
+    if linked:
+        return str(linked.get("user_id", ""))
+    # Boxes configured before pairing existed.
+    for pair in os.environ.get("AGENTBOX_DISCORD_IDENTITIES", "").replace(
+            " ", ",").split(","):
+        name, _, user = pair.partition(":")
+        if name.strip() == identity and user.strip():
+            return user.strip()
+    return ""
+
+
+def unlink_chat(identity: str) -> None:
+    data = load_chat_links()
+    data["linked"].pop(identity, None)
+    save_chat_links(data)
+
+
 # --- delivery ------------------------------------------------------------------
 
 
@@ -842,7 +922,7 @@ def deliver_link(identity: str, address: str, url: str) -> bool:
         else:
             sys.stderr.write(f"[portal] email to {identity} failed: {detail}\n")
 
-    if identity in discord_identities():
+    if chat_account_for(identity):
         try:
             save_request({
                 "id": secrets.token_urlsafe(9),
@@ -861,14 +941,10 @@ def deliver_link(identity: str, address: str, url: str) -> bool:
 
 
 def discord_identities() -> set[str]:
-    """Identities reachable by Discord DM, from `alex:123,sam:456`.
-
-    Read from the same variable the approvals loop uses, so the portal never
-    offers a channel that cannot actually deliver.
-    """
-    raw = os.environ.get("AGENTBOX_DISCORD_IDENTITIES", "")
-    out = set()
-    for pair in raw.replace(" ", ",").split(","):
+    """Identities reachable by Discord DM — paired, or configured the old way."""
+    out = set(load_chat_links()["linked"])
+    for pair in os.environ.get("AGENTBOX_DISCORD_IDENTITIES", "").replace(
+            " ", ",").split(","):
         name, _, user = pair.partition(":")
         if name.strip() and user.strip():
             out.add(name.strip())
@@ -1136,6 +1212,36 @@ def render_connectors(identity: str, role: str, flash: str,
             + ("<button name=action value=disconnect>Disconnect</button>"
                if connector["connected"] else "")
             + "</form></div>")
+
+    # Where sign-in links reach this person. Their own setting, on their own
+    # page — adding somebody used to mean an operator editing a unit file.
+    account = chat_account_for(identity)
+    pending = [code for code, rec in load_chat_links()["pending"].items()
+               if rec.get("identity") == identity
+               and int(rec.get("expires_at", 0)) > now()]
+    if account:
+        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>Connected "
+                f"\u2014 sign-in links come to you on Discord.</p>"
+                f"<form method=post action=/chat/unlink style='display:inline'>"
+                f"<button>Disconnect Discord</button></form>")
+    elif pending:
+        body = (f"<p class=sub style='margin:.3rem 0 .6rem'>Send this to the "
+                f"Agentbox bot on Discord, as a direct message:</p>"
+                f"<div style='font-family:{'ui-monospace,monospace'};"
+                f"font-size:1.35rem;letter-spacing:.12em;padding:.5rem .7rem;"
+                f"background:#eef1f5;border-radius:.35rem;display:inline-block'>"
+                f"link {html.escape(pending[0])}</div>"
+                f"<p class=sub style='margin:.6rem 0 0'>It expires in "
+                f"{PAIRING_TTL_SECONDS // 60} minutes. Sending it from your "
+                f"account is what proves it is yours \u2014 anyone can type a "
+                f"username into a form.</p>")
+    else:
+        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>Not connected. "
+                f"Connect it and you can ask for your own sign-in links "
+                f"instead of someone handing you one.</p>"
+                f"<form method=post action=/chat/pair style='display:inline'>"
+                f"<button class=yes>Connect Discord</button></form>")
+    parts.append(f"<div class=card><b>Discord</b>{body}</div>")
 
     parts.append(
         "<footer>Reconnecting replaces the stored credential. Disconnecting "
@@ -1545,6 +1651,22 @@ class PortalHandler(BaseHTTPRequestHandler):
         session = self._session()
         if not session:
             self._send(401, render_signin())
+            return
+
+        if path == "/chat/pair":
+            start_pairing(session["identity"])
+            self._redirect("/connectors?m=pairing_started")
+            return
+
+        if path == "/chat/unlink":
+            # Withheld from a link the assistant produced, like disconnecting:
+            # moving where somebody's sign-in links arrive is not a convenience.
+            if not can(session["role"], "connector:disconnect_own",
+                       session.get("origin", ORIGIN_AGENT)):
+                self._redirect("/connectors?m=agent_link_cannot_disconnect")
+                return
+            unlink_chat(session["identity"])
+            self._redirect("/connectors?m=chat_unlinked")
             return
 
         if path == "/connectors/start":
