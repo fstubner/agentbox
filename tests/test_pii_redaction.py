@@ -171,7 +171,11 @@ def test_names_are_not_claimed_to_be_caught(red):
     text = "Sam's checkup result was clear, she lives at 14 Elm Street"
     assert red.redact(text) == text
 
-    doc = MODULE.read_text()
+    # Raw text on purpose: the subject here IS the documentation. The module
+    # must state this limitation in words a reader will see, so stripping
+    # docstrings would remove the very thing being checked. Marked
+    # asserts-on-prose so tests/test_source_assertions.py allows it.
+    doc = MODULE.read_text(encoding="utf-8")  # asserts-on-prose
     assert "does **not** reliably catch names" in doc
     assert "not as anonymisation" in doc
 

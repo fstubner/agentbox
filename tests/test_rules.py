@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "services" / "compose" / "agentbox-mcp" / "app"
@@ -213,5 +214,5 @@ def test_actions_are_taken_literally(r):
 def test_the_grammar_is_shipped_in_the_gateway_image():
     """It was not, first time: the container crash-looped on ModuleNotFoundError
     because a new top-level module was written but never COPYed."""
-    dockerfile = (REPO / "services/compose/agentbox-mcp/Dockerfile").read_text()
+    dockerfile = code_of(REPO / "services/compose/agentbox-mcp/Dockerfile")
     assert "app/rules.py" in dockerfile

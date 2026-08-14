@@ -286,6 +286,36 @@ def validate() -> int:
     except OSError:
         error("policies/approval-policy.yaml missing")
 
+    # Lint is a gate, not advice. On 2026-08-14 a NameError in the Google
+    # bridge was on screen from `ruff check` and deployed anyway, crash-looping
+    # the container that holds the OAuth credential. `validate` runs before
+    # every deploy, so this is the place a known-bad change should stop.
+    #
+    # Absent ruff is a warning rather than a failure: a box without dev tools
+    # should still be able to deploy, and a check that cannot run must not
+    # masquerade as one that passed.
+    # Only where the project's own ruff config applies. scaffold() calls
+    # validate() inside a generated temp repo that carries no pyproject, and
+    # ruff's defaults there are not this project's standard — linting it would
+    # be measuring the wrong thing, and it broke scaffold when it tried.
+    ruff_configured = any((REPO / name).is_file()
+                          for name in ("pyproject.toml", "ruff.toml", ".ruff.toml"))
+    if shutil.which("ruff") and ruff_configured:
+        lint = subprocess.run(["ruff", "check", "--quiet", "."],
+                              cwd=str(REPO), capture_output=True, text=True,
+                              timeout=120)
+        if lint.returncode != 0:
+            first = (lint.stdout or lint.stderr).strip().splitlines()
+            error(f"ruff reports {len([x for x in first if '-->' in x]) or 'some'} "
+                  f"issue(s); deploying past a lint error crash-looped a bridge "
+                  f"once: " + " / ".join(x.strip() for x in first[:2]))
+        else:
+            report(OK, "ruff clean")
+    elif not ruff_configured:
+        pass          # not this repo's standard to enforce
+    else:
+        report(WARN, "ruff not installed; lint not checked")
+
     count, tokens, worst = tool_schema_cost()
     if count:
         if tokens > TOOL_SCHEMA_TOKEN_BUDGET:

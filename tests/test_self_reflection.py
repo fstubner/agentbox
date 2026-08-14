@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parent.parent
 MCP_APP = REPO / "services" / "templates" / "mcp"
@@ -262,13 +263,13 @@ def test_reflection_is_allowed_without_approval():
 
 def test_the_bridge_declares_the_capability():
     """Or the authoritative gate is decorative."""
-    src = (REPO / "services" / "compose" / "memory-bridge" / "app" / "bridge.py").read_text()
+    src = code_of(REPO / "services" / "compose" / "memory-bridge" / "app" / "bridge.py")
     assert "inspect_service_logs" in src and "def capability_for" in src
 
 
 def test_the_skill_tells_it_to_propose_rather_than_act():
     """The permission model is only as good as the instructions that meet it."""
-    skill = (REPO / "skills" / "self-reflection" / "SKILL.md").read_text()
+    skill = code_of(REPO / "skills" / "self-reflection" / "SKILL.md")
     assert "propose_memory" in skill
     assert "review_own_activity" in skill
     # It must not read an empty window as a good report.
@@ -321,7 +322,7 @@ def test_a_missing_policy_omits_tiers_rather_than_failing(tmp_path, monkeypatch)
 
 
 def test_the_skill_warns_against_writing_off_an_approvable_tool():
-    skill = (REPO / "skills" / "self-reflection" / "SKILL.md").read_text()
+    skill = code_of(REPO / "skills" / "self-reflection" / "SKILL.md")
     assert "approval_required" in skill and "always_denied" in skill
     assert "how to ask" in skill
 

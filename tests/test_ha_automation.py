@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import strip_comments
 
 REPO = Path(__file__).resolve().parent.parent
 APP = REPO / "services" / "compose" / "homeassistant-bridge" / "app"
@@ -247,7 +248,7 @@ def test_the_apparmor_profile_permits_bluetooth_device_discovery():
     from pathlib import Path
     profile = (Path(__file__).resolve().parents[1]
                / "services/apparmor/agentbox-homeassistant").read_text()
-    rules = "".join(line.split("#")[0] for line in profile.splitlines())
+    rules = strip_comments(profile)
     assert "path=/ interface=org.freedesktop.DBus.ObjectManager" in \
         rules.replace("\n", " ").replace("       ", " ").replace("  ", " ")
 

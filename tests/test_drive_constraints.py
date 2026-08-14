@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import code_of, strip_comments
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "services" / "compose" / "google-workspace-bridge" / "app"
@@ -233,7 +234,7 @@ def test_onboarding_scopes_match_what_the_bridge_calls():
     """
     setup = (REPO / "services/compose/google-workspace-bridge"
                     "/oauth-setup.py").read_text()
-    invite = (REPO / "cli" / "agentbox-invite").read_text()
+    invite = code_of(REPO / "cli" / "agentbox-invite")
     for scope in ("gmail.modify", "calendar", "drive.file",
                   "drive.activity.readonly"):
         assert scope in setup, f"{scope} missing from oauth-setup"
@@ -493,6 +494,6 @@ def test_no_delete_helper_exists_in_the_credential_holder():
     """
     source = (REPO / "services/compose/google-workspace-bridge"
               / "app" / "bridge.py").read_text()
-    code = "".join(line.split("#")[0] for line in source.splitlines())
+    code = strip_comments(source)
     assert "def google_delete" not in code
     assert 'method="DELETE"' not in code

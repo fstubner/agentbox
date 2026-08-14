@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO / "services/templates/mcp"))
 
 import evaluator  # noqa: E402
 import policy_gate  # noqa: E402
+from conftest import code_of  # noqa: E402
 
 
 def _rule(name, *, when=None, do=None, identity="alex"):
@@ -340,7 +341,7 @@ def test_the_cli_warning_agrees_with_the_live_sources():
     """The approve-time message names which sources are live. It is a plain
     tuple in cli/agentbox (the CLI cannot import the gateway's modules), so
     this is the check that keeps the two from drifting."""
-    source = (REPO / "cli" / "agentbox").read_text()
+    source = code_of(REPO / "cli" / "agentbox")
     assert f'live = {tuple(evaluator.LIVE_SOURCES)!r}'.replace("'", '"') \
         in source.replace("'", '"')
 
@@ -349,7 +350,7 @@ def test_the_cli_warning_agrees_with_the_live_sources():
 
 
 def test_evaluator_module_is_in_the_image():
-    dockerfile = (APP.parents[1] / "agentbox-mcp/Dockerfile").read_text()
+    dockerfile = code_of(APP.parents[1] / "agentbox-mcp/Dockerfile")
     assert "app/evaluator.py /app/evaluator.py" in dockerfile
 
 

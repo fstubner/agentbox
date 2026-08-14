@@ -32,6 +32,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parents[1]
 GATEWAY = os.environ.get("AGENTBOX_GATEWAY_URL", "http://127.0.0.1:3465")
@@ -223,8 +224,8 @@ def test_google_scopes_match_between_onboarding_and_setup():
     somebody uses the feature and gets an opaque 403 days later."""
     setup = (REPO / "services/compose/google-workspace-bridge"
                     "/oauth-setup.py").read_text()
-    invite = (REPO / "cli" / "agentbox-invite").read_text()
-    portal = (REPO / "cli" / "agentbox-portal").read_text()
+    invite = code_of(REPO / "cli" / "agentbox-invite")
+    portal = code_of(REPO / "cli" / "agentbox-portal")
     for scope in ("gmail.modify", "calendar", "drive.file"):
         assert scope in setup and scope in invite and scope in portal, \
             f"{scope} is not declared in all three onboarding paths"
@@ -234,7 +235,7 @@ def test_bridge_ports_are_not_published_to_the_host():
     """A bridge token is only unspendable from outside because the bridges have
     no host ports. A published port turns a leaked token into access."""
     for compose in (REPO / "services" / "compose").glob("*/compose.yaml"):
-        text = compose.read_text()
+        text = code_of(compose)
         if "agentbox.exposure: lan" in text:
             continue          # Home Assistant, deliberate and labelled
         for line in text.splitlines():

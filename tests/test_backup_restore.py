@@ -110,14 +110,9 @@ def test_the_container_hands_the_files_back_to_this_user():
 
 
 def _code_only(block: str) -> str:
-    """Strip comments before asserting on source.
-
-    The first version of the test below matched `ignore_errors` inside the
-    comment explaining why it is not used — a source-grepping test failing on
-    the very change that fixed the thing it guards, which is the failure mode
-    this suite has hit twice before.
-    """
-    return "".join(line.split("#")[0] for line in block.splitlines())
+    """Comment-free view of a block. See tests/conftest.py for why."""
+    from conftest import strip_comments
+    return strip_comments(block)
 
 
 def test_cleanup_failure_is_reported_not_swallowed():

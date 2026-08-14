@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -92,7 +93,7 @@ def test_link_secret_is_not_stored(portal):
     """Reading the state directory must not yield a usable link."""
     url, link_id = portal.mint_link("sam", "http://x")
     secret = secret_of(url)
-    raw = portal.link_path(link_id).read_text()
+    raw = code_of(portal.link_path(link_id))
     assert secret not in raw
     assert "secret_hash" in raw
 
@@ -206,7 +207,7 @@ def test_portal_is_not_reachable_as_a_tool(portal):
     connection would be readable by a prompt-injected model, which could then
     approve its own memory proposals and defeat the review gate entirely.
     """
-    policy = (REPO / "policies" / "approval-policy.yaml").read_text()
+    policy = code_of(REPO / "policies" / "approval-policy.yaml")
     for forbidden in ("portal_link", "mint_link", "portal_login"):
         assert forbidden not in policy
 
@@ -554,7 +555,7 @@ def test_the_signed_out_page_never_echoes_the_url(portal):
 
 
 def test_requesting_a_link_redirects_without_a_message_parameter(portal):
-    source = (REPO / "cli" / "agentbox-portal").read_text()
+    source = code_of(REPO / "cli" / "agentbox-portal")
     block = source.split("def _request_link")[1].split("def ")[0]
     assert '"/?sent=1"' in block
     assert "urlencode({\"m\"" not in block

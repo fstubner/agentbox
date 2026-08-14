@@ -31,6 +31,8 @@ sys.path.insert(0, str(MCP_APP))
 # unmapped and the gate denies it — correct behaviour, wrong thing to test here.
 import os
 
+from conftest import code_of
+
 os.environ["AGENTBOX_RUNTIME_POLICY"] = str(REPO / "policies" / "approval-policy.yaml")
 os.environ["AGENTBOX_POLICY_GRANTS"] = str(REPO / ".no-such-grants.json")
 spec = importlib.util.spec_from_file_location("mcp_base", MCP_APP / "mcp_base.py")
@@ -164,7 +166,7 @@ def test_unexpected_error_does_not_leak_a_traceback():
 def test_the_gateway_reads_its_tokens_from_env_not_hardcoded():
     """One gateway now, but the property is unchanged: no credential literal in
     source. Identity tokens come from the environment too."""
-    src = (REPO / "services" / "compose" / "agentbox-mcp" / "app" / "server.py").read_text()
+    src = code_of(REPO / "services" / "compose" / "agentbox-mcp" / "app" / "server.py")
     assert "shared_token = os.environ.get(" in src
     assert 'os.environ.get("AGENTBOX_IDENTITIES"' in src
 

@@ -17,6 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
 import policy_gate as pg
+from conftest import code_of
 
 spec = importlib.util.spec_from_loader(
     "approvals",
@@ -72,7 +73,7 @@ def test_denial_records_a_pending_request(tmp_path):
 def test_repeated_denials_do_not_queue_duplicates(tmp_path):
     """A model that retries should not produce five identical asks."""
     pg.record_pending("archive_gmail", "email_state_change", tmp_path)
-    first = (tmp_path / "archive_gmail.json").read_text()
+    first = code_of(tmp_path / "archive_gmail.json")
     time.sleep(1.1)
     pg.record_pending("archive_gmail", "email_state_change", tmp_path)
     assert (tmp_path / "archive_gmail.json").read_text() == first
@@ -95,6 +96,6 @@ def test_the_loop_never_writes_grants_directly():
     """Grants are written by cli/agentbox, which the assistant cannot run. The
     loop shells out rather than editing the grants file itself, so there is one
     place that mints permission."""
-    source = (REPO / "cli" / "agentbox-approvals").read_text()
+    source = code_of(REPO / "cli" / "agentbox-approvals")
     assert "grants.json" not in source
     assert '"grant", tool' in source

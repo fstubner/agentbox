@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
@@ -191,7 +192,7 @@ def test_every_live_mcp_tool_is_mapped(tool_map):
     for module in sorted(integrations.glob("*.py")):
         if module.name.startswith("_"):
             continue
-        src = module.read_text()
+        src = code_of(module)
         if "TOOLS = [" not in src:
             continue
         block = src.split("TOOLS = [", 1)[1].split("\ndef ", 1)[0]

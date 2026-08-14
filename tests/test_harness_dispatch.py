@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "services/compose/agentbox-mcp/app"
@@ -159,7 +160,7 @@ def test_the_router_call_offers_no_tools():
     A model cannot be talked into calling a tool that was never offered, so
     this is checked as an absence in the code rather than a line in a prompt.
     """
-    source = (APP / "harness.py").read_text()
+    source = code_of(APP / "harness.py")
     for word in ("tools", "tool_choice", "functions"):
         assert f'"{word}"' not in source
 
@@ -198,7 +199,7 @@ def test_an_empty_reasoning_answer_is_an_error_not_a_blank():
 def test_harness_module_is_in_the_image():
     """rules.py shipped without this line once and the gateway crash-looped on
     ModuleNotFoundError."""
-    dockerfile = (APP.parents[1] / "agentbox-mcp/Dockerfile").read_text()
+    dockerfile = code_of(APP.parents[1] / "agentbox-mcp/Dockerfile")
     assert "app/harness.py /app/harness.py" in dockerfile
 
 

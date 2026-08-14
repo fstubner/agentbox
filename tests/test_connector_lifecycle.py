@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -142,7 +143,7 @@ def test_completed_requests_stop_showing(portal):
 def test_the_portal_cannot_exchange_a_code_itself(portal):
     """The split is the point: this half has no client secret and no route to
     one. If it could exchange, a LAN page would mint refresh tokens."""
-    source = (REPO / "cli" / "agentbox-portal").read_text()
+    source = code_of(REPO / "cli" / "agentbox-portal")
     assert "CLIENT_SECRET" not in source
     assert "oauth2.googleapis.com/token" not in source
 
@@ -246,7 +247,7 @@ def test_disconnect_without_a_connection_is_refused(cli, capsys):
 def test_unknown_identity_subcommand_does_not_delete(cli):
     """`remove` used to be the fallthrough, so any subcommand added without a
     branch would silently delete an identity instead of erroring."""
-    source = (REPO / "cli" / "agentbox").read_text()
+    source = code_of(REPO / "cli" / "agentbox")
     block = source.split('if args.cmd == "identity":')[1][:900]
     assert 'if args.identity_cmd == "remove":' in block
     remove_calls = block.count("identity_remove(")

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "services" / "compose" / "eufy-bridge" / "app"
@@ -40,7 +41,7 @@ def test_there_is_no_route_that_actuates_anything(eufy):
                       "lock", "unlock", "reboot", "delete"):
         assert forbidden not in joined
 
-    source = (APP / "bridge.py").read_text()
+    source = code_of(APP / "bridge.py")
     for command in ("station.set_guard_mode", "device.start_rtsp",
                     "station.trigger_alarm", "device.unlock"):
         assert command not in source
@@ -131,7 +132,7 @@ def test_a_dropped_connection_reconnects_rather_than_staying_broken(eufy):
 def test_client_frames_are_masked_with_a_fresh_mask():
     """RFC 6455 requires client frames be masked with an unpredictable mask.
     A fixed one is a violation some servers tolerate and proxies do not."""
-    source = (APP / "wsclient.py").read_text()
+    source = code_of(APP / "wsclient.py")
     assert "secrets.token_bytes(4)" in source
     assert "0x80 | TEXT" in source
 
@@ -139,10 +140,10 @@ def test_client_frames_are_masked_with_a_fresh_mask():
 def test_oversized_frames_are_refused():
     """This process has a memory limit; an 8 MB cap is the difference between
     a refused frame and an OOM kill that takes the bridge down."""
-    source = (APP / "wsclient.py").read_text()
+    source = code_of(APP / "wsclient.py")
     assert "frame too large" in source
 
 
 def test_only_plaintext_ws_to_a_private_network():
-    source = (APP / "wsclient.py").read_text()
+    source = code_of(APP / "wsclient.py")
     assert 'parsed.scheme != "ws"' in source

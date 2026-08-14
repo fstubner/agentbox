@@ -21,6 +21,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parent.parent
 APP = REPO / "services" / "compose" / "agentbox-mcp" / "app"
@@ -347,7 +348,7 @@ def test_a_missing_bridge_token_refuses_rather_than_calling_anonymously(gw, monk
 def test_the_gateway_holds_no_upstream_credentials():
     """The reason consolidating MCPs is safe while consolidating bridges is
     not. A leak here costs a scoped local token, not a handle on real mail."""
-    source = (APP / "server.py").read_text()
+    source = code_of(APP / "server.py")
     for module in APP.glob("integrations/*.py"):
         source += module.read_text()
     for forbidden in ("REFRESH_TOKEN", "CLIENT_SECRET", "HA_TOKEN",

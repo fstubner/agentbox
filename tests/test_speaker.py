@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -126,7 +127,7 @@ def test_empty_text_is_refused(spk):
 def test_there_is_no_route_that_plays_a_file_or_url():
     """Speaking is how an injected email reaches someone who is not looking at
     a screen. The tool takes composed text, never a document to read back."""
-    source = (REPO / "cli" / "agentbox-speaker").read_text()
+    source = code_of(REPO / "cli" / "agentbox-speaker")
     for forbidden in ("urlopen", "urlretrieve", '"file"', "def play_file"):
         assert forbidden not in source
 

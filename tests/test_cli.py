@@ -6,6 +6,7 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 CLI_PATH = Path(__file__).resolve().parent.parent / "cli" / "agentbox"
 
@@ -116,5 +117,31 @@ def test_the_tool_schema_budget_is_enforced_and_current():
     assert tokens <= cli.TOOL_SCHEMA_TOKEN_BUDGET, (
         f"{tokens} tokens over budget; biggest: {worst}")
     # And the stale figure is gone from the shared base.
-    base = (repo / "services/templates/mcp/mcp_base.py").read_text()
+    base = code_of(repo / "services/templates/mcp/mcp_base.py")
     assert "~2,250 tokens per turn" not in base
+
+
+def test_validate_gates_on_lint(monkeypatch):
+    """Lint is a gate, not advice.
+
+    A NameError in the Google bridge was on screen from `ruff check` and got
+    deployed anyway, crash-looping the container that holds the OAuth
+    credential. validate runs before every deploy, so that is where a
+    known-bad change has to stop.
+    """
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    block = source.split("def validate(")[1].split("\ndef ")[0]
+    assert 'shutil.which("ruff")' in block
+    assert '"ruff", "check"' in block
+    # An absent linter warns rather than passing silently.
+    assert "ruff not installed" in block
+
+
+def test_a_missing_linter_does_not_read_as_a_pass():
+    """A check that cannot run must not masquerade as one that passed."""
+    from conftest import code_of
+    block = code_of("cli/agentbox").split("def validate(")[1].split("\ndef ")[0]
+    lint = block[block.index('shutil.which("ruff")'):]
+    assert "ruff not installed" in lint
+    assert "report(WARN" in lint

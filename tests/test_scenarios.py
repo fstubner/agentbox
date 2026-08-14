@@ -13,6 +13,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from conftest import code_of
+
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -262,6 +264,6 @@ def test_operator_decision_records_are_skipped():
 
 
 def test_the_cli_wires_the_command():
-    source = (REPO / "cli" / "agentbox").read_text()
+    source = code_of(REPO / "cli" / "agentbox")
     assert 'sub.add_parser("scenarios"' in source
     assert 'args.cmd == "scenarios"' in source

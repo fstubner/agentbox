@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import code_of
 
 REPO = Path(__file__).resolve().parent.parent
 CLI = REPO / "cli" / "agentbox"
@@ -64,20 +65,20 @@ def test_shared_base_is_not_vendored(sandbox):
     copy that could drift."""
     run_scaffold(sandbox, "todoist")
     assert not (sandbox / "services/compose/todoist-bridge/app/bridge_base.py").exists()
-    dockerfile = (sandbox / "services/compose/todoist-bridge/Dockerfile").read_text()
+    dockerfile = code_of(sandbox / "services/compose/todoist-bridge/Dockerfile")
     assert "services/templates/bridge/app/bridge_base.py" in dockerfile
 
 
 def test_generated_build_context_is_the_repo_root(sandbox):
     run_scaffold(sandbox, "todoist")
-    compose = (sandbox / "services/compose/todoist-bridge/compose.yaml").read_text()
+    compose = code_of(sandbox / "services/compose/todoist-bridge/compose.yaml")
     assert "context: ../../.." in compose
     assert "dockerfile: services/compose/todoist-bridge/Dockerfile" in compose
 
 
 def test_generated_compose_keeps_the_platform_guardrails(sandbox):
     run_scaffold(sandbox, "todoist")
-    text = (sandbox / "services/compose/todoist-bridge/compose.yaml").read_text()
+    text = code_of(sandbox / "services/compose/todoist-bridge/compose.yaml")
     assert "127.0.0.1" in text
     assert "no-new-privileges:true" in text
     assert "mem_limit" in text
@@ -87,14 +88,14 @@ def test_generated_compose_keeps_the_platform_guardrails(sandbox):
 def test_credentials_are_two_distinct_env_vars(sandbox):
     """The upstream secret and the token guarding the door must never be one."""
     run_scaffold(sandbox, "todoist")
-    env = (sandbox / "services/compose/todoist-bridge/todoist-bridge.op.env.example").read_text()
+    env = code_of(sandbox / "services/compose/todoist-bridge/todoist-bridge.op.env.example")
     assert "TODOIST_API_TOKEN=op://" in env
     assert "TODOIST_BRIDGE_TOKEN=op://" in env
 
 
 def test_no_raw_secret_lands_in_the_generated_env_example(sandbox):
     run_scaffold(sandbox, "todoist")
-    env = (sandbox / "services/compose/todoist-bridge/todoist-bridge.op.env.example").read_text()
+    env = code_of(sandbox / "services/compose/todoist-bridge/todoist-bridge.op.env.example")
     for line in env.splitlines():
         if "TOKEN=" in line:
             assert line.split("=", 1)[1].startswith("op://")
@@ -135,8 +136,8 @@ def test_port_collision_is_refused(sandbox):
 def test_second_service_gets_a_different_port(sandbox):
     run_scaffold(sandbox, "todoist")
     run_scaffold(sandbox, "linear")
-    first = (sandbox / "services/compose/todoist-bridge/compose.yaml").read_text()
-    second = (sandbox / "services/compose/linear-bridge/compose.yaml").read_text()
+    first = code_of(sandbox / "services/compose/todoist-bridge/compose.yaml")
+    second = code_of(sandbox / "services/compose/linear-bridge/compose.yaml")
     import re
 
     def port_of(text):
