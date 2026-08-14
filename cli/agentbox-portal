@@ -211,6 +211,20 @@ MEMBER = "member"
 ORIGIN_EMAIL = "email"
 ORIGIN_OPERATOR = "operator"
 ORIGIN_AGENT = "agent"
+# Opened in a browser other than the one that asked for the link.
+#
+# This is the ordinary case on a phone, not an attack: Discord and most mail
+# apps open links in their own in-app browser, which has its own cookie jar,
+# so the nonce set when the link was requested is simply not there. Treating
+# that as a dead end made the whole delivery useless to anyone not sitting at
+# the same desktop browser they started from.
+#
+# So the binding decides the *privilege*, not the access. Same browser proves
+# the person who asked is the person opening it, and gets everything. Any
+# other browser gets a session that can read but not approve a memory or
+# disconnect an account — the same limits as an assistant-minted link, for the
+# same reason: whoever merely read the link could be doing this.
+ORIGIN_CHAT = "chat"
 
 # Capabilities withheld from an agent-minted session.
 #
@@ -404,13 +418,22 @@ def redeem_link(link_id: str, secret: str,
     # The browser binding. A link requested through the sign-in form carries a
     # nonce hash, and only the browser holding the matching cookie may spend it.
     expected = str(record.get("nonce_hash", ""))
+    origin = str(record.get("origin", ORIGIN_AGENT))
     if expected and not hmac.compare_digest(expected, _hash(request_nonce)):
-        return "", "", ("This link must be opened in the browser that asked "
-                        "for it. Request a new one from this device.")
+        # Not a refusal — a downgrade. See ORIGIN_CHAT.
+        origin = ORIGIN_CHAT
     if record.get("used_at"):
         return "", "", "This link has already been used. Ask for a new one."
     if now() > int(record.get("expires_at", 0)):
         return "", "", "This link has expired. Ask for a new one."
+    if origin == ORIGIN_CHAT:
+        # Deliberately not spent. A downgraded redemption must not let whoever
+        # read the message lock the real person out — they would request
+        # another, it would arrive on the same channel, and the same reader
+        # would burn that one too. Full access is still single-use; limited
+        # access simply does not consume the link.
+        return str(record.get("identity", "")), origin, ""
+
     record["used_at"] = now()
     try:
         path.write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -419,8 +442,7 @@ def redeem_link(link_id: str, secret: str,
         # than hand out a link that stays live — the same reasoning as an
         # unwritable grant-consumption record in policy_gate.
         return "", "", generic
-    return (str(record.get("identity", "")),
-            str(record.get("origin", ORIGIN_AGENT)), "")
+    return str(record.get("identity", "")), origin, ""
 
 
 # --- sessions ------------------------------------------------------------------
@@ -950,6 +972,21 @@ def render_home(identity: str, role: str, flash: str,
             "here, but approving a memory needs a link you requested yourself. "
             "The assistant can see any link it sends you, so a link it made "
             "cannot be used to approve its own memories.</p></div>")
+    elif origin == ORIGIN_CHAT:
+        parts.append(
+            "<div class='card warn'><b>Opened in a different browser</b>"
+            "<p class=sub style='margin:.35rem 0 .5rem'>You can read "
+            "everything here. Approving a memory or disconnecting an account "
+            "needs a link opened in the same browser that asked for it \u2014 "
+            "that is what proves the person opening it is the person who asked, "
+            "rather than anyone who saw the message.</p>"
+            "<p class=sub style='margin:0'>Phone apps usually open links in "
+            "their own browser, so this is normal. To get full access, request "
+            "a link below and open it without leaving this browser.</p>"
+            "<form method=post action=/request style='margin-top:.6rem'>"
+            "<input type=hidden name=email value=''>"
+            "<button class=yes>Send me a link for this browser</button>"
+            "</form></div>")
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
 
@@ -1048,8 +1085,9 @@ SIGNIN = """<h1>Agentbox</h1>
             border-radius:.35rem"></p>
   <button class=yes type=submit>Email me a link</button>
 </form>
-<footer>The link works once, expires in {minutes} minutes, and only in this
-browser. Opening it somewhere else will not sign anyone in.</footer>"""
+<footer>The link works once and expires in {minutes} minutes. Opened in this
+browser it gives you full access; opened anywhere else you can read but not
+change anything.</footer>"""
 
 
 def render_signin(sent: bool = False) -> bytes:

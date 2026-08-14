@@ -856,6 +856,24 @@ which is what makes a chat channel a safe place to send one.
 | Discord DM | `AGENTBOX_DISCORD_IDENTITIES` | no SMTP, no personal From address |
 | Email | `AGENTBOX_SMTP_*` | mail comes from whichever account you authenticate as |
 
+**Opening a link on a phone.** Discord and most mail apps open links in their
+own in-app browser, which has its own cookies — so the nonce set when the link
+was requested is not there. That is the ordinary case, not an attack, and it
+no longer fails: the binding decides the **privilege**, not the access.
+
+| where you open it | what you get |
+|---|---|
+| the browser that asked | everything |
+| anywhere else | read your memories and accounts; cannot approve or disconnect |
+
+Only the full redemption spends the link. A limited one leaves it live, so
+somebody who read the message cannot lock the real person out by opening it
+first — they would request another, it would arrive on the same channel, and
+the same reader would burn that one too.
+
+`cli/agentbox identity list` shows, for each person, their role, how they can
+actually sign in, and which services they reach through their own bridge.
+
 Discord delivery uses the same two-phase split as the connector flow: the
 portal writes a delivery request, and `cli/agentbox-approvals` — which runs as
 the operator, holds the bot token, and never passes through the model — sends

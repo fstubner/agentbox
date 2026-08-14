@@ -192,3 +192,62 @@ def test_pull_reuses_deploys_secret_resolution():
     # update delegates rather than building its own compose command
     assert "deploy(service, pull=True)" in update
     assert "docker" not in update
+
+
+def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
+    """A household is not a list of names: it is who may do what, and whether
+    each person can actually get in. Those four facts lived in four
+    environment variables across two systemd units, so answering "can Sam sign
+    in?" meant looking in four places and reasoning about it.
+    """
+    import importlib.machinery
+    import importlib.util
+    import sys
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    loader = importlib.machinery.SourceFileLoader("abx_ident", str(repo / "cli" / "agentbox"))
+    spec = importlib.util.spec_from_loader("abx_ident", loader)
+    cli = importlib.util.module_from_spec(spec)
+    sys.modules["abx_ident"] = cli
+    spec.loader.exec_module(cli)
+
+    monkeypatch.setattr(cli, "read_env_file",
+                        lambda p: {"AGENTBOX_IDENTITIES": "alex:a,sam:b,sam:c",
+                                   "GOOGLE_BRIDGE_TOKEN_ALEX": "t"})
+    monkeypatch.setattr(cli, "unit_environment", lambda unit: {
+        "agentbox-portal": {"AGENTBOX_ADMINS": "alex",
+                            "AGENTBOX_IDENTITY_EMAILS": "alex:f@e.com",
+                            "AGENTBOX_SMTP_HOST": "smtp.example.com"},
+        "agentbox-approvals": {"AGENTBOX_DISCORD_IDENTITIES": "sam:999"},
+    }.get(unit, {}))
+
+    assert cli.identity_list() == 0
+    out = capsys.readouterr().out
+    assert "alex      admin" in out
+    assert "sam        member" in out
+    # Each person's actual route in, not a global claim about SMTP.
+    assert "email" in out and "Discord DM" in out
+    # And the one who has neither is named rather than left to be discovered.
+    assert "sam cannot request a link themselves" in out
+
+
+def test_identity_list_does_not_invent_a_route(monkeypatch, capsys):
+    """SMTP configured but no address for that person is not a way in."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    loader = importlib.machinery.SourceFileLoader("abx_ident2", str(repo / "cli" / "agentbox"))
+    spec = importlib.util.spec_from_loader("abx_ident2", loader)
+    cli = importlib.util.module_from_spec(spec)
+    sys.modules["abx_ident2"] = cli
+    spec.loader.exec_module(cli)
+    monkeypatch.setattr(cli, "read_env_file",
+                        lambda p: {"AGENTBOX_IDENTITIES": "sam:b"})
+    monkeypatch.setattr(cli, "unit_environment", lambda unit: {
+        "AGENTBOX_SMTP_HOST": "smtp.example.com"} if "portal" in unit else {})
+    cli.identity_list()
+    out = capsys.readouterr().out
+    assert "operator link only" in out
+    assert "sam cannot request a link themselves" in out

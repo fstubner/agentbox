@@ -105,16 +105,19 @@ def test_the_operator_process_delivers_and_spends_the_link(approvals, portal):
     assert done["completed_at"]
 
 
-def test_the_dm_says_the_link_is_useless_to_a_reader(approvals, portal):
-    """It is going into a channel the assistant can read. Saying so is the
-    honest thing, and it is also true."""
+def test_the_dm_states_the_limit_accurately(approvals, portal):
+    """It is going into a channel the assistant can read, so it must say what
+    opening it there actually gets you — which is a session that can read and
+    not change. Claiming the link is useless elsewhere would be false now that
+    a mismatched nonce downgrades rather than refuses."""
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     sent = []
     approvals.discord = lambda m, p, t, payload=None: (
         {"id": "dm-1"} if p == "/users/@me/channels"
         else (sent.append((payload or {}).get("content", "")) or {"id": "ok"}))
     approvals.deliver_pending_links("tok")
-    assert "only in the browser you asked for it from" in sent[0]
+    assert "not approve or disconnect anything" in sent[0]
+    assert "That includes me." in sent[0]
 
 
 def test_an_unmapped_identity_is_logged_not_delivered(approvals, portal, monkeypatch, capsys):
@@ -163,3 +166,50 @@ def test_email_is_listed_when_smtp_is_set(portal, monkeypatch):
     body = portal.render_admin("alex", "").decode()
     assert "smtp.gmail.com" in body
     assert "agentbox@example.com" in body
+
+
+# --- opening a link somewhere other than where it was asked for ----------------
+
+
+def test_a_link_opened_in_another_browser_still_signs_you_in(portal):
+    """The ordinary case on a phone, not an attack.
+
+    Discord and most mail apps open links in their own in-app browser, which
+    has its own cookie jar, so the nonce set when the link was requested is
+    not there. Refusing outright made delivery useless to anyone not sitting
+    at the desktop browser they started from.
+    """
+    url, link_id = portal.mint_link("sam", "http://box", request_nonce="asked-here")
+    identity, origin, reason = portal.redeem_link(
+        link_id, url.split("k=")[1], request_nonce="")
+    assert identity == "sam"
+    assert reason == ""
+    assert origin == portal.ORIGIN_CHAT
+
+
+def test_but_it_cannot_approve_a_memory(portal):
+    """The binding decides the privilege, not the access. Whoever merely read
+    the message could be the one opening it."""
+    assert not portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_CHAT)
+    assert not portal.can(portal.MEMBER, "connector:disconnect_own",
+                          portal.ORIGIN_CHAT)
+    # Reading is fine — it grants nothing the assistant could not already do.
+    assert portal.can(portal.MEMBER, "memory:read_own", portal.ORIGIN_CHAT)
+    assert portal.can(portal.MEMBER, "connector:read_own", portal.ORIGIN_CHAT)
+
+
+def test_the_same_browser_still_gets_everything(portal):
+    url, link_id = portal.mint_link("sam", "http://box", request_nonce="asked-here")
+    identity, origin, reason = portal.redeem_link(
+        link_id, url.split("k=")[1], request_nonce="asked-here")
+    assert (identity, reason) == ("sam", "")
+    assert portal.can(portal.MEMBER, "memory:decide_own", origin)
+
+
+def test_the_page_explains_the_limit_and_how_to_lift_it(portal):
+    portal.own_proposals = lambda identity, role: []
+    portal.memory_call = lambda *a, **k: {"memories": []}
+    body = portal.render_home("sam", portal.MEMBER, "", portal.ORIGIN_CHAT).decode()
+    assert "Opened in a different browser" in body
+    assert "Phone apps usually open links in their own browser" in body
+    assert "Send me a link for this browser" in body

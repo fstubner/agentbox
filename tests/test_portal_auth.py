@@ -225,23 +225,42 @@ def test_link_is_bound_to_the_requesting_browser(portal):
     """
     url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc123")
 
-    # An interceptor holding the link but not the browser cookie.
-    identity, _, reason = portal.redeem_link(link_id, secret_of(url), "")
-    assert identity == ""
-    assert "browser" in reason
-    identity = portal.redeem_link(link_id, secret_of(url), "wrong-nonce")[0]
-    assert identity == ""
+    # An interceptor holding the link but not the browser cookie gets a
+    # session — opening a link on a phone is the ordinary case — but not the
+    # capability that matters. The binding decides the privilege, not access.
+    identity, origin, reason = portal.redeem_link(link_id, secret_of(url), "")
+    assert identity == "alex" and reason == ""
+    assert origin == portal.ORIGIN_CHAT
+    assert not portal.can(portal.ADMIN, "memory:decide_own", origin)
+    assert not portal.can(portal.ADMIN, "connector:disconnect_own", origin)
+    # A guessed nonce is no better than none.
+    assert portal.redeem_link(link_id, secret_of(url), "wrong-nonce")[1] == \
+        portal.ORIGIN_CHAT
 
-    # The browser that asked for it.
-    assert portal.redeem_link(link_id, secret_of(url), "abc123")[0] == "alex"
+    # The browser that asked for it gets everything.
+    identity, origin, _ = portal.redeem_link(link_id, secret_of(url), "abc123")
+    assert identity == "alex"
+    assert portal.can(portal.ADMIN, "memory:decide_own", origin)
 
 
-def test_failed_binding_does_not_burn_the_link(portal):
+def test_a_downgraded_redemption_does_not_burn_the_link(portal):
     """An attacker must not be able to lock the real user out by touching the
-    link first — denial of service is still a failure."""
+    link first — denial of service is still a failure, and requesting another
+    would only deliver it to the same channel the reader is watching."""
     url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc")
-    portal.redeem_link(link_id, secret_of(url), "wrong")
+    # Someone reads the message and opens it: limited session, link survives.
+    assert portal.redeem_link(link_id, secret_of(url), "wrong")[1] == \
+        portal.ORIGIN_CHAT
+    identity, origin, _ = portal.redeem_link(link_id, secret_of(url), "abc")
+    assert identity == "alex"
+    assert portal.can(portal.ADMIN, "memory:decide_own", origin)
+
+
+def test_full_access_is_still_single_use(portal):
+    """Only the privileged redemption spends the link."""
+    url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc")
     assert portal.redeem_link(link_id, secret_of(url), "abc")[0] == "alex"
+    assert portal.redeem_link(link_id, secret_of(url), "abc")[0] == ""
 
 
 def test_nonce_is_stored_hashed(portal):

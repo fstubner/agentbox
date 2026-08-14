@@ -244,10 +244,14 @@ def deliver_pending_links(token: str) -> None:
         if not channel:
             continue
         posted = discord("POST", f"/channels/{channel}/messages", token, {
-            "content": (f"Here is your Agentbox sign-in link.\n{record.get('url')}\n"
-                        f"It works once, expires shortly, and **only in the "
-                        f"browser you asked for it from** — so it is no use to "
-                        f"anyone else who reads this, including me.")})
+            "content": (
+                f"Here is your Agentbox sign-in link.\n{record.get('url')}\n"
+                f"It works once and expires shortly. Opened in the browser you "
+                f"asked from, it gives you everything. Opened anywhere else — "
+                f"including from this app — you can read your memories and "
+                f"accounts but not approve or disconnect anything, because "
+                f"anyone who saw this message could be the one opening it. "
+                f"That includes me.")})
         if not posted:
             continue
         # The URL is a credential until it expires. Drop it as soon as it is

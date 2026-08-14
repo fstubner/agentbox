@@ -1802,8 +1802,27 @@ def identity_list() -> int:
         report(WARN, "no identities configured — running single-operator")
         print("\nAdd one with: cli/agentbox identity add <name>")
         return 0
+    # A household is not just a list of names: it is who may do what, and
+    # whether each person can actually get in. Those four facts live in four
+    # environment variables across two systemd units, so until this read them
+    # together the only way to answer "can Sam sign in?" was to go and look in
+    # four places and reason about it.
+    portal = unit_environment("agentbox-portal")
+    approvals = unit_environment("agentbox-approvals")
+    admins = {n.strip() for n in portal.get("AGENTBOX_ADMINS", "").split(",")
+              if n.strip()}
+    emails = dict(pair.split(":", 1) for pair in
+                  portal.get("AGENTBOX_IDENTITY_EMAILS", "").split(",")
+                  if ":" in pair)
+    chat = dict(pair.split(":", 1) for pair in
+                (approvals.get("AGENTBOX_DISCORD_IDENTITIES", "")
+                 or portal.get("AGENTBOX_DISCORD_IDENTITIES", "")
+                 ).replace(" ", ",").split(",") if ":" in pair)
+    smtp = bool(portal.get("AGENTBOX_SMTP_HOST"))
+
     print(f"{len(identities)} identit"
           f"{'y' if len(identities) == 1 else 'ies'}:\n")
+    print(f"  {'name':<10} {'role':<7} {'sign in by':<22} own bridges")
     for name in sorted(identities):
         suffix = name.upper().replace("-", "_")
         # Which services this person reaches through their own bridge rather
@@ -1811,9 +1830,51 @@ def identity_list() -> int:
         # tasks", and the thing that is easy to get wrong silently.
         own = [prefix.lower() for prefix in ("GOOGLE", "VIKUNJA", "MEMORY", "HA")
                if values.get(f"{prefix}_BRIDGE_TOKEN_{suffix}")]
-        print(f"  {name:<12} own bridges: {', '.join(own) if own else 'none (all shared)'}")
+        ways = []
+        if smtp and name in emails:
+            ways.append("email")
+        if name in chat:
+            ways.append("Discord DM")
+        role = "admin" if name in admins else "member"
+        print(f"  {name:<10} {role:<7} "
+              f"{', '.join(ways) if ways else 'operator link only':<22} "
+              f"{', '.join(own) if own else 'none (all shared)'}")
+
+    unreachable = [n for n in sorted(identities)
+                   if n not in chat and not (smtp and n in emails)]
     print("\nMemory: each identity sees their own scope plus 'household'.")
+    if unreachable:
+        # Not an error: handing someone a link is a legitimate way to run a
+        # household. It is only worth saying because the sign-in page cannot —
+        # it must answer identically for a registered and an unregistered
+        # address, or it becomes a way to enumerate who lives here.
+        print(f"\n{', '.join(unreachable)} cannot request a link "
+              f"themselves. Give them one with: "
+              f"cli/agentbox-portal link <name>")
+        print("To let them self-serve, set AGENTBOX_DISCORD_IDENTITIES "
+              "(no SMTP needed) or AGENTBOX_SMTP_HOST.")
     return 0
+
+
+def unit_environment(unit: str) -> dict:
+    """Environment of a user unit, as systemd actually has it.
+
+    Read from systemd rather than the repo copy: what is installed and what is
+    checked in drift, and the question being answered here is about the running
+    household, not the intended one.
+    """
+    out = {}
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "show", unit, "-p", "Environment"],
+            capture_output=True, text=True, timeout=20, check=False)
+    except Exception:  # noqa: BLE001 — a listing must not fail on this
+        return out
+    for chunk in (result.stdout or "").replace("Environment=", "").split():
+        key, _, value = chunk.partition("=")
+        if key:
+            out[key] = value
+    return out
 
 
 def identity_add(name: str) -> int:
