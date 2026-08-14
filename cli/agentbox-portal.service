@@ -75,6 +75,12 @@ Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 #   AGENTBOX_SMTP_USER=you@gmail.com
 #   AGENTBOX_SMTP_PASSWORD=<app password>
 EnvironmentFile=-%h/.config/agent-control-plane/portal-smtp.env
+# The token the assistant presents to /agent/link. Without it the
+# endpoint 403s with or without a header, which is the correct
+# direction to be off but means the ORIGIN_AGENT downgrade is only
+# ever exercised by tests. A leading dash so a box without the file
+# still starts, with the endpoint simply inert.
+EnvironmentFile=-%h/.config/agent-control-plane/portal-agent.env
 
 # The address links point at, and the base of the Google redirect URI.
 # Loopback by default because Google refuses .local and bare LAN hostnames

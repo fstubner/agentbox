@@ -163,3 +163,31 @@ def test_every_refusal_reason_has_a_message(portal):
                 key = portal.refusal(role, cap, origin)
                 if key:
                     assert portal.flash_text(key), key
+
+
+def test_connecting_a_chat_account_is_withheld_from_agent_links(portal):
+    """Found by enabling /agent/link and driving it, not by reading the code.
+
+    Unlinking was withheld because "moving where somebody's sign-in links
+    arrive is not a convenience". Pairing was not — and pairing is the same
+    act in the more dangerous direction: unlinking removes a channel, pairing
+    points one somewhere new. The code it mints is shown on a page any
+    agent-minted session can read, so an attacker who can inject into the
+    assistant and control any non-bot Discord account could have had that
+    person's sign-in links delivered to them.
+    """
+    for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
+        assert not portal.can(portal.ADMIN, "connector:pair_chat", origin)
+        assert not portal.can(portal.MEMBER, "connector:pair_chat", origin)
+    # The ordinary path still works, or nobody could ever connect Discord.
+    for origin in (portal.ORIGIN_EMAIL, portal.ORIGIN_OPERATOR):
+        assert portal.can(portal.MEMBER, "connector:pair_chat", origin)
+    assert "connector:pair_chat" in portal.AGENT_WITHHELD
+
+
+def test_pairing_and_unlinking_are_withheld_together(portal):
+    """They are the same decision. Withholding one and not the other is how
+    this was wrong for as long as it was."""
+    for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
+        assert (portal.can(portal.MEMBER, "connector:pair_chat", origin)
+                == portal.can(portal.MEMBER, "connector:disconnect_own", origin))

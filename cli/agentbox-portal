@@ -204,6 +204,11 @@ FLASHES = {
     "pairing_started": ("Send the code below to the Agentbox bot on Discord "
                         "to finish connecting."),
     "chat_unlinked": "Discord disconnected. Sign-in links will not go there.",
+    "agent_link_cannot_pair": ("This link was created by the assistant, so it "
+                               "cannot connect a chat account. Connecting one "
+                               "decides where your sign-in links are "
+                               "delivered. Sign in from a link you asked for "
+                               "yourself to do it."),
     "admin_only": ("That is admin only. Your account can manage its own "
                    "memories and accounts, but not the household's settings."),
     "settings_saved": "Saved.",
@@ -285,6 +290,7 @@ AGENT_WITHHELD = frozenset({
     "memory:decide_own",
     "memory:decide_household",
     "connector:disconnect_own",
+    "connector:pair_chat",
     # `admins` decides who may approve a household memory and who sees this
     # page at all, and `identity_emails` decides where a sign-in link is
     # delivered. A link the assistant minted must not be able to move either:
@@ -307,6 +313,7 @@ ROLE_CAPABILITIES = {
         "memory:decide_own",
         "connector:read_own",
         "connector:disconnect_own",
+        "connector:pair_chat",
     }),
     ADMIN: frozenset({
         "memory:read_own",
@@ -314,6 +321,7 @@ ROLE_CAPABILITIES = {
         "memory:decide_household",
         "connector:read_own",
         "connector:disconnect_own",
+        "connector:pair_chat",
         "ops:read_health",
         "ops:stage_messaging_credential",
         "ops:write_settings",
@@ -2167,6 +2175,16 @@ class PortalHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/chat/pair":
+            # Withheld for the same reason as unlinking, and more urgently.
+            # Pairing decides where this person's sign-in links are delivered,
+            # and the code it mints is shown on a page the assistant can read
+            # whenever it holds a link it produced. Unlinking only removes a
+            # channel; pairing points one somewhere new, so if either belongs
+            # behind a link the person asked for themselves, it is this one.
+            if not can(session["role"], "connector:pair_chat",
+                       session.get("origin", ORIGIN_AGENT)):
+                self._redirect("/connectors?m=agent_link_cannot_pair")
+                return
             start_pairing(session["identity"])
             self._redirect("/connectors?m=pairing_started")
             return
