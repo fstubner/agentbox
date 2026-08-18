@@ -1216,12 +1216,16 @@ def render_overview(identity: str, role: str, waiting: int,
     # answer it — this runs a docker call and eight probes.
     if role == ADMIN:
         snap = agentbox_status.cached()
-        if snap.evaluating:
-            level, text = "warn", "Paused for an evaluation"
-        elif snap.failing:
+        # Measured state first, evaluation second — the same ordering the
+        # Operations card uses. This branch previously let `evaluating`
+        # short-circuit `failing`, so a genuinely down service was masked by
+        # a benchmark on the page people actually open.
+        if snap.failing:
             level, text = "fail", f"{len(snap.failing)} service(s) down"
         elif snap.problems or snap.stale_services:
             level, text = "warn", "Some things need attention"
+        elif snap.evaluating:
+            level, text = "ok", "Everything is running (evaluation in progress)"
         else:
             level, text = "ok", "Everything is running"
         lines.append(

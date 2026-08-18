@@ -64,17 +64,24 @@ def test_only_admins_are_shown_the_box(portal):
     assert "/admin" in admin
 
 
-def test_an_evaluation_reads_as_busy_rather_than_broken(portal, monkeypatch):
-    """Four red rows during every benchmark is how somebody learns to ignore
-    a red page."""
+def test_an_evaluation_alone_is_not_alarming(portal, monkeypatch):
+    """The original intent, kept; the assertion that encoded a bug, dropped.
+
+    This test used to require "Paused for an evaluation" *and* the absence of
+    the word "down" while a FAIL check was in the snapshot — that is, it
+    asserted the masking. A test can lock in a defect as firmly as code does,
+    and this one did: it passed for four days while the page hid outages.
+
+    What the intent was worth keeping: an evaluation with nothing actually
+    wrong should not paint the page red.
+    """
     status = portal.agentbox_status
     monkeypatch.setattr(status, "cached", lambda: status.Snapshot(
-        taken_at=0, evaluating=True,
-        endpoints=[status.Check("main model", False, "", status.FAIL)]))
+        taken_at=0, evaluating=True))
     body = portal.render_overview("alex", portal.ADMIN, waiting=0,
                                   has_memories=True)
-    assert "Paused for an evaluation" in body
-    assert "down" not in body
+    assert "Everything is running" in body
+    assert "evaluation in progress" in body
 
 
 def test_a_real_outage_still_says_so(portal, monkeypatch):
@@ -139,4 +146,22 @@ def test_a_healthy_box_during_an_evaluation_reads_as_healthy(portal, monkeypatch
         taken_at=0, evaluating=True))
     body = portal.render_status_card()
     assert "Everything is running" in body
+    assert "Paused for an evaluation" not in body
+
+
+def test_the_home_page_does_not_hide_an_outage_behind_an_evaluation(portal,
+                                                                    monkeypatch):
+    """The residual half of the same bug, found on re-review.
+
+    The Operations card was fixed first; this row was left with `evaluating`
+    short-circuiting `failing`, so a down service stayed masked on the page
+    people actually open.
+    """
+    status = portal.agentbox_status
+    monkeypatch.setattr(status, "cached", lambda: status.Snapshot(
+        taken_at=0, evaluating=True,
+        endpoints=[status.Check("main model", False, "", status.FAIL)]))
+    body = portal.render_overview("alex", portal.ADMIN, waiting=0,
+                                  has_memories=True)
+    assert "1 service(s) down" in body
     assert "Paused for an evaluation" not in body

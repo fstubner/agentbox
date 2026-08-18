@@ -205,9 +205,32 @@ def test_the_evaluator_itself_still_counts(ka):
         ["/opt/evals/.venv/bin/python", "/opt/evals/.venv/bin/agentbox-eval",
          "run", "--stage", "compare"],
         ["/opt/evals/.venv/bin/agentbox-eval", "certify"],
-        ["python", "-m", "agentbox_evals"],   # argv[1] is the module path form
+        ["python", "-m", "agentbox_evals"],
     ):
-        assert status.looks_like_evaluator(argv) or argv[1] == "-m", argv
+        # No escape clause. The first version of this test read
+        # `... or argv[1] == "-m"`, which made the module form pass without
+        # being detected at all — a test that excused its own failure and
+        # implied coverage that did not exist.
+        assert status.looks_like_evaluator(argv), argv
+
+
+def test_editing_the_evaluator_is_not_running_it(ka):
+    """argv[1] only counts when argv[0] is the interpreter running it."""
+    status = sys.modules["agentbox_status"]
+    assert not status.looks_like_evaluator(["vim", "/opt/evals/agentbox-eval"])
+    assert not status.looks_like_evaluator(["less", "/opt/evals/agentbox-eval"])
+
+
+def test_an_unreadable_process_table_still_counts_as_running(ka, monkeypatch):
+    """Restored. The first fix inverted this and deleted the test that said so,
+    while the module docstring still promised doubt means do nothing."""
+    status = sys.modules["agentbox_status"]
+
+    def explode(path):
+        raise OSError("cannot enumerate /proc")
+
+    monkeypatch.setattr(status.os, "listdir", explode)
+    assert status.evaluation_running() is True
 
 
 def test_there_is_one_definition_of_a_running_evaluation(ka):

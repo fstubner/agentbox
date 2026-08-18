@@ -275,8 +275,22 @@ def looks_like_evaluator(argv: list[str]) -> bool:
     argument, and an argument that happens to say `agentbox-eval` is exactly
     what fooled the previous implementation.
     """
-    return any(os.path.basename(token) in EVALUATOR_NAMES
-               for token in argv[:2])
+    if not argv:
+        return False
+    if os.path.basename(argv[0]) in EVALUATOR_NAMES:
+        return True          # the console script, executed directly
+    # argv[1] counts only when argv[0] is an interpreter running it. Without
+    # that guard `vim /path/to/agentbox-eval` reads as a benchmark — the same
+    # names-it-versus-is-it confusion, one level down.
+    if not os.path.basename(argv[0]).startswith("python"):
+        return False
+    if len(argv) > 1 and os.path.basename(argv[1]) in EVALUATOR_NAMES:
+        return True
+    # `python -m agentbox_evals` puts the module at argv[2]. The previous
+    # substring matcher caught this shape and the first version of this
+    # function did not — a narrowing in the direction the design explicitly
+    # refuses, since a false negative costs a benchmark.
+    return len(argv) > 2 and argv[1] == "-m" and argv[2] in EVALUATOR_NAMES
 
 
 def evaluation_running() -> bool:
@@ -300,7 +314,10 @@ def evaluation_running() -> bool:
     try:
         pids = [p for p in os.listdir("/proc") if p.isdigit()]
     except OSError:
-        return False
+        # Cannot enumerate at all: that is doubt, and doubt means a benchmark
+        # might own the machine. A late restore costs minutes; starting a
+        # model into a running comparison costs a day of numbers.
+        return True
     for pid in pids:
         try:
             with open(f"/proc/{pid}/cmdline", "rb") as handle:
