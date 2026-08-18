@@ -68,6 +68,7 @@ import html
 import importlib.util as _importlib_util
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -204,6 +205,22 @@ FLASHES = {
     "pairing_started": ("Send the code below to the Agentbox bot on Discord "
                         "to finish connecting."),
     "chat_unlinked": "Discord disconnected. Sign-in links will not go there.",
+    "chat_link_cannot_decide": ("This link was opened in a different browser "
+                                "from the one that asked for it, so it can "
+                                "read but not decide. Request a link here and "
+                                "open it without leaving this browser."),
+    "chat_link_cannot_forget": ("This link was opened in a different browser "
+                                "from the one that asked for it, so it can "
+                                "read but not remove memories. Request a link "
+                                "here and open it in this browser."),
+    "chat_link_cannot_disconnect": ("This link was opened in a different "
+                                    "browser from the one that asked for it. "
+                                    "Moving where your sign-in links arrive "
+                                    "needs a link opened in this browser."),
+    "chat_link_cannot_pair": ("This link was opened in a different browser "
+                              "from the one that asked for it. Connecting a "
+                              "chat account decides where your sign-in links "
+                              "go, so it needs a link opened in this browser."),
     "agent_link_cannot_pair": ("This link was created by the assistant, so it "
                                "cannot connect a chat account. Connecting one "
                                "decides where your sign-in links are "
@@ -228,6 +245,20 @@ FLASHES = {
                                 "Try again, or ask the operator to check the "
                                 "portal log."),
 }
+
+
+def origin_refusal(origin: str, action: str) -> str:
+    """Which flash explains an action refused for how this session signed in.
+
+    Both origins are downgraded, for different reasons, and saying the wrong
+    one sends a person to do something that will not help. Somebody who DMed
+    the bot `link` is told "this link was created by the assistant" — which is
+    untrue, and the fix it implies (ask for your own link) is the one they
+    already did. Their link is limited because it was not opened in the
+    browser that asked for it.
+    """
+    prefix = "chat_link" if origin == ORIGIN_CHAT else "agent_link"
+    return f"{prefix}_cannot_{action}"
 
 
 def flash_text(key: str) -> str:
@@ -449,7 +480,21 @@ def _hash(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
+LINK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
 def link_path(link_id: str) -> Path:
+    """Where a link record lives. Rejects anything that is not an id.
+
+    `link_id` arrives from the query string of an unauthenticated request, and
+    went into a path unchecked. Redemption still required a matching
+    secret_hash, so traversal alone proved nothing — but "unexploitable today"
+    is a property of the code around it, not of this function, and it is the
+    kind of thing that stops being true when somebody adds a write. mint_link
+    generates token_urlsafe ids, which this matches exactly.
+    """
+    if not LINK_ID.match(link_id or ""):
+        raise ValueError("not a link id")
     return STATE / "links" / f"{link_id}.json"
 
 
@@ -1139,7 +1184,10 @@ def chrome(identity: str, role: str, origin: str, active: str,
     button is missing, and "this link came from the assistant" is the answer.
     """
     tabs = [("/", "Memories"), ("/connectors", "Accounts")]
-    if role == ADMIN:
+    # Offered only when this session could actually open it. An admin on an
+    # assistant-minted link is an admin whose link cannot read Operations, and
+    # a tab that always 403s teaches people the nav lies.
+    if can(role, "ops:read_health", origin):
         tabs.append(("/admin", "Operations"))
     rendered = "".join(
         f"<a href='{href}' class='{'on' if href == active else ''}'>"
@@ -2123,7 +2171,8 @@ class PortalHandler(BaseHTTPRequestHandler):
         if action == "disconnect":
             if not can(role, "connector:disconnect_own",
                        session.get("origin", ORIGIN_AGENT)):
-                self._redirect("/connectors?m=agent_link_cannot_disconnect")
+                self._redirect("/connectors?m=" + origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "disconnect"))
                 return
             save_request({
                 "id": secrets.token_urlsafe(9),
@@ -2228,7 +2277,8 @@ class PortalHandler(BaseHTTPRequestHandler):
             # behind a link the person asked for themselves, it is this one.
             if not can(session["role"], "connector:pair_chat",
                        session.get("origin", ORIGIN_AGENT)):
-                self._redirect("/connectors?m=agent_link_cannot_pair")
+                self._redirect("/connectors?m=" + origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "pair"))
                 return
             start_pairing(session["identity"])
             self._redirect("/connectors?m=pairing_started")
@@ -2239,7 +2289,8 @@ class PortalHandler(BaseHTTPRequestHandler):
             # moving where somebody's sign-in links arrive is not a convenience.
             if not can(session["role"], "connector:disconnect_own",
                        session.get("origin", ORIGIN_AGENT)):
-                self._redirect("/connectors?m=agent_link_cannot_disconnect")
+                self._redirect("/connectors?m=" + origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "disconnect"))
                 return
             unlink_chat(session["identity"])
             self._redirect("/connectors?m=chat_unlinked")
@@ -2268,7 +2319,8 @@ class PortalHandler(BaseHTTPRequestHandler):
                     (form.get("id") or [""])[0],
                     session.get("origin", ORIGIN_AGENT))
             except PermissionError:
-                message = "agent_link_cannot_forget"
+                message = origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "forget")
             self._redirect(f"/?m={urllib.parse.quote(message)}")
             return
 
@@ -2282,7 +2334,8 @@ class PortalHandler(BaseHTTPRequestHandler):
                     session.get("origin", ORIGIN_AGENT),
                     statement=(form.get("statement") or [""])[0])
             except PermissionError:
-                message = "agent_link_cannot_decide"
+                message = origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "decide")
             self._redirect(f"/?m={urllib.parse.quote(message)}")
             return
         self._send(404, page("Not found", "<h1>Not found</h1>"))

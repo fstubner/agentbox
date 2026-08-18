@@ -257,10 +257,16 @@ def lan_exposure() -> list[Check]:
     except (OSError, subprocess.SubprocessError):
         return []
 
+    # The portal belongs here more than anything else does: it holds sessions
+    # that can edit the admin list, and it is the surface most likely to be
+    # deliberately bound wide so a phone on the sofa can reach it. A check
+    # written to catch an unintended 0.0.0.0 that cannot see the box's most
+    # privileged service is checking the easy half of the problem.
     watched = {"1234": "main model", "1235": "context worker",
                "1236": "reason worker", "1240": "vision model",
                "8765": "router", "8000": "control plane api",
-               "4321": "control plane ui"}
+               "4321": "control plane ui", "8771": "household portal",
+               "8772": "speaker"}
     exposed = []
     for line in out.splitlines()[1:]:
         fields = line.split()

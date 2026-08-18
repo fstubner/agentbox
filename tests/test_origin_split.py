@@ -110,3 +110,40 @@ def test_the_portal_cli_defaults_to_operator(portal):
     over directly is the case operator origin exists for."""
     source = code_of("cli/agentbox-portal")
     assert 'default=ORIGIN_OPERATOR' in source
+
+
+def test_a_chat_link_is_not_told_the_assistant_made_it(portal):
+    """Found by an independent acceptance pass.
+
+    Both origins are downgraded, for different reasons. Somebody who DMed the
+    bot `link` was told "this link was created by the assistant" — untrue, and
+    the remedy it implies (ask for your own link) is the thing they just did.
+    """
+    for action in ("decide", "forget", "disconnect", "pair"):
+        chat = portal.flash_text(portal.origin_refusal(portal.ORIGIN_CHAT, action))
+        agent = portal.flash_text(portal.origin_refusal(portal.ORIGIN_AGENT, action))
+        assert chat and agent and chat != agent, action
+        assert "created by the assistant" not in chat, action
+        assert "different browser" in chat, action
+
+
+def test_the_nav_does_not_offer_a_tab_that_always_refuses(portal):
+    """An admin on an assistant-minted link cannot read Operations, so
+    offering the tab teaches people the nav lies."""
+    assert "Operations" not in portal.chrome(
+        "alex", portal.ADMIN, portal.ORIGIN_AGENT, "/", "")
+    # Every origin that can actually open it still gets it.
+    for origin in (portal.ORIGIN_EMAIL, portal.ORIGIN_OPERATOR, portal.ORIGIN_CHAT):
+        assert "Operations" in portal.chrome(
+            "alex", portal.ADMIN, origin, "/", ""), origin
+    assert "Operations" not in portal.chrome(
+        "sam", portal.MEMBER, portal.ORIGIN_EMAIL, "/", "")
+
+
+def test_a_link_id_that_is_not_an_id_is_refused(portal):
+    """link_id arrives from the query string of an unauthenticated request and
+    went into a filesystem path unchecked."""
+    for bad in ("../../etc/passwd", "a/b", "", "x" * 65, "id with space"):
+        with pytest.raises(ValueError):
+            portal.link_path(bad)
+    assert portal.link_path("aBc-123_XYZ").name == "aBc-123_XYZ.json"
