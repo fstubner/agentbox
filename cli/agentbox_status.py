@@ -186,6 +186,12 @@ class Service:
     running: bool
     stale: bool        # running code older than what is committed
     status: str = ""   # docker's own words, e.g. "Up 3 hours (healthy)"
+    # A compose directory nobody has deployed here is worth listing and is
+    # not a fault: eufy-bridge is a household service this household chose
+    # not to run, and a dashboard permanently red over it is the same
+    # "teaches people to ignore the list" failure the scaffold exclusion
+    # exists to prevent.
+    deployed: bool = True
 
 
 def services() -> list[Service]:
@@ -236,6 +242,16 @@ def services() -> list[Service]:
     # A service that has never been deployed has no container to enumerate,
     # so it cannot appear above at all. Reported explicitly rather than left
     # out: "absent" and "healthy" must not render identically.
+    # `docker ps -a` can return several containers for one service — an old
+    # exited one beside the running replacement. Keep the running one, or the
+    # dashboard carries a permanently red row for a container nobody uses.
+    best: dict[str, Service] = {}
+    for service in found:
+        current = best.get(service.name)
+        if current is None or (service.running and not current.running):
+            best[service.name] = service
+    found = list(best.values())
+
     seen = {service.name for service in found}
     for compose in sorted((REPO / "services" / "compose").glob("*/compose.yaml")):
         name = compose.parent.name
@@ -246,7 +262,8 @@ def services() -> list[Service]:
             continue
         found.append(Service(name=name, label=SERVICE_LABELS.get(name, name),
                              container="", running=False, stale=False,
-                             status="no container — never deployed here"))
+                             deployed=False,
+                             status="not deployed on this box"))
     return sorted(found, key=lambda s: s.label.lower())
 
 
@@ -393,14 +410,38 @@ class Snapshot:
     @property
     def healthy(self) -> bool:
         return not self.problems and not self.stale_services and all(
-            s.running for s in self.services)
+            s.running for s in self.services if s.deployed)
+
+
+def docker_check() -> Check:
+    """Whether container state could be read at all.
+
+    `services()` returns [] when docker cannot be reached, and an empty list
+    of services is indistinguishable from a healthy one — `all([])` is True,
+    so the page said "Everything is running" precisely when it knew least.
+    Not knowing has to be a finding, or silence becomes the safest-looking
+    answer.
+    """
+    try:
+        result = subprocess.run(["docker", "ps", "-q"], capture_output=True,
+                                text=True, timeout=15)
+        ok = result.returncode == 0
+    except (OSError, subprocess.SubprocessError) as exc:
+        return Check("Container state", False,
+                     f"docker did not answer ({type(exc).__name__}); the "
+                     f"service list below is incomplete, not empty", FAIL)
+    if not ok:
+        return Check("Container state", False,
+                     "docker did not answer; the service list below is "
+                     "incomplete, not empty", FAIL)
+    return Check("Container state", True, "readable")
 
 
 def take() -> Snapshot:
     return Snapshot(taken_at=int(time.time()),
                     endpoints=endpoint_checks(),
                     services=services(),
-                    other=[disk_check(), *lan_exposure()],
+                    other=[disk_check(), docker_check(), *lan_exposure()],
                     evaluating=evaluation_running())
 
 

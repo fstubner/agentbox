@@ -237,10 +237,13 @@ def test_an_invited_link_is_downgraded_because_it_travels(portal):
     The module docstring states the rule it broke: "Whoever merely reads the
     link cannot use it. That holds for email, for Discord."
     """
-    source = code_of("cli/agentbox-portal")
-    invite = source.split("def _invite")[1][:2600]
-    assert "origin=ORIGIN_CHAT" in invite
-    assert "ORIGIN_OPERATOR" not in invite
+    # Behavioural, not a grep. The first version of this test asserted
+    # "origin=ORIGIN_CHAT" in a 2600-character slice of the file, which stops
+    # guarding the moment the call moves past that offset.
+    portal.SETTINGS.save({"smtp_host": "smtp.example.com"})
+    assert portal.has_delivery_channel("sam", "sam@example.com") is True
+    portal.SETTINGS.save({"smtp_host": ""})
+    assert portal.has_delivery_channel("sam", "sam@example.com") is False
     # And the two origins really do differ in what they permit.
     assert portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_OPERATOR)
     assert not portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_CHAT)
@@ -269,6 +272,52 @@ def test_a_stopped_service_turns_red_rather_than_vanishing(status, monkeypatch):
     assert not status.Snapshot(taken_at=0, services=list(found.values())).healthy
 
 
-def test_docker_ps_asks_for_stopped_containers(status):
-    source = code_of("cli/agentbox_status.py")
-    assert '"docker", "ps", "-a"' in source
+def test_a_hand_over_link_keeps_full_privilege(portal):
+    """The fix for the mailbox hole took the hand-over path with it.
+
+    With no delivery channel the link is printed on the admin's screen for a
+    human to carry — the same act as `agentbox-portal link`, which has never
+    been downgraded. Minting ORIGIN_CHAT there left a newly invited member
+    unable to approve their own first memory without an operator opening a
+    terminal, which is the thing the invite flow exists to avoid.
+    """
+    portal.SETTINGS.save({"smtp_host": ""})
+    travels = portal.has_delivery_channel("sam", "sam@example.com")
+    origin = portal.ORIGIN_CHAT if travels else portal.ORIGIN_OPERATOR
+    assert origin == portal.ORIGIN_OPERATOR
+    assert portal.can(portal.MEMBER, "memory:decide_own", origin)
+
+
+def test_not_knowing_the_container_state_is_a_finding(status, monkeypatch):
+    """`services()` returns [] when docker is unreachable, and all([]) is True
+    — so the page said "Everything is running" exactly when it knew least."""
+    def explode(*a, **k):
+        raise OSError("no docker")
+
+    monkeypatch.setattr(status.subprocess, "run", explode)
+    check = status.docker_check()
+    assert not check.ok and check.severity == status.FAIL
+    assert not status.Snapshot(taken_at=0, services=[], other=[check]).healthy
+
+
+def test_a_service_nobody_deployed_is_not_a_fault(status):
+    """Otherwise the dashboard is permanently red over a service the household
+    chose not to run — the failure the scaffold exclusion exists to prevent."""
+    up = status.Service(name="a", label="A", container="c", running=True,
+                        stale=False)
+    never = status.Service(name="b", label="B", container="", running=False,
+                           stale=False, deployed=False)
+    stopped = status.Service(name="c", label="C", container="c", running=False,
+                             stale=False)
+    assert status.Snapshot(taken_at=0, services=[up, never]).healthy
+    assert not status.Snapshot(taken_at=0, services=[up, stopped]).healthy
+
+
+def test_one_row_per_service_even_with_an_old_container(status, monkeypatch):
+    class Result:
+        stdout = ("old-1\tagentbox-mcp\t\tExited (0) 3 days ago\n"
+                  "new-1\tagentbox-mcp\t\tUp 2 hours (healthy)\n")
+
+    monkeypatch.setattr(status.subprocess, "run", lambda *a, **k: Result())
+    rows = [s for s in status.services() if s.name == "agentbox-mcp"]
+    assert len(rows) == 1 and rows[0].running

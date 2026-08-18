@@ -2,7 +2,6 @@
 #
 # Two containers on a private network with no host ports. eufy-security-ws
 # holds the Eufy account credential and speaks Eufy's undocumented protocols;
-# eufy-bridge holds the policy surface and is the only thing the gateway talks
 # to. Neither is reachable from the LAN.
 #
 # The alternative — a HACS integration inside Home Assistant — would put
@@ -14,16 +13,9 @@ services:
     image: bropat/eufy-security-ws:latest
     container_name: eufy-security-ws
     environment:
-      # The policy this bridge enforces, read from the read-only mount rather
-      # than the copy baked into the image. Editing a tier used to mean
-      # rebuilding every bridge; grants.json has always been read live from
-      # this same mount, and a grant is the sharper decision of the two.
-      # Unset falls back to /app/approval-policy.yaml, and a missing file
-      # fails closed — every tool drops to approval_required.
       USERNAME: "${EUFY_USERNAME:?set EUFY_USERNAME}"
       PASSWORD: "${EUFY_PASSWORD:?set EUFY_PASSWORD}"
       COUNTRY: "${EUFY_COUNTRY:-GB}"
-      # Trust this container least of anything here: it is reverse-engineered
       # code talking to a vendor cloud. Debug logging off so a credential
       # cannot end up in a log file nobody reads.
       DEBUG: ""

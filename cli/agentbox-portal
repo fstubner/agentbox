@@ -1077,6 +1077,23 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
 # not hold a credential that can message the household.
 
 
+def has_delivery_channel(identity: str, address: str) -> bool:
+    """Whether an invite for this person would actually travel somewhere.
+
+    The origin depends on the answer and has to be decided before the link is
+    minted, because the origin is baked into the record. Transmitted over a
+    channel the assistant can read means ORIGIN_CHAT; printed on the admin's
+    screen for a human to carry means ORIGIN_OPERATOR, exactly as
+    `agentbox-portal link` does.
+
+    Erring is safe in one direction only: if this says yes and delivery then
+    fails, the link shown on screen is merely more restricted than it needed
+    to be. The reverse would put an operator-privileged link in a mailbox.
+    """
+    return bool((SETTINGS.value("smtp_host") and address)
+                or chat_account_for(identity))
+
+
 def deliver_link(identity: str, address: str, url: str) -> bool:
     """Send a sign-in link by every channel configured. True if any worked.
 
@@ -2131,8 +2148,17 @@ class PortalHandler(BaseHTTPRequestHandler):
             except agentbox_settings.InvalidSetting as exc:
                 return fail(str(exc))
 
+        # Downgrade only what actually travels. Minting ORIGIN_CHAT
+        # unconditionally closed the mailbox hole but took the hand-over path
+        # with it: on a box with no delivery channel configured — which is
+        # this one — every invite produced a link that could not approve a
+        # memory, so a new member could not do the first thing the product
+        # promises them without an operator opening a terminal.
+        travels = has_delivery_channel(name, address)
         try:
-            url, _ = mint_link(name, PUBLIC_URL, origin=ORIGIN_CHAT)
+            url, _ = mint_link(
+                name, PUBLIC_URL,
+                origin=ORIGIN_CHAT if travels else ORIGIN_OPERATOR)
         except RuntimeError as exc:
             return fail(str(exc))
 
@@ -2140,8 +2166,10 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._redirect("/admin?m=invite_sent")
             return
         # Nowhere to send it. Showing the admin the link is the honest
-        # fallback — it is what the terminal command does, and the alternative
-        # is telling somebody an invite was sent when it was not.
+        # fallback — the same act as the terminal command, and carrying the
+        # same origin as it, since a link handed over by a person has not
+        # passed through a channel anything else can read. The alternative is
+        # telling somebody an invite was sent when it was not.
         self._send(200, render_admin(
             session["identity"], "", session.get("origin", ORIGIN_AGENT),
             invite_error=f"{name} has no way to receive a link yet. Hand this "
