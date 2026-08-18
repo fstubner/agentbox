@@ -117,7 +117,9 @@ def test_the_rationale_is_still_on_the_page_just_folded(portal):
     settings = sys.modules["agentbox_settings"]
     admins = settings.BY_KEY["admins"]
     assert admins.hint in body
-    assert "right direction for a mistake to fail in" in body
+    # Any sentence from the long form will do; pinning one exact phrase
+    # made this fail when the admins rationale was legitimately reworded.
+    assert "manages only their own" in body
 
 
 def test_an_evaluation_never_hides_a_real_problem(portal, monkeypatch):

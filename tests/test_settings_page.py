@@ -6,6 +6,8 @@ stops being text somebody typed and starts deciding who is an admin.
 """
 from __future__ import annotations
 
+import sys
+
 import pytest
 from test_portal_auth import load_portal
 
@@ -191,3 +193,39 @@ def test_pairing_and_unlinking_are_withheld_together(portal):
     for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
         assert (portal.can(portal.MEMBER, "connector:pair_chat", origin)
                 == portal.can(portal.MEMBER, "connector:disconnect_own", origin))
+
+
+def test_the_admin_list_cannot_be_saved_empty(portal):
+    """Found by an independent acceptance pass.
+
+    A stored value beats the environment fallback by design, so one blank save
+    took the box from "alex is an admin" to nobody is — Operations unreachable
+    for everyone, no confirmation in front of it, and no route back through the
+    UI. Recovery meant hand-editing settings.json on the box.
+    """
+    settings = sys.modules["agentbox_settings"]
+    portal.SETTINGS.save({"admins": "alex"})
+    for blank in ("", "   ", " , , ", "\n"):
+        with pytest.raises(settings.InvalidSetting) as caught:
+            portal.SETTINGS.save({"admins": blank})
+        assert caught.value.key == "admins"
+    # And the refusal changed nothing.
+    assert portal.SETTINGS.value("admins") == "alex"
+    assert portal.admin_names() == {"alex"}
+
+
+def test_handing_over_is_still_allowed(portal):
+    """The guard is against abolishing administration, not transferring it —
+    a non-empty list saves even when it drops the person saving it."""
+    portal.SETTINGS.save({"admins": "alex"})
+    portal.SETTINGS.save({"admins": "sam"})
+    assert portal.admin_names() == {"sam"}
+    assert portal.role_of("alex") == portal.MEMBER
+
+
+def test_absent_still_means_nobody(portal, tmp_path, monkeypatch):
+    """The original fail-safe survives: a missing or garbled setting removes
+    privilege rather than granting it. Only *saving* empty is refused."""
+    settings = sys.modules["agentbox_settings"]
+    store = settings.SettingsStore(directory=tmp_path / "fresh", environ={})
+    assert store.value("admins") == ""

@@ -134,6 +134,32 @@ def clean_names(raw: str) -> str:
     return ",".join(names)
 
 
+def clean_admins(raw: str) -> str:
+    """Identity names, and never an empty list.
+
+    `admins` is the one setting that can make itself uneditable. Saving it
+    blank stores an empty string, and a stored value beats the environment
+    fallback by design — so the box goes from "alex is an admin" to nobody
+    is, Operations becomes unreachable for everyone, and the only way back is
+    hand-editing settings.json as the operator. There is no confirmation step
+    in front of it and no route through the UI to undo it.
+
+    "Empty means nobody is an admin, which is the right direction for a
+    mistake to fail in" is still true of the value being *absent* — a garbled
+    or missing environment variable removes privilege rather than granting
+    it. It is not a reason to let a form abolish administration of the box.
+    Handing over is still allowed: any non-empty list saves, including one
+    that does not contain the person saving it.
+    """
+    names = clean_names(raw)
+    if not names:
+        raise InvalidSetting(
+            "at least one admin is required — saving this empty would leave "
+            "nobody able to reach Operations, including you, and it cannot be "
+            "undone from this page. To hand over, name the new admin instead.")
+    return names
+
+
 def clean_identity_emails(raw: str) -> str:
     pairs = _pairs(raw)
     for name, address in pairs:
@@ -204,9 +230,11 @@ SETTINGS: tuple[Setting, ...] = (
         hint="Who can see Operations and decide household memories.",
         label="Admins",
         help="Who can see Operations and decide household memories. Everyone "
-             "else manages only their own. Empty means nobody is an admin, "
-             "which is the right direction for a mistake to fail in.",
-        clean=clean_names,
+             "else manages only their own. At least one name is required: "
+             "saving this empty would leave nobody able to reach this page, "
+             "and there is no way back from that except editing a file on the "
+             "box. Handing over is fine \u2014 name the new admin.",
+        clean=clean_admins,
         env="AGENTBOX_ADMINS",
         placeholder="alex",
         group="Roles and addresses",
