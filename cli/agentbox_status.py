@@ -78,7 +78,21 @@ ENDPOINTS: dict[str, tuple[str, str]] = {
                + os.environ.get("AGENTBOX_ROUTER_PORT", "8765") + "/health", WARN),
     "context worker": ("http://127.0.0.1:1235/v1/models", WARN),
     "reason worker": ("http://127.0.0.1:1236/v1/models", WARN),
-    "vision model": ("http://127.0.0.1:1240/v1/models", WARN),
+    # The vision model binds the docker bridge gateway, not loopback: the Home
+    # Assistant bridge reaches it from inside a container via
+    # host.docker.internal, and a container cannot reach a host's 127.0.0.1.
+    # 172.17.0.1 is an address on the host (docker0), so the host can still
+    # probe it, while 172.16/12 is private to the bridge and not routed off
+    # the box — unlike 0.0.0.0, which would expose it to the LAN. That
+    # matters more here than for the other models: this one carries no API
+    # key.
+    #
+    # Probing 127.0.0.1 reported "vision model responding" from the host
+    # while look_at_camera had been failing at the network layer, because
+    # the check and the caller disagreed about what reachable meant.
+    "vision model": (os.environ.get(
+        "AGENTBOX_VISION_BASE", "http://172.17.0.1:1240/v1")
+        + "/models", WARN),
     "control plane api": ("http://127.0.0.1:8000/api/evals/health", WARN),
     "control plane ui": ("http://127.0.0.1:4321/", WARN),
 }
