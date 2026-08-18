@@ -273,3 +273,41 @@ def test_expired_credentials_are_reaped(portal, tmp_path):
     assert (portal.STATE / "sessions/live.json").exists()
     assert (portal.STATE / "links/usable.json").exists()
     assert not (portal.STATE / "links/spent.json").exists()
+
+
+def test_an_admin_list_of_strangers_is_refused(portal):
+    """`clean_admins` validates shape, so `mai` for `sam` passed it and locked
+    everyone out just as thoroughly as an empty list — the same unrecoverable
+    state by a likelier route."""
+    portal.SETTINGS.save({"admins": "alex",
+                          "identity_emails": "alex:alex@example.com"})
+    known = portal.known_identities()
+    assert "alex" in known and "mai" not in known
+    # Somebody who exists can still be handed the box.
+    portal.SETTINGS.save({"identity_emails":
+                          "alex:alex@example.com,sam:sam@example.com"})
+    assert "sam" in portal.known_identities()
+
+
+def test_an_identity_that_cannot_sign_in_is_shown(portal, monkeypatch):
+    """The card exists to surface exactly this, and missed it: sam was a
+    configured gateway identity with no way in, and the list did not say so."""
+    monkeypatch.setenv("AGENTBOX_IDENTITY_NAMES", "alex,sam")
+    portal.SETTINGS.save({"identity_emails": "alex:alex@example.com"})
+    body = portal.render_people_card()
+    assert "sam" in body
+    assert "no way to receive a sign-in link" in body
+
+
+def test_the_module_docstring_describes_the_route_the_assistant_has(portal):
+    """A trust claim that has quietly stopped being true is worse than none —
+    it is the thing somebody checks instead of the code.
+
+    Asserted positively. The first version of this test grepped for the
+    absence of the old sentence, which fails two ways: the correction quotes
+    that sentence in a historical note, and `code_of` strips docstrings, so
+    the assertion would have passed without reading anything at all.
+    """
+    doc = sys.modules["agentbox_portal"].__doc__ or ""
+    assert "POST /agent/link" in doc
+    assert "cannot name somebody else" in doc

@@ -47,8 +47,16 @@ Discord, for a screenshot in a chat log — any channel, including ones added
 later, rather than a defence aimed at one of them. Discord is just how you talk
 to the assistant; it is not part of the trust path.
 
-Nothing here is an MCP tool. The assistant cannot mint a link, list links, or
-reach this port.
+The assistant has exactly one route in: `POST /agent/link`, behind a token it
+holds, which mints an ORIGIN_AGENT link for the identity its own bearer token
+resolved to — it cannot name somebody else, and the link it gets back can read
+but not decide. Everything else here is closed to it: it cannot list links,
+read a session, or reach any other route on this port.
+
+That paragraph used to read "Nothing here is an MCP tool. The assistant cannot
+mint a link" and stayed that way after the tool was added. A trust claim that
+has quietly stopped being true is worse than none, because it is the thing
+somebody checks instead of the code.
 
 ## Roles
 
@@ -398,6 +406,22 @@ def now() -> int:
 
 
 # --- identities and roles ------------------------------------------------------
+
+
+def known_identities() -> set[str]:
+    """Every name this box recognises as a person.
+
+    Sources are additive because each knows a different subset: sign-in
+    addresses, paired chat accounts, whoever is already an admin, and any
+    names published for the assistant. The last is names only and never
+    tokens — the portal is the LAN-facing surface and has no business holding
+    a bearer credential.
+    """
+    names = set(email_map().values()) | discord_identities()
+    names |= {n.strip() for n in SETTINGS.value("admins").split(",") if n.strip()}
+    names |= {n.strip() for n in os.environ.get(
+        "AGENTBOX_IDENTITY_NAMES", "").replace(" ", ",").split(",") if n.strip()}
+    return names
 
 
 def admin_names() -> set[str]:
@@ -1638,7 +1662,14 @@ def render_people_card(flash_error: str = "") -> str:
     emails = email_map()                    # address -> identity
     by_identity = {name: address for address, name in emails.items()}
     reachable = discord_identities()
-    known = sorted(set(by_identity) | admin_names() | reachable)
+    # Identities the assistant is configured to act for. Without these the
+    # card missed exactly the state it exists to show: `sam` was a configured
+    # gateway identity who could not sign in, and this list — whose whole
+    # purpose is to surface that — did not mention her. Names only; the
+    # gateway's own variable carries bearer tokens and must not come here.
+    assistant_side = {n.strip() for n in os.environ.get(
+        "AGENTBOX_IDENTITY_NAMES", "").replace(" ", ",").split(",") if n.strip()}
+    known = sorted(set(by_identity) | admin_names() | reachable | assistant_side)
 
     rows = []
     for identity in known:
@@ -1991,6 +2022,13 @@ class PortalHandler(BaseHTTPRequestHandler):
             # cannot drive a POST here with the user's cookie attached.
             self.send_response(303)
             self.send_header("Location", "/")
+            # No `Secure` flag, deliberately and not happily: this server
+            # speaks plain HTTP, so `Secure` would stop the browser sending
+            # the cookie at all and nobody could sign in. HttpOnly and
+            # SameSite=Lax are set. The session cookie therefore crosses the
+            # LAN in clear, and the real remedy is TLS in front of this port,
+            # not a flag that trades a working product for the appearance of
+            # one. Recorded here so the next reader knows it was weighed.
             self.send_header("Set-Cookie",
                              f"sid={sid}; HttpOnly; SameSite=Lax; Path=/")
             self.send_header("Set-Cookie",
@@ -2196,6 +2234,23 @@ class PortalHandler(BaseHTTPRequestHandler):
         clear = frozenset(
             setting.key for setting in agentbox_settings.SETTINGS
             if setting.secret and (form.get(f"clear_{setting.key}") or [""])[0])
+        # `clean_admins` refuses an empty list, which stops the box being
+        # left with no administrator. It validates shape only, so `mai` for
+        # `sam` passes it and locks everyone out just as thoroughly — the
+        # same unrecoverable state by a likelier route.
+        wanted = {n.strip() for n in submitted.get("admins", "").split(",")
+                  if n.strip()}
+        unknown = sorted(wanted - known_identities())
+        if unknown:
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                errors={"admins": (
+                    f"nobody here is called {', '.join(unknown)}. Invite them "
+                    f"first, or check the spelling — an admin list naming "
+                    f"only people who do not exist locks this page for "
+                    f"everyone, and cannot be undone from it.")},
+                submitted=submitted))
+            return
         try:
             changed = SETTINGS.save(submitted, clear=clear)
         except agentbox_settings.InvalidSetting as exc:
