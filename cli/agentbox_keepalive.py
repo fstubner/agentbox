@@ -121,12 +121,37 @@ def restore(units: list[str]) -> tuple[bool, str]:
     return True, ""
 
 
+REASON_FILE = DISABLED_FLAG.with_name("keepalive-last-reason")
+
+
 def main(argv: list[str] | None = None) -> int:
     quiet = "--quiet" in (argv if argv is not None else sys.argv[1:])
 
     def say(message: str) -> None:
+        """Log a no-op the first time it happens, then stay quiet about it.
+
+        The unit runs `--quiet` every two minutes, so the reason for standing
+        down was never written down — and a watchdog that silently does
+        nothing looks exactly like a watchdog that is working. It stood down
+        for four days that way. Logging every tick would be 30 lines an hour
+        during a long benchmark, which is its own kind of invisible, so this
+        logs transitions: a changed reason is news, a repeated one is not.
+        """
         if not quiet:
             print(message, file=sys.stderr)
+            return
+        try:
+            previous = REASON_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            previous = ""
+        if previous == message:
+            return
+        print(message, file=sys.stderr)
+        try:
+            REASON_FILE.parent.mkdir(parents=True, exist_ok=True)
+            REASON_FILE.write_text(message, encoding="utf-8")
+        except OSError:
+            pass
 
     if DISABLED_FLAG.exists():
         say(f"[..] standing down: {DISABLED_FLAG} exists")

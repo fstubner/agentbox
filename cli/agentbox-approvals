@@ -350,9 +350,19 @@ def send_link_on_request(token: str) -> None:
     by_user = {str(v.get("user_id")): name for name, v in linked.items()}
 
     channels = discord("GET", "/users/@me/channels", token) or []
+    seen = link_cursor()
     for channel in channels:
         messages = discord("GET", f"/channels/{channel.get('id')}/messages?limit=10",
                            token) or []
+        if str(channel.get("id")) not in seen:
+            # First time this loop has looked at this conversation. Record
+            # where it starts and answer nothing: the ten messages already
+            # sitting there are history, and on first deployment every past
+            # `link` would be replied to at once — a burst of live sign-in
+            # links into a channel, for requests nobody is making now.
+            newest = max((int(m.get("id", 0)) for m in messages), default=0)
+            remember_link_request(str(channel.get("id")), str(newest))
+            continue
         for message in messages:
             author = message.get("author") or {}
             if author.get("bot"):

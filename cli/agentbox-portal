@@ -380,7 +380,12 @@ ROLE_CAPABILITIES = {
         "connector:disconnect_own",
         "connector:pair_chat",
         "ops:read_health",
-        "ops:stage_messaging_credential",
+        # `ops:stage_messaging_credential` was removed on 2026-08-18: it was
+        # granted here and checked nowhere. This table is deliberately
+        # enumerated so that a capability nobody granted is absent rather than
+        # merely unreachable; one that is granted and never consulted is the
+        # same confusion pointing the other way. It comes back with its check,
+        # or not at all.
         "ops:write_settings",
         "ops:write_household",
         "ops:invite",
@@ -1442,7 +1447,8 @@ def render_signin(sent: bool = False) -> bytes:
     Only one message belongs here, and it is fixed text.
     """
     told = ("If that address belongs to someone here, a sign-in link is on "
-            "its way. It will only work in this browser.")
+            "its way. Open it in this browser for full access — opened "
+            "anywhere else it can read but not change anything.")
     return page("Sign in \u2014 Agentbox", SIGNIN.format(
         minutes=LINK_TTL_SECONDS // 60,
         flash=f"<div class=flash>{told}</div>" if sent else ""))
@@ -1679,6 +1685,12 @@ def _field(setting, value: str, error: str) -> str:
     if setting.secret:
         note = ("<span class=sub> \u2014 stored; leave blank to keep</span>"
                 if value else "<span class=sub> \u2014 not set</span>")
+    clear_box = ""
+    if setting.secret and value:
+        # Blank means keep, so without this there is no way to say "remove it".
+        clear_box = (f"<label class=sub style='display:block;margin:.15rem 0 0'>"
+                     f"<input type=checkbox name='clear_{html.escape(setting.key)}'"
+                     f" value='1'> remove the stored value</label>")
     return (
         f"<label style='display:block;margin:.7rem 0 0'>"
         f"<b>{html.escape(setting.label)}</b>{note}"
@@ -1695,6 +1707,7 @@ def _field(setting, value: str, error: str) -> str:
            f"{html.escape(setting.help)}</div></details>"
            if setting.hint else
            f"<span class=sub>{html.escape(setting.help)}</span>")
+        + clear_box
         + (f"<div class=flash style='margin:.35rem 0 0'>"
            f"{html.escape(error)}</div>" if error else "")
         + "</label>")
@@ -2120,8 +2133,11 @@ class PortalHandler(BaseHTTPRequestHandler):
         submitted = {setting.key: (form.get(setting.key) or [""])[0]
                      for setting in agentbox_settings.SETTINGS}
         errors: dict[str, str] = {}
+        clear = frozenset(
+            setting.key for setting in agentbox_settings.SETTINGS
+            if setting.secret and (form.get(f"clear_{setting.key}") or [""])[0])
         try:
-            changed = SETTINGS.save(submitted)
+            changed = SETTINGS.save(submitted, clear=clear)
         except agentbox_settings.InvalidSetting as exc:
             # The store validates everything before writing anything, so a
             # rejection here means nothing was stored — the form is showing
@@ -2369,6 +2385,47 @@ def cmd_link(args) -> int:
     return 0
 
 
+def reap_expired() -> tuple[int, int]:
+    """Delete session and link records that can no longer authenticate anyone.
+
+    Nothing removed these, so they accumulated: 34 sessions and 5 link records
+    were still on disk days after every one of them had expired. None of it is
+    exploitable — redemption checks `expires_at` and `used_at` regardless — but
+    each file holds an identity and a secret hash, and keeping a credential
+    record past the point where it can authorise anything is a disclosure
+    surface with no remaining purpose.
+
+    Runs at startup rather than on a timer: the portal restarts often enough,
+    and a reaper that needs its own scheduler is a second thing to keep alive.
+    Failure here is not worth refusing to serve over — an unreadable record is
+    skipped, not fatal.
+    """
+    sessions = links = 0
+    for directory, counter in (("sessions", "s"), ("links", "l")):
+        base = STATE / directory
+        if not base.is_dir():
+            continue
+        for record_file in base.glob("*.json"):
+            try:
+                record = json.loads(record_file.read_text(encoding="utf-8"))
+                expired = int(record.get("expires_at", 0)) <= now()
+                # A used link is spent even if its clock has not run out.
+                spent = bool(record.get("used_at"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if not (expired or spent):
+                continue
+            try:
+                record_file.unlink()
+            except OSError:
+                continue
+            if counter == "s":
+                sessions += 1
+            else:
+                links += 1
+    return sessions, links
+
+
 def cmd_serve(args) -> int:
     STATE.mkdir(parents=True, exist_ok=True)
     # Mint the consent-state secret now, not on the first reconnect click. If
@@ -2376,6 +2433,10 @@ def cmd_serve(args) -> int:
     # where systemd shows it — not as a 500 halfway through someone's OAuth
     # flow days later.
     _state_secret()
+    dead_sessions, dead_links = reap_expired()
+    if dead_sessions or dead_links:
+        print(f"[ok] reaped {dead_sessions} expired session(s) and "
+              f"{dead_links} spent link(s)", file=sys.stderr)
     server = ThreadingHTTPServer((args.host, args.port), PortalHandler)
     print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
     # Said loudly at startup because it cannot be said at the point of failure.

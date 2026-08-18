@@ -380,7 +380,8 @@ class SettingsStore:
     def all(self) -> dict[str, str]:
         return {setting.key: self.value(setting.key) for setting in SETTINGS}
 
-    def save(self, submitted: dict[str, str]) -> list[str]:
+    def save(self, submitted: dict[str, str],
+             clear: frozenset[str] = frozenset()) -> list[str]:
         """Validate and store. Returns the keys that actually changed.
 
         Every value is validated before anything is written, so a form with
@@ -394,8 +395,13 @@ class SettingsStore:
             setting = BY_KEY.get(key)
             if setting is None:
                 continue
-            if setting.secret and raw == "":
-                continue        # left blank means "keep what is there"
+            if setting.secret and raw == "" and key not in clear:
+                # Blank means "keep what is there" — otherwise every save of
+                # the form would wipe the password, since the field is never
+                # echoed back. `clear` is how a caller says it meant empty:
+                # without it a stored secret can be replaced forever and
+                # removed never.
+                continue
             try:
                 cleaned[key] = setting.clean(raw)
             except InvalidSetting as exc:

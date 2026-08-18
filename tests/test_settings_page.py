@@ -229,3 +229,47 @@ def test_absent_still_means_nobody(portal, tmp_path, monkeypatch):
     settings = sys.modules["agentbox_settings"]
     store = settings.SettingsStore(directory=tmp_path / "fresh", environ={})
     assert store.value("admins") == ""
+
+
+def test_a_stored_secret_can_be_cleared(portal):
+    """Blank means keep, so without an explicit clear a stored secret could be
+    replaced forever and removed never."""
+    portal.SETTINGS.save({"smtp_password": "hunter2"})
+    portal.SETTINGS.save({"smtp_password": ""})
+    assert portal.SETTINGS.value("smtp_password") == "hunter2"
+    portal.SETTINGS.save({"smtp_password": ""},
+                         clear=frozenset({"smtp_password"}))
+    assert portal.SETTINGS.value("smtp_password") == ""
+
+
+def test_the_form_offers_the_clear_only_when_there_is_something_to_clear(portal):
+    portal.SETTINGS.save({"smtp_password": "hunter2"})
+    assert "clear_smtp_password" in portal.render_admin("alex", "").decode()
+    portal.SETTINGS.save({"smtp_password": ""},
+                         clear=frozenset({"smtp_password"}))
+    assert "clear_smtp_password" not in portal.render_admin("alex", "").decode()
+
+
+def test_expired_credentials_are_reaped(portal, tmp_path):
+    """Each record holds an identity and a secret hash; keeping one past the
+    point where it can authorise anything is surface with no purpose."""
+    import json
+    live = portal.now() + 3600
+    for name, record in (
+        ("sessions/dead", {"identity": "alex", "expires_at": portal.now() - 1}),
+        ("sessions/live", {"identity": "alex", "expires_at": live}),
+        ("links/expired", {"identity": "alex", "expires_at": portal.now() - 1}),
+        ("links/spent", {"identity": "alex", "expires_at": live,
+                         "used_at": portal.now() - 5}),
+        ("links/usable", {"identity": "alex", "expires_at": live,
+                          "used_at": None}),
+    ):
+        path = portal.STATE / f"{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+    sessions, links = portal.reap_expired()
+    assert (sessions, links) == (1, 2)
+    assert (portal.STATE / "sessions/live.json").exists()
+    assert (portal.STATE / "links/usable.json").exists()
+    assert not (portal.STATE / "links/spent.json").exists()
