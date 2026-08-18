@@ -1,11 +1,11 @@
 # Agentbox
 
-> **Draft, reconstructed from the repository — not yet confirmed by the household.**
-> Every claim below is either cited to a file in this repo or marked `TBD`.
-> Nothing here was invented to fill a heading. The one place the sources
-> disagree with each other is flagged under Users; that needs a decision, not
-> a guess. Written by the same agent that built much of the current system, so
-> it should be read as a proposal to correct, not as a contract already agreed.
+> **Reconstructed from the repository. Users answered 2026-08-18; the rest is
+> still awaiting correction.**
+> Every claim below is cited to a file in this repo or to a decision recorded
+> here. Nothing was invented to fill a heading. Written by the same agent that
+> built much of the system it describes, so Success and the MVP cut in
+> particular are proposals to correct, not a contract already agreed.
 
 ## Purpose
 
@@ -33,11 +33,16 @@ calendar detail and personal memory are private. Two separate stacks were
 explicitly rejected, because "a household assistant that cannot answer 'when
 are we both free' gives up most of its value".
 
-> ⚠️ **Sources conflict — needs your decision.** `README.md` and
-> `docs/architecture.md` both say "for a **single operator**". The roadmap, the
-> role system, invites, and per-identity bridges all describe a household of
-> two. The code follows the household reading. Either the two docs are stale,
-> or the household work outran the stated scope. **`TBD` until you say which.**
+**Decided 2026-08-18: a household of two.** `README.md`,
+`docs/architecture.md` and `CONTRIBUTING.md` had described a "single operator";
+those were stale and now say household. The code already followed this reading.
+
+Distinct from that, and still true: a box with **no identities configured**
+runs in a single-operator mode — one shared token, no identity, every memory
+implicitly the one operator's. That is a supported deployment with tests behind
+it (`services/compose/agentbox-mcp/app/server.py`, `test_memory_scopes.py`),
+not stale framing. The product is designed around the household; the fallback
+exists for a box that has not been set up as one.
 
 ## Success
 
