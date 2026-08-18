@@ -20,7 +20,6 @@ services:
       # this same mount, and a grant is the sharper decision of the two.
       # Unset falls back to /app/approval-policy.yaml, and a missing file
       # fails closed — every tool drops to approval_required.
-      AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       USERNAME: "${EUFY_USERNAME:?set EUFY_USERNAME}"
       PASSWORD: "${EUFY_PASSWORD:?set EUFY_PASSWORD}"
       COUNTRY: "${EUFY_COUNTRY:-GB}"
@@ -52,6 +51,7 @@ services:
     depends_on:
       - eufy-security-ws
     environment:
+      AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       EUFY_WS_URL: "ws://eufy-security-ws:3000"
       EUFY_BRIDGE_TOKEN: "${EUFY_BRIDGE_TOKEN:?set EUFY_BRIDGE_TOKEN}"
       # Empty by default. Two of these cameras are indoors, and a missing

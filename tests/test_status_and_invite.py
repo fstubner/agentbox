@@ -71,10 +71,11 @@ def test_an_unlabelled_container_is_not_called_stale(status, monkeypatch):
                   "Up 2 hours (healthy)\n")
 
     monkeypatch.setattr(status.subprocess, "run", lambda *a, **k: Result())
-    found = status.services()
-    assert len(found) == 1
-    assert found[0].running
-    assert not found[0].stale
+    # Looked up by name, not by position: the list also carries services that
+    # have no container at all, so a total count is not what this is about.
+    found = {s.name: s for s in status.services()}["agentbox-mcp"]
+    assert found.running
+    assert not found.stale
 
 
 def test_a_changed_source_hash_is_stale(status, monkeypatch):
@@ -224,3 +225,50 @@ def test_an_undeliverable_invite_shows_the_link_rather_than_claiming_success(por
     invite = source.split("def _invite")[1][:2000]
     assert "deliver_link" in invite
     assert "has no way to receive a link yet" in invite
+
+
+def test_an_invited_link_is_downgraded_because_it_travels(portal):
+    """Found by an independent acceptance pass, and the worst thing in it.
+
+    The invite minted ORIGIN_OPERATOR with no browser nonce, so the downgrade
+    in redeem_link could never fire — and then emailed it, or spooled it to a
+    Discord DM. An operator-privileged link sat in a mailbox the assistant
+    holds a read tool for, able to approve memories and disconnect accounts.
+    The module docstring states the rule it broke: "Whoever merely reads the
+    link cannot use it. That holds for email, for Discord."
+    """
+    source = code_of("cli/agentbox-portal")
+    invite = source.split("def _invite")[1][:2600]
+    assert "origin=ORIGIN_CHAT" in invite
+    assert "ORIGIN_OPERATOR" not in invite
+    # And the two origins really do differ in what they permit.
+    assert portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_OPERATOR)
+    assert not portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_CHAT)
+
+
+def test_a_link_secret_never_reaches_the_log(portal):
+    """log_message was overridden and log_request was not, so the stdlib wrote
+    the whole request line — 23 live secrets were found in the journal."""
+    redact = portal.PortalHandler._redact
+    line = redact('"GET /login?id=abc123&k=THE-SECRET HTTP/1.1" 303 -')
+    assert "THE-SECRET" not in line and "abc123" not in line
+    assert "/login" in line
+    # A path with no query is untouched, or the log stops being useful.
+    assert redact('"GET /admin HTTP/1.1" 200 -') == '"GET /admin HTTP/1.1" 200 -'
+
+
+def test_a_stopped_service_turns_red_rather_than_vanishing(status, monkeypatch):
+    """`docker ps` without -a derives the list from what is running, so a
+    crashed bridge disappears and the page then says everything is running."""
+    class Result:
+        stdout = ("agentbox-mcp-1\tagentbox-mcp\t\tExited (1) 2 minutes ago\n")
+
+    monkeypatch.setattr(status.subprocess, "run", lambda *a, **k: Result())
+    found = {s.name: s for s in status.services()}
+    assert found["agentbox-mcp"].running is False
+    assert not status.Snapshot(taken_at=0, services=list(found.values())).healthy
+
+
+def test_docker_ps_asks_for_stopped_containers(status):
+    source = code_of("cli/agentbox_status.py")
+    assert '"docker", "ps", "-a"' in source

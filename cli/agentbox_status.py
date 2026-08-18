@@ -198,7 +198,12 @@ def services() -> list[Service]:
     fmt = ('{{.Names}}\t{{.Label "agentbox.service"}}\t'
            '{{.Label "agentbox.source_sha"}}\t{{.Status}}')
     try:
-        out = subprocess.run(["docker", "ps", "--format", fmt],
+        # `-a`, not bare `ps`. Without it the list is derived entirely from
+        # what is running, so a crashed bridge does not turn red — it
+        # disappears, and the page then reports "Everything is running"
+        # because nothing is left to complain about. A status page whose
+        # failure mode is silence is worse than none.
+        out = subprocess.run(["docker", "ps", "-a", "--format", fmt],
                              capture_output=True, text=True, timeout=15).stdout
     except (OSError, subprocess.SubprocessError):
         return []
@@ -227,6 +232,21 @@ def services() -> list[Service]:
             # send somebody to redeploy something that is perfectly current.
             stale=bool(sha and current and sha != current),
             status=status))
+
+    # A service that has never been deployed has no container to enumerate,
+    # so it cannot appear above at all. Reported explicitly rather than left
+    # out: "absent" and "healthy" must not render identically.
+    seen = {service.name for service in found}
+    for compose in sorted((REPO / "services" / "compose").glob("*/compose.yaml")):
+        name = compose.parent.name
+        # `example-service` is the scaffold's fixture, not a household
+        # service; reporting it as down would be the false alarm that teaches
+        # people to ignore this list.
+        if name in seen or name == "example-service":
+            continue
+        found.append(Service(name=name, label=SERVICE_LABELS.get(name, name),
+                             container="", running=False, stale=False,
+                             status="no container — never deployed here"))
     return sorted(found, key=lambda s: s.label.lower())
 
 

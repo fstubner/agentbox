@@ -1911,7 +1911,23 @@ class PortalHandler(BaseHTTPRequestHandler):
     server_version = "agentbox-portal"
 
     def log_message(self, fmt, *args):  # noqa: A002
-        sys.stderr.write(f"[portal] {fmt % args}\n")
+        sys.stderr.write(f"[portal] {self._redact(fmt % args)}\n")
+
+    @staticmethod
+    def _redact(line: str) -> str:
+        """Strip query strings before anything reaches the log.
+
+        `log_message` was overridden and `log_request` was not, so the stdlib
+        logged the whole request line — including `/login?id=…&k=<secret>`.
+        The link secret is hashed on disk precisely so that directory leaking
+        yields nothing usable; writing the plaintext into the journal put it
+        somewhere longer-lived and less protected. 23 live secrets were found
+        there.
+
+        Redacting every query string rather than the `k` parameter alone: the
+        next parameter worth hiding should not need anyone to remember this.
+        """
+        return re.sub(r"(\?)\S*", r"\1<redacted>", line)
 
     def _send(self, code: int, body: bytes, headers: dict | None = None) -> None:
         self.send_response(code)
@@ -2061,9 +2077,25 @@ class PortalHandler(BaseHTTPRequestHandler):
         assistant being able to invite somebody would be the assistant being
         able to decide who lives here.
 
-        The link is minted as operator-issued, because that is what it is —
-        an admin deliberately handing access to a person they know. There is
-        no browser to bind it to, the same as `agentbox-portal link`.
+        The link is minted ORIGIN_CHAT, not ORIGIN_OPERATOR.
+
+        The first version reasoned that an invite is an admin handing access
+        to somebody they know, the same as `agentbox-portal link`. The
+        difference it missed is the one that matters: the CLI prints a link
+        for a human to hand over, while this one is *transmitted* — by email,
+        or into a Discord DM — over channels the assistant can read. With no
+        browser nonce to bind, the downgrade in `redeem_link` never fires, so
+        an operator-privileged link sat in a mailbox the assistant holds a
+        read tool for, able to approve memories and disconnect accounts.
+
+        This module's own docstring states the rule it broke: "Whoever merely
+        reads the link cannot use it. That holds for email, for Discord, for a
+        screenshot in a chat log." The sibling path in agentbox-approvals
+        already minted ORIGIN_CHAT for exactly this reason.
+
+        Chat origin costs the invitee nothing they need on arrival: they can
+        read everything and request a browser-bound link themselves, which is
+        the only way anyone should be getting write access anyway.
         """
         why = refusal(session["role"], "ops:invite",
                       session.get("origin", ORIGIN_AGENT))
@@ -2100,7 +2132,7 @@ class PortalHandler(BaseHTTPRequestHandler):
                 return fail(str(exc))
 
         try:
-            url, _ = mint_link(name, PUBLIC_URL, origin=ORIGIN_OPERATOR)
+            url, _ = mint_link(name, PUBLIC_URL, origin=ORIGIN_CHAT)
         except RuntimeError as exc:
             return fail(str(exc))
 
