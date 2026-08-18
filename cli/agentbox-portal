@@ -568,10 +568,15 @@ def redeem_link(link_id: str, secret: str,
     stolen link cannot both succeed.
     """
     generic = "This link is not valid. Ask for a new one."
-    path = link_path(link_id)
     try:
+        path = link_path(link_id)
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        # ValueError covers both a malformed id and unreadable JSON, and both
+        # get the same sentence as a link that never existed. An id shaped
+        # wrongly must not be distinguishable from one that is merely wrong —
+        # and it must certainly not take the handler thread down, since a
+        # closed connection is itself an answer.
         return "", "", generic
     if not hmac.compare_digest(str(record.get("secret_hash", "")),
                                _hash(secret)):

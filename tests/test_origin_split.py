@@ -147,3 +147,18 @@ def test_a_link_id_that_is_not_an_id_is_refused(portal):
         with pytest.raises(ValueError):
             portal.link_path(bad)
     assert portal.link_path("aBc-123_XYZ").name == "aBc-123_XYZ.json"
+
+
+def test_a_malformed_link_id_answers_like_an_unknown_one(portal):
+    """The first version of the traversal fix let ValueError escape.
+
+    That killed the handler thread, so a malformed id closed the connection
+    while an unknown one returned a page — a distinguishable answer, and the
+    opposite of what the redemption path is built for. Malformed, missing and
+    tampered must all produce the same sentence.
+    """
+    generic = portal.redeem_link("../../etc/passwd", "x")[2]
+    for bad in ("a/b", "", "x" * 80, "id with space", "%2e%2e"):
+        assert portal.redeem_link(bad, "x")[2] == generic, bad
+    # And a well-shaped id that simply does not exist says the same thing.
+    assert portal.redeem_link("aBc-123_XYZ", "x")[2] == generic
