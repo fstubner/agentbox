@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "skill": "code-smells",
+  "generatedAt": "2026-08-18T21:42:39.718Z",
+  "root": "/home/alex/oss/agentbox",
+  "verdict": "BLOCK",
+  "checks": [
+    {
+      "id": "S-shotgun-surgery",
+      "status": "fail",
+      "detail": "5 file(s) show shotgun surgery — one concept with no home: services/templates/bridge/test_bridge_base.py (4 commits) moves with services/templates/bridge/app/bridge_base.py 100%, services/compose/google-workspace-bridge/app/bridge_base.py 75%, services/compose/memory-bridge/app/bridge_base.py 75%, services/compose/vikunja-bridge/app/bridge_base.py 75% across 5 directories | services/compose/memory-mcp/app/server.py (7 commits) moves with services/compose/memory-bridge/app/bridge.py 71%, services/compose/google-workspace-mcp-lite/app/server.py 71%, services/compose/vikunja-mcp/app/server.py 71% across 4 directories | services/compose/google-workspace-bridge/app/bridge_base.py (7 commits) moves with services/compose/vikunja-bridge/app/bridge_base.py 100%, services/compose/memory-bridge/app/bridge_base.py 86%, services/templates/bridge/app/bridge_base.py 71% across 4 directories"
+    }
+  ]
+}

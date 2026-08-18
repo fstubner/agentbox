@@ -69,35 +69,26 @@ DISABLED_FLAG = Path(os.environ.get(
     "AGENTBOX_KEEPALIVE_FLAG",
     str(Path("~/.local/state/agentbox/keepalive-disabled").expanduser())))
 
-# Matches the evaluator's console script and its module entry point. Deliberately
-# broad: a false positive costs one skipped tick, a false negative costs a
-# benchmark.
-EVAL_PATTERNS = ("agentbox-eval", "agentbox_evals")
+# The evaluator detector lives in agentbox_status, which the portal also uses.
+# One definition: a watchdog and a status page that disagree about whether a
+# benchmark is running would each be right half the time.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agentbox_status  # noqa: E402
 
 
 def _run(argv: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
 
 
-def evaluation_running(patterns: tuple[str, ...] = EVAL_PATTERNS) -> bool:
+def evaluation_running() -> bool:
     """Whether an evaluation currently owns the machine.
 
-    Unreadable process table means "yes". This runs unattended every couple of
-    minutes, and the only irreversible thing it can do is disturb a benchmark,
-    so uncertainty resolves to leaving things alone.
+    Delegates to agentbox_status, which reads argv from /proc rather than
+    grepping command lines — see its docstring for the five processes that a
+    substring match mistook for a benchmark, and the four days this watchdog
+    spent standing down because of them.
     """
-    for pattern in patterns:
-        try:
-            found = _run(["pgrep", "-f", pattern], timeout=15)
-        except (OSError, subprocess.SubprocessError):
-            return True
-        # pgrep: 0 found, 1 none, anything else is an error we should not
-        # interpret as "none".
-        if found.returncode == 0:
-            return True
-        if found.returncode != 1:
-            return True
-    return False
+    return agentbox_status.evaluation_running()
 
 
 def inactive_units(units: tuple[str, ...] = PRODUCTION_UNITS) -> list[str]:

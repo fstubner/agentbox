@@ -264,23 +264,53 @@ def lan_exposure() -> list[Check]:
     return exposed
 
 
+EVALUATOR_NAMES = ("agentbox-eval", "agentbox_evals")
+
+
+def looks_like_evaluator(argv: list[str]) -> bool:
+    """Whether this argv *is* the evaluator, rather than merely naming it.
+
+    Only argv[0] and argv[1] count — the program, and the script a launcher
+    like `python .../agentbox-eval` runs. Anything further along is an
+    argument, and an argument that happens to say `agentbox-eval` is exactly
+    what fooled the previous implementation.
+    """
+    return any(os.path.basename(token) in EVALUATOR_NAMES
+               for token in argv[:2])
+
+
 def evaluation_running() -> bool:
-    """Whether a benchmark currently owns the machine.
+    """Whether the evaluator itself is running.
 
-    This is the difference between "the box is broken" and "the box is busy",
-    and without it the Operations page shows four red rows during every
-    evaluation — which is how somebody learns to ignore a red page.
+    Reads argv[0]/argv[1] from /proc rather than grepping command lines,
+    because a command line that *mentions* the evaluator is not one. On this
+    box `pgrep -f agentbox-eval` matched five processes and none of them was
+    a run: a `systemd-inhibit --why=agentbox-eval ... sleep 604800` holding a
+    seven-day wakelock, its sudo parent, a thermal sampler under an
+    `agentbox-evals/` path, a launcher shell carrying the binary path in a
+    nohup string, and — inevitably — the diagnostic command doing the
+    grepping. A real run *is* the binary; everything else merely names it.
 
-    A compare run quiesces the production model deliberately: it needs the
-    whole of a 16 GB unified-memory budget and cannot share it. Runs have
-    lasted upwards of three hours, so this is not a rare state.
+    Reported as a fact about the evaluator, never as a claim about the
+    stack. `certify` runs without quiescing production, so "an evaluation is
+    running" and "the assistant is down" are independent — conflating them
+    is what made the Operations page announce a paused evaluation above six
+    healthy services for four days.
     """
     try:
-        found = subprocess.run(["pgrep", "-f", "agentbox-eval"],
-                               capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
         return False
-    return found.returncode == 0
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                argv = [a.decode("utf-8", "replace")
+                        for a in handle.read().split(b"\0") if a]
+        except OSError:
+            continue          # the process exited, or is not ours to read
+        if looks_like_evaluator(argv):
+            return True
+    return False
 
 
 @dataclass

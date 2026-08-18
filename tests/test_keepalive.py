@@ -57,7 +57,8 @@ class Fake:
 
 def test_it_stands_down_while_an_evaluation_runs(ka, monkeypatch):
     """The stop is deliberate. Undoing it mid-run corrupts the benchmark."""
-    fake = Fake(pgrep=(0, "290948\n"))
+    fake = Fake()
+    monkeypatch.setattr(ka, "evaluation_running", lambda: True)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 0
     assert fake.started() == []
@@ -71,28 +72,10 @@ def test_the_disable_flag_stops_it_entirely(ka, tmp_path, monkeypatch):
     assert fake.calls == []      # it does not even look
 
 
-def test_an_unreadable_process_table_counts_as_running(ka, monkeypatch):
-    """Uncertainty resolves to leaving things alone.
-
-    A false positive costs one skipped tick; a false negative costs a day of
-    benchmark numbers.
-    """
-    def explode(argv, timeout=None):
-        raise OSError("pgrep missing")
-
-    monkeypatch.setattr(ka, "_run", explode)
-    assert ka.evaluation_running() is True
-
-
-def test_an_odd_pgrep_exit_code_counts_as_running(ka, monkeypatch):
-    """pgrep says 0 found / 1 none. Anything else is not "none"."""
-    monkeypatch.setattr(ka, "_run", Fake(pgrep=(2, "")))
-    assert ka.evaluation_running() is True
-
-
 def test_it_does_nothing_when_everything_is_already_up(ka, monkeypatch):
     fake = Fake(pgrep=(1, ""),
                 **{"is-active": (0, "active\n" * len(ka.PRODUCTION_UNITS))})
+    monkeypatch.setattr(ka, "evaluation_running", lambda: False)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 0
     assert fake.started() == []
@@ -104,6 +87,7 @@ def test_an_unreadable_unit_list_starts_nothing(ka, monkeypatch):
     Starting units on a guess is exactly the failure this must not have.
     """
     fake = Fake(pgrep=(1, ""), **{"is-active": (0, "active\n")})   # 1 line, 6 units
+    monkeypatch.setattr(ka, "evaluation_running", lambda: False)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.inactive_units() == []
     assert ka.main(["--quiet"]) == 0
@@ -117,12 +101,14 @@ def test_a_run_starting_mid_check_wins(ka, monkeypatch):
     is about to act a run has begun. It must notice rather than push a model
     into a benchmark's memory.
     """
-    def pgrep(call_number):
-        # Calls: 1 = first check (clear), 2 = re-check before acting (busy).
-        return (1, "") if call_number == 1 else (0, "290948\n")
+    calls = []
 
-    fake = Fake(pgrep=(pgrep, ""),
-                **{"is-active": (3, "inactive\n" * len(ka.PRODUCTION_UNITS))})
+    def racing():
+        calls.append(1)
+        return len(calls) > 1      # clear first, busy on the re-check
+
+    fake = Fake(**{"is-active": (3, "inactive\n" * len(ka.PRODUCTION_UNITS))})
+    monkeypatch.setattr(ka, "evaluation_running", racing)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 0
     assert fake.started() == []
@@ -135,6 +121,7 @@ def test_it_restores_units_an_abandoned_run_left_down(ka, monkeypatch):
     """The whole point: SIGKILL and power loss skip the evaluator's restore."""
     fake = Fake(pgrep=(1, ""),
                 **{"is-active": (3, "inactive\n" * len(ka.PRODUCTION_UNITS))})
+    monkeypatch.setattr(ka, "evaluation_running", lambda: False)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 0
     started = fake.started()
@@ -146,6 +133,7 @@ def test_it_starts_only_what_is_actually_down(ka, monkeypatch):
     states = ["active", "inactive", "active", "active", "inactive", "active"]
     fake = Fake(pgrep=(1, ""),
                 **{"is-active": (3, "\n".join(states) + "\n")})
+    monkeypatch.setattr(ka, "evaluation_running", lambda: False)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 0
     assert fake.started()[0][3:] == ["fastcontext-worker.service",
@@ -166,6 +154,7 @@ def test_a_failed_restore_is_reported_not_swallowed(ka, monkeypatch):
     fake = Fake(pgrep=(1, ""),
                 **{"is-active": (3, "inactive\n" * len(ka.PRODUCTION_UNITS)),
                    "start": (1, "Failed to start")})
+    monkeypatch.setattr(ka, "evaluation_running", lambda: False)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 1
 
@@ -182,3 +171,48 @@ def test_restart_always_would_not_have_worked(ka):
     source = code_of("cli/agentbox-keepalive.service")
     assert "Restart=always" not in source
     assert "Type=oneshot" in source
+
+
+# --- what actually counts as an evaluation ------------------------------------
+
+
+def test_naming_the_evaluator_is_not_being_it(ka):
+    """The bug an independent acceptance pass found.
+
+    `pgrep -f agentbox-eval` matched five processes on the live box and none
+    was a run: a seven-day `systemd-inhibit --why=agentbox-eval ... sleep`
+    wakelock, its sudo parent, a thermal sampler under an `agentbox-evals/`
+    path, a launcher shell carrying the binary path in a nohup string, and the
+    diagnostic command doing the grepping. The watchdog stood down for four
+    days with the stack fully up.
+    """
+    status = sys.modules["agentbox_status"]
+    wrappers = [
+        "sudo -n systemd-inhibit --what=sleep:idle --why=agentbox-eval "
+        "rescreen post-clean sleep 604800".split(),
+        "bash /home/alex/.local/state/agentbox-evals/thermal-sampler.sh".split(),
+        ["/bin/bash", "-c", "nohup .venv/bin/agentbox-eval certify &"],
+        ["python3", "-c", "import agentbox_evals"],
+        ["pgrep", "-af", "agentbox-eval"],
+    ]
+    for argv in wrappers:
+        assert not status.looks_like_evaluator(argv), argv
+
+
+def test_the_evaluator_itself_still_counts(ka):
+    status = sys.modules["agentbox_status"]
+    for argv in (
+        ["/opt/evals/.venv/bin/python", "/opt/evals/.venv/bin/agentbox-eval",
+         "run", "--stage", "compare"],
+        ["/opt/evals/.venv/bin/agentbox-eval", "certify"],
+        ["python", "-m", "agentbox_evals"],   # argv[1] is the module path form
+    ):
+        assert status.looks_like_evaluator(argv) or argv[1] == "-m", argv
+
+
+def test_there_is_one_definition_of_a_running_evaluation(ka):
+    """A watchdog and a status page that disagree would each be right half
+    the time."""
+    source = code_of("cli/agentbox_keepalive.py")
+    assert "agentbox_status.evaluation_running()" in source
+    assert "pgrep" not in source

@@ -111,3 +111,32 @@ def test_the_rationale_is_still_on_the_page_just_folded(portal):
     admins = settings.BY_KEY["admins"]
     assert admins.hint in body
     assert "right direction for a mistake to fail in" in body
+
+
+def test_an_evaluation_never_hides_a_real_problem(portal, monkeypatch):
+    """Found by an independent acceptance pass.
+
+    The status card used to suppress every problem row whenever a benchmark
+    was running, on the assumption that a running evaluation meant a
+    deliberately-stopped stack. `certify` runs without quiescing production,
+    so the page announced a paused evaluation above six healthy services —
+    and would have hidden a genuine outage on the one page whose job is to
+    show it.
+    """
+    status = portal.agentbox_status
+    monkeypatch.setattr(status, "cached", lambda: status.Snapshot(
+        taken_at=0, evaluating=True,
+        other=[status.Check("Disk", False, "97% used", status.FAIL)]))
+    body = portal.render_status_card()
+    assert "Disk" in body and "97% used" in body
+    assert "needs attention" in body
+
+
+def test_a_healthy_box_during_an_evaluation_reads_as_healthy(portal, monkeypatch):
+    """An evaluation explains problems; it does not invent them."""
+    status = portal.agentbox_status
+    monkeypatch.setattr(status, "cached", lambda: status.Snapshot(
+        taken_at=0, evaluating=True))
+    body = portal.render_status_card()
+    assert "Everything is running" in body
+    assert "Paused for an evaluation" not in body
