@@ -182,6 +182,15 @@ def _propose_invite(args):
             raise ToolError(
                 "the portal refused that draft — check the account name is "
                 "lowercase letters, digits, dashes or underscores.") from None
+        if exc.code == 429:
+            # A refusal is an answer. Saying so plainly stops the model
+            # retrying into a wall, and the honest thing to relay is that
+            # somebody has to look at the queue, not that this failed.
+            raise ToolError(
+                "there are already several invitations waiting for the "
+                "household to decide on, so this one was not added. Ask them "
+                "to look at the waiting list on their Operations page "
+                "first.") from None
         raise ToolError(
             f"the portal refused the draft ({exc.code}).") from None
     except Exception as exc:  # noqa: BLE001

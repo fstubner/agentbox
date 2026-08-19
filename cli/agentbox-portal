@@ -130,6 +130,22 @@ SESSION_TTL_SECONDS = int(os.environ.get("AGENTBOX_PORTAL_SESSION_TTL", "1800"))
 # A link is a credential. Minting them without limit turns a leaked identity
 # name into an unbounded supply of guesses at the delivery channel.
 MAX_LINKS_PER_HOUR = int(os.environ.get("AGENTBOX_PORTAL_MAX_LINKS", "5"))
+
+# The largest request body this will read. Every form here is a handful of
+# short fields; 64 KiB is far above any of them and far below anything worth
+# calling an upload. Until this existed the portal read whatever length a
+# request declared, while cli/agentbox-invite — the deliberately *less*
+# privileged of the two surfaces — had capped its body since it was written.
+MAX_BODY_BYTES = 64 * 1024
+
+# How many drafted invitations may sit unanswered. The assistant may write
+# these and cannot send them, so the protection is the admin reading each one
+# — which is exactly what stops working when there are forty of them. The
+# harm from a flood is not privilege, it is an approval step that degrades
+# into clicking, so the bound is on queue depth rather than on rate. It clears
+# itself as the admin acts.
+MAX_PENDING_PROPOSALS = int(
+    os.environ.get("AGENTBOX_PORTAL_MAX_PROPOSALS", "5"))
 # Lets the assistant mint a sign-in link so a person does not have to go and
 # find an email. Unset means the endpoint does not exist — a capability nobody
 # configured should be absent, not merely unused.
@@ -2564,6 +2580,15 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._send(400, page(
                 "No", "<h1>an email address or a Discord id is required</h1>"))
             return
+        # Refused loudly rather than queued quietly. A flood here does not buy
+        # privilege — drafts do nothing — but it buys an admin who stops
+        # reading, and the reading is the whole safeguard.
+        if len(agentbox_onboarding.proposals()) >= MAX_PENDING_PROPOSALS:
+            self._send(429, page(
+                "Slow down",
+                f"<h1>{MAX_PENDING_PROPOSALS} invitations are already waiting "
+                f"for the household to decide on.</h1>"))
+            return
         draft = agentbox_onboarding.propose(
             identity, (form.get("display_name") or [""])[0],
             address, user_id, proposed_by="assistant")
@@ -2848,9 +2873,49 @@ class PortalHandler(BaseHTTPRequestHandler):
                          f"Max-Age={LINK_TTL_SECONDS}")
         self.end_headers()
 
+    def _read_form(self) -> dict | None:
+        """The request body, or None if the request is not well formed.
+
+        Both halves of this were defects, on the most privileged web surface
+        on the box and reachable without a session.
+
+        `int()` on the header raised ValueError before any authentication or
+        routing. That killed the handler thread, so a malformed request got no
+        answer at all while a well-formed one got a page — a difference
+        anybody can measure — and put a traceback in the journal. It is the
+        same failure the link ids had, where letting ValueError escape made
+        malformed and unknown ids distinguishable.
+
+        The length was then trusted, so a request could declare any size and
+        this would sit reading it.
+
+        Every failure answers identically, because which part was wrong is not
+        the client's business.
+        """
+        raw = (self.headers.get("Content-Length") or "0").strip() or "0"
+        # ASCII digits specifically. `int()` accepts other numeral systems —
+        # int("\u0663") is 3 — and while the bounds check below makes that
+        # harmless, a header the spec says is DIGIT is not the place to be
+        # inventive.
+        if not (raw.isascii() and raw.isdigit()):
+            return None
+        length = int(raw)
+        if length > MAX_BODY_BYTES:
+            return None
+        try:
+            body = self.rfile.read(length)
+        except OSError:
+            return None
+        try:
+            return urllib.parse.parse_qs(body.decode())
+        except UnicodeDecodeError:
+            return None
+
     def do_POST(self) -> None:  # noqa: N802
-        length = int(self.headers.get("Content-Length") or 0)
-        form = urllib.parse.parse_qs(self.rfile.read(length).decode())
+        form = self._read_form()
+        if form is None:
+            self._send(400, page("No", "<h1>That request was malformed.</h1>"))
+            return
         path = urllib.parse.urlparse(self.path).path
 
         if path == "/request":
@@ -3028,6 +3093,13 @@ def cmd_serve(args) -> int:
     if dead_sessions or dead_links:
         print(f"[ok] reaped {dead_sessions} expired session(s) and "
               f"{dead_links} spent link(s)", file=sys.stderr)
+    # Onboarding owns its own directories, so it reaps them. Same moment, same
+    # reasoning: an invite that expired unused still holds the secret that
+    # made its link a credential.
+    dead_settled, dead_invites = agentbox_onboarding.reap()
+    if dead_settled or dead_invites:
+        print(f"[ok] reaped {dead_settled} settled onboarding record(s) and "
+              f"{dead_invites} expired invite(s)", file=sys.stderr)
     server = ThreadingHTTPServer((args.host, args.port), PortalHandler)
     print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
     # Said loudly at startup because it cannot be said at the point of failure.
