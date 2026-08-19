@@ -21,7 +21,6 @@ WORKDIR /app
 COPY services/compose/builder-bridge/app/bridge.py /app/bridge.py
 COPY services/templates/bridge/app/bridge_base.py /app/bridge_base.py
 COPY services/templates/mcp/policy_gate.py /app/policy_gate.py
-COPY policies/approval-policy.yaml /app/approval-policy.yaml
 
 # Same non-root uid as every other service. This one writes files, so
 # running as root would be the worst place in the platform to forget it.

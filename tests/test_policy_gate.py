@@ -253,3 +253,45 @@ def test_google_bridge_declares_its_gated_capabilities():
     assert "def capability_for" in src
     assert "email_state_change" in src
     assert "email_label_own_namespace" in src
+
+
+# --- the policy travels on a mount, not in the image ---------------------------
+
+
+def _policy_services():
+    """Services whose image contains the gate, so they enforce policy."""
+    compose = REPO / "services" / "compose"
+    out = []
+    for dockerfile in sorted(compose.glob("*/Dockerfile")):
+        if "policy_gate.py" in dockerfile.read_text(encoding="utf-8"):
+            out.append(dockerfile.parent)
+    return out
+
+
+def test_no_image_bakes_the_policy():
+    """Baking it coupled a file that changes weekly to the lifecycle of code
+    that changes rarely.
+
+    It also outlived the fix: the runtime moved to the mount and `policy_sync`
+    started describing the COPY in the past tense, but the COPY was still
+    there — so one policy edit marked six services stale and told an operator
+    to rebuild all of them for a change that had already reached them. A
+    freshness check that fires on things that do not matter is one people
+    learn to click past, which is the failure this whole check exists to
+    prevent.
+    """
+    services = _policy_services()
+    assert services, "no policy-enforcing services found; this test is blind"
+    for service in services:
+        body = (service / "Dockerfile").read_text(encoding="utf-8")
+        assert "approval-policy.yaml" not in body, service.name
+
+
+def test_every_enforcing_service_reads_the_mount():
+    """Nothing is baked any more, so a service that enforces policy and does
+    not mount it fails closed at runtime — correct, but only discovered when
+    every tool starts refusing."""
+    for service in _policy_services():
+        compose = (service / "compose.yaml").read_text(encoding="utf-8")
+        assert ":/policy:ro" in compose, f"{service.name} does not mount /policy"
+        assert "AGENTBOX_RUNTIME_POLICY" in compose, service.name

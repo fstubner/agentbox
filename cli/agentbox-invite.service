@@ -18,13 +18,20 @@
 #
 # Restart=always for the same reason: the person holding the link is not in a
 # position to ask anyone to restart anything.
+#
+# --unattended is not decoration. Run by hand, `serve` exits 1 with nothing
+# outstanding, because that almost always means `create` was forgotten. Under
+# Restart=always that is a crash loop every five seconds, which is how this
+# unit behaved the first time it was installed. The flag says explicitly that
+# an empty spool is the normal resting state here, and cli/agentbox-invite
+# records why that differs from the hand-run case.
 
 [Unit]
 Description=Agentbox onboarding form
 After=network-online.target
 
 [Service]
-ExecStart=%h/oss/agentbox/cli/agentbox-invite serve
+ExecStart=%h/oss/agentbox/cli/agentbox-invite serve --unattended
 Restart=always
 RestartSec=5
 

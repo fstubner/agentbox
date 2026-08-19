@@ -426,9 +426,33 @@ def cmd_create(args) -> int:
 
 
 def cmd_serve(args) -> int:
+    """Serve the form.
+
+    Two modes, because two things want this page and they disagree about
+    whether it should be running.
+
+    Run by hand, the original case, it refuses to start with nothing
+    outstanding — that almost always means `create` was forgotten, and the
+    note below says to stop it again afterwards. The reasoning was sound while
+    an operator read the link off a terminal and handed it over: the page is
+    reachable on the LAN, and there was no reason for it to be up when nobody
+    was being onboarded.
+
+    `--unattended` is the other case, and it exists because delivery changed.
+    An invitation now arrives by email or DM, so the person holding the link
+    is a stranger with no terminal, no account here, and nobody to ask. A page
+    that is only up while somebody remembered to leave it up is, from where
+    they are standing, a household that looks broken.
+
+    The surface this opens is a port, not an authority. Every route already
+    requires a valid invite token — single use, expiring, compared in constant
+    time — and with nothing outstanding every request is refused exactly as it
+    is now. What changes is that the refusal happens per request instead of by
+    the process being absent.
+    """
     pending = [r for r in _all_invites() if not r.get("used_at")
                and now() <= int(r.get("expires_at", 0))]
-    if not pending:
+    if not pending and not args.unattended:
         print("No outstanding invites. Create one first:\n"
               "  cli/agentbox-invite create <name>", file=sys.stderr)
         return 1
@@ -447,7 +471,9 @@ def cmd_serve(args) -> int:
     print(f"Onboarding page on {BIND_HOST}:{BIND_PORT} — "
           f"{len(pending)} invite(s) outstanding.")
     print("This is reachable on your LAN so she can open it from a phone.")
-    print("Stop it (Ctrl-C) once she is done; it should not run permanently.")
+    if not args.unattended:
+        print("Stop it (Ctrl-C) once she is done; it should not run "
+              "permanently.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -500,6 +526,11 @@ def main() -> int:
     serve = sub.add_parser("serve", help="run the page while she fills it in")
     serve.add_argument("--household", default="the household")
     serve.add_argument("--owner", default="The owner")
+    serve.add_argument(
+        "--unattended", action="store_true",
+        help="stay up with nothing outstanding, for running as a unit — "
+             "an invitation delivered by email reaches somebody who cannot "
+             "ask anyone to start this")
 
     sub.add_parser("list", help="what is outstanding or awaiting completion")
 

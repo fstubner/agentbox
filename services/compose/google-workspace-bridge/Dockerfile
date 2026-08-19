@@ -8,7 +8,6 @@ COPY services/compose/google-workspace-bridge/app/bridge.py /app/bridge.py
 COPY services/templates/bridge/app/bridge_base.py /app/bridge_base.py
 COPY services/templates/bridge/app/pii.py /app/pii.py
 COPY services/templates/mcp/policy_gate.py /app/policy_gate.py
-COPY policies/approval-policy.yaml /app/approval-policy.yaml
 
 USER 65532:65532
 
