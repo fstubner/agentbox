@@ -1,11 +1,11 @@
 # Agentbox
 
-> **Reconstructed from the repository. Users answered 2026-08-18; the rest is
-> still awaiting correction.**
+> **Reconstructed from the repository. Users answered 2026-08-18; Success and
+> the MVP cut were reviewed and framed by the household 2026-08-19.**
 > Every claim below is cited to a file in this repo or to a decision recorded
 > here. Nothing was invented to fill a heading. Written by the same agent that
-> built much of the system it describes, so Success and the MVP cut in
-> particular are proposals to correct, not a contract already agreed.
+> built much of the system it describes, so the status markers in Success are
+> measurements to re-check, not a standing guarantee.
 
 ## Purpose
 
@@ -46,32 +46,50 @@ exists for a box that has not been set up as one.
 
 ## Success
 
-- A household member **can read every memory proposed about them and approve or
-  reject each one** before it is stored.
-- A household member **can ask the assistant a question about their own mail,
-  calendar or tasks and get an answer** without an operator doing anything.
-- An operator **can add a second person and get them signed in** without
-  opening a terminal.
-- An operator **can see which services are running, and which are not**, from
-  a page rather than a shell.
-- The assistant **cannot send mail, delete a file, unlock a door, or approve
-  its own memory** — verified by tests, not by instruction.
-- A person **can speak to the assistant and hear a reply without any audio
-  leaving the box** (`docs/voice.md`).
+**Decided 2026-08-19: these are targets, not a status report.** Success says
+what the product is for; each line then says honestly how far off it is. A
+claim may sit here unmet for as long as it is still the goal — what it may not
+do is read as achieved when it is not. Status measured 2026-08-19.
+
+- **Partial — the operator only.** A household member can read every memory
+  proposed about them and approve or reject each one before it is stored.
+  *Works today for `alex`. `sam` has no way to sign in, so the proposals
+  waiting for them cannot be reached. See the delivery gap below.*
+- **Not yet.** A household member can ask the assistant a question about their
+  own mail, calendar or tasks and get an answer without an operator doing
+  anything. *Only one per-identity bridge exists (`alex-google-bridge`);
+  there is no equivalent for `sam`, so this is structurally unavailable to
+  them, quite apart from sign-in.*
+- **Not yet.** An operator can add a second person and get them signed in
+  without opening a terminal. *The flow is built and tested; it has never
+  completed once, because no delivery channel is configured.*
+- **Met.** An operator can see which services are running, and which are not,
+  from a page rather than a shell. *Verified live 2026-08-19 during an
+  evaluation stand-down: four up, five down, reported accurately.*
+- **Met.** The assistant cannot send mail, delete a file, unlock a door, or
+  approve its own memory — verified by tests, not by instruction.
+- **Partial — Discord only.** A person can speak to the assistant and hear a
+  reply without any audio leaving the box (`docs/voice.md`). *Round-tripped
+  2026-08-03 through Piper and faster-whisper. Reaches only the Discord path:
+  the push-to-talk TUI needs `sounddevice`, which is not installed, and
+  house-wide microphones are not built. Remains a full MVP item — see
+  committed work below.*
 
 ## MVP
 
 1. **Memory with consent** — the assistant proposes; a person approves,
-   edits or rejects; nothing is stored unapproved.
+   edits or rejects; nothing is stored unapproved. *(Working.)*
 2. **Personal data, read-mostly** — mail, calendar, files and tasks reachable
-   through per-identity bridges that hold the credentials.
+   through per-identity bridges that hold the credentials. *(Working for one
+   identity of two.)*
 3. **The house** — lights and scenes controllable; locks, alarms, covers and
-   cameras refused in code.
+   cameras refused in code. *(Working.)*
 4. **Self-service access** — sign-in links, per-person accounts, and an
-   invite flow that needs no terminal.
+   invite flow that needs no terminal. *(Built, never completed end to end.)*
 5. **Operations you can see** — service health, staleness, disk, and what the
-   assistant is allowed to do.
-6. **Local speech** — voice in and out, on-box only.
+   assistant is allowed to do. *(Working.)*
+6. **Local speech** — voice in and out, on-box only. *(Discord path working;
+   the rest is committed work.)*
 
 ## Constraints
 
@@ -112,10 +130,29 @@ exists for a box that has not been set up as one.
   read as a broken tool in the outcome journal.
 - Acceptance is run by someone other than whoever built the change.
 
+## Committed work
+
+Named here because a Success line above depends on it. This is the gap between
+target and status, not a wishlist.
+
+1. **Configure a delivery channel** — SMTP or one Discord pairing. Three
+   Success lines are blocked behind it, and none of them can be proven until a
+   link actually arrives. Nothing else here matters as much.
+2. **A per-identity bridge for `sam`** — `alex-google-bridge` has no
+   counterpart, so the second household plane does not exist yet in any form.
+3. **Voice beyond Discord** (kept as MVP item 6, decided 2026-08-19) —
+   install `sounddevice` for the push-to-talk TUI path, and supply the
+   thinking half of house-wide speech through a Home Assistant webhook rather
+   than reimplementing an audio pipeline (`docs/voice.md`).
+
 ### Known gaps at time of writing
 
 - **Sign-in link delivery has never been proven end-to-end.** Neither SMTP nor
   Discord has actually delivered a link; both paths are covered only by tests
   and by the no-channel fallback.
+- **A planned stand-down reads as a crash.** Both gateway units exit 1 when
+  keepalive SIGTERMs them for an evaluation, so systemd marks them `failed`.
+  Operations correctly reports the services as down — measured state before
+  evaluation state, deliberately — but does not say the evaluation is why.
 - **`docs/roadmap.md` is the live gap record** — it tracks what was asked for
   against what exists, and is more current than this file on feature status.
