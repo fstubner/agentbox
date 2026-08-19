@@ -48,10 +48,16 @@ later, rather than a defence aimed at one of them. Discord is just how you talk
 to the assistant; it is not part of the trust path.
 
 The assistant has exactly one route in: `POST /agent/link`, behind a token it
-holds, which mints an ORIGIN_AGENT link for the identity its own bearer token
-resolved to — it cannot name somebody else, and the link it gets back can read
-but not decide. Everything else here is closed to it: it cannot list links,
-read a session, or reach any other route on this port.
+holds, which mints an ORIGIN_AGENT link that can read but not decide.
+Everything else here is closed to it: it cannot list links, read a session, or
+reach any other route on this port.
+
+Be precise about where the identity binding lives, because it is not
+here.
+This endpoint takes an identity in the request body and will mint for any
+name it recognises. What makes that safe is the caller: the MCP tool exposes no
+identity parameter and passes the one its own bearer token resolved to. This
+port trusts its token holder to have bound identity already.
 
 That paragraph used to read "Nothing here is an MCP tool. The assistant cannot
 mint a link" and stayed that way after the tool was added. A trust claim that
@@ -408,7 +414,7 @@ def now() -> int:
 # --- identities and roles ------------------------------------------------------
 
 
-def known_identities() -> set[str]:
+def known_identities(also: dict[str, str] | None = None) -> set[str]:
     """Every name this box recognises as a person.
 
     Sources are additive because each knows a different subset: sign-in
@@ -417,7 +423,15 @@ def known_identities() -> set[str]:
     tokens — the portal is the LAN-facing surface and has no business holding
     a bearer credential.
     """
+    # `also` is the form's own submission, merged over what is stored. The
+    # settings page saves identity_emails and admins under one button, so
+    # checking admins against stored state alone refused the obvious flow:
+    # add somebody's address and name them admin in the same save.
     names = set(email_map().values()) | discord_identities()
+    for pair in (also or {}).get("identity_emails", "").split(","):
+        name, _, address = pair.partition(":")
+        if name.strip() and address.strip():
+            names.add(name.strip())
     names |= {n.strip() for n in SETTINGS.value("admins").split(",") if n.strip()}
     names |= {n.strip() for n in os.environ.get(
         "AGENTBOX_IDENTITY_NAMES", "").replace(" ", ",").split(",") if n.strip()}
@@ -1101,6 +1115,24 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
 # not hold a credential that can message the household.
 
 
+def delivery_channels(identity: str, address: str) -> list[str]:
+    """Which channels could carry a link to this person, in order.
+
+    The single definition. `has_delivery_channel` and `deliver_link` used to
+    each spell out the same conditions, and they had to agree or blocker B1
+    reopened: a predicate saying "nowhere to send it" while delivery succeeds
+    mints an operator-privileged link and then transmits it. Nothing kept
+    them in sync — a third channel added to one and not the other was all it
+    would take.
+    """
+    channels = []
+    if SETTINGS.value("smtp_host") and address:
+        channels.append("email")
+    if chat_account_for(identity):
+        channels.append("discord")
+    return channels
+
+
 def has_delivery_channel(identity: str, address: str) -> bool:
     """Whether an invite for this person would actually travel somewhere.
 
@@ -1114,8 +1146,7 @@ def has_delivery_channel(identity: str, address: str) -> bool:
     fails, the link shown on screen is merely more restricted than it needed
     to be. The reverse would put an operator-privileged link in a mailbox.
     """
-    return bool((SETTINGS.value("smtp_host") and address)
-                or chat_account_for(identity))
+    return bool(delivery_channels(identity, address))
 
 
 def deliver_link(identity: str, address: str, url: str) -> bool:
@@ -1126,15 +1157,19 @@ def deliver_link(identity: str, address: str, url: str) -> bool:
     one must not silently swallow the request.
     """
     delivered = False
+    # Derived, not restated. The predicate that chooses the link's origin and
+    # the code that actually sends it must agree, or a link minted as
+    # hand-over privilege gets transmitted after all.
+    channels = delivery_channels(identity, address)
 
-    if SETTINGS.value("smtp_host") and address:
+    if "email" in channels:
         sent, detail = send_link_email(address, url)
         if sent:
             delivered = True
         else:
             sys.stderr.write(f"[portal] email to {identity} failed: {detail}\n")
 
-    if chat_account_for(identity):
+    if "discord" in channels:
         try:
             save_request({
                 "id": secrets.token_urlsafe(9),
@@ -1631,7 +1666,12 @@ def render_status_card() -> str:
     else:
         lines = []
         for service in snap.services:
-            if not service.running:
+            if not getattr(service, "deployed", True):
+                # Listed, but not a fault — it does not count against health
+                # either, and a red dot over a green headline is how a page
+                # starts contradicting itself.
+                level, note = "warn", service.status
+            elif not service.running:
                 level, note = "fail", "not running"
             elif service.stale:
                 # Worth saying: a security fix once sat in git for three weeks
@@ -2240,7 +2280,7 @@ class PortalHandler(BaseHTTPRequestHandler):
         # same unrecoverable state by a likelier route.
         wanted = {n.strip() for n in submitted.get("admins", "").split(",")
                   if n.strip()}
-        unknown = sorted(wanted - known_identities())
+        unknown = sorted(wanted - known_identities(also=submitted))
         if unknown:
             self._send(400, render_admin(
                 session["identity"], "", session.get("origin", ORIGIN_AGENT),

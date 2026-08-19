@@ -310,4 +310,9 @@ def test_the_module_docstring_describes_the_route_the_assistant_has(portal):
     """
     doc = sys.modules["agentbox_portal"].__doc__ or ""
     assert "POST /agent/link" in doc
-    assert "cannot name somebody else" in doc
+    # The first correction over-claimed in the other direction: it said the
+    # endpoint "cannot name somebody else", which is not true — it takes an
+    # identity in the body, and the binding lives in the MCP tool that calls
+    # it. The docstring must say where the property actually lives.
+    assert "the identity binding lives" in doc.lower()
+    assert "cannot name somebody else" not in doc

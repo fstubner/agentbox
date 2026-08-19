@@ -297,6 +297,23 @@ SETTINGS: tuple[Setting, ...] = (
         group="Email delivery",
     ),
     Setting(
+        key="not_deployed",
+        label="Services this household does not run",
+        hint="Named here, they are listed but never counted as broken.",
+        help="A compose directory with no container could mean two things — "
+             "never deployed here, or deployed and since removed — and "
+             "nothing on the box can tell them apart. Guessing either way is "
+             "wrong: guess 'never' and `docker compose down` reads as "
+             "healthy; guess 'removed' and the page is permanently red over "
+             "something you chose not to run. So it is stated rather than "
+             "inferred. Anything absent and not named here is treated as a "
+             "fault.",
+        clean=clean_names,
+        env="AGENTBOX_NOT_DEPLOYED",
+        placeholder="eufy-bridge",
+        group="Roles and addresses",
+    ),
+    Setting(
         key="approval_channel",
         hint="Where the assistant asks when a tool needs permission.",
         label="Approval channel",

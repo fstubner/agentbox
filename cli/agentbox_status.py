@@ -194,6 +194,31 @@ class Service:
     deployed: bool = True
 
 
+def opted_out() -> set[str]:
+    """Services the household has said it does not run.
+
+    Read from the settings store rather than inferred, because absence in
+    `docker ps -a` cannot distinguish a service never deployed from one whose
+    container was removed five minutes ago — and treating those the same
+    means either `docker compose down` reads as healthy or the dashboard is
+    permanently red over a deliberate choice.
+    """
+    raw = os.environ.get("AGENTBOX_NOT_DEPLOYED")
+    if raw is None:
+        try:
+            path = Path(os.environ.get(
+                "AGENTBOX_PORTAL_DIR",
+                str(Path("~/.local/state/agentbox/portal").expanduser())))
+            import json as _json
+            raw = str(_json.loads(
+                (path / "settings.json").read_text(encoding="utf-8")
+            ).get("not_deployed", ""))
+        except (OSError, ValueError):
+            raw = ""
+    return {n.strip() for n in (raw or "").replace(" ", ",").split(",")
+            if n.strip()}
+
+
 def services() -> list[Service]:
     """Agentbox-managed containers, and whether each is running current code.
 
@@ -260,10 +285,13 @@ def services() -> list[Service]:
         # people to ignore this list.
         if name in seen or name == "example-service":
             continue
+        chosen = name in opted_out()
         found.append(Service(name=name, label=SERVICE_LABELS.get(name, name),
                              container="", running=False, stale=False,
-                             deployed=False,
-                             status="not deployed on this box"))
+                             deployed=not chosen,
+                             status=("not deployed here, by choice" if chosen
+                                     else "no container — expected to be "
+                                          "running")))
     return sorted(found, key=lambda s: s.label.lower())
 
 

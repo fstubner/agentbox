@@ -57,6 +57,12 @@ Environment=GOOGLE_ENABLE_DRIVE_READ_ALL=1
 # Who is an admin. Everyone else is a member: their own memories and their own
 # connectors, no operations. Empty would mean nobody is an admin, which is the
 # right direction for a misread value to fail in.
+# Identities the gateway is configured to act for, so the portal can show
+# somebody who exists to the assistant but has no way to sign in — the state
+# the "Who lives here" card exists to surface. Names only: the gateway's own
+# AGENTBOX_IDENTITIES carries bearer credentials, and this service is the
+# LAN-facing one.
+Environment=AGENTBOX_IDENTITY_NAMES=alex,sam
 Environment=AGENTBOX_ADMINS=alex
 
 # Sign-in addresses. An address here is not a credential — it only decides

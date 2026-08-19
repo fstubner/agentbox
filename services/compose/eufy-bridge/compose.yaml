@@ -2,7 +2,8 @@
 #
 # Two containers on a private network with no host ports. eufy-security-ws
 # holds the Eufy account credential and speaks Eufy's undocumented protocols;
-# to. Neither is reachable from the LAN.
+# Both services bind loopback only, so the only thing that can reach
+# either is this box. Neither is reachable from the LAN.
 #
 # The alternative — a HACS integration inside Home Assistant — would put
 # unreviewed third-party code in the container that has host networking, a
@@ -16,7 +17,8 @@ services:
       USERNAME: "${EUFY_USERNAME:?set EUFY_USERNAME}"
       PASSWORD: "${EUFY_PASSWORD:?set EUFY_PASSWORD}"
       COUNTRY: "${EUFY_COUNTRY:-GB}"
-      # code talking to a vendor cloud. Debug logging off so a credential
+      # These are the household's Eufy account credentials, held by
+# reverse-engineered code talking to a vendor cloud. Debug logging off so a credential
       # cannot end up in a log file nobody reads.
       DEBUG: ""
     volumes:

@@ -321,3 +321,41 @@ def test_one_row_per_service_even_with_an_old_container(status, monkeypatch):
     monkeypatch.setattr(status.subprocess, "run", lambda *a, **k: Result())
     rows = [s for s in status.services() if s.name == "agentbox-mcp"]
     assert len(rows) == 1 and rows[0].running
+
+
+def test_a_removed_container_is_not_mistaken_for_a_choice(status, monkeypatch):
+    """Absence cannot tell "never deployed" from "deployed and removed", so
+    inferring it meant `docker compose down` read as healthy."""
+    class Result:
+        stdout = ""          # nothing running, nothing stopped
+
+    monkeypatch.setattr(status.subprocess, "run", lambda *a, **k: Result())
+    monkeypatch.setenv("AGENTBOX_NOT_DEPLOYED", "")
+    absent = [s for s in status.services() if not s.running]
+    assert absent and all(s.deployed for s in absent)
+    assert not status.Snapshot(taken_at=0, services=absent).healthy
+
+    monkeypatch.setenv("AGENTBOX_NOT_DEPLOYED", "eufy-bridge")
+    chosen = {s.name: s for s in status.services()}["eufy-bridge"]
+    assert chosen.deployed is False
+
+
+def test_one_definition_of_where_a_link_can_go(portal):
+    """has_delivery_channel and deliver_link each spelled out the same
+    conditions. They had to agree or B1 reopened, and nothing kept them in
+    sync."""
+    source = code_of("cli/agentbox-portal")
+    assert "delivery_channels(identity, address)" in source
+    body = source.split("def deliver_link")[1][:900]
+    assert "delivery_channels" in body
+
+
+def test_adding_and_promoting_in_one_save_is_allowed(portal):
+    """The settings page saves identity_emails and admins under one button, so
+    checking admins against stored state alone refused the obvious flow."""
+    portal.SETTINGS.save({"identity_emails": "alex:alex@example.com",
+                          "admins": "alex"})
+    submitted = {"identity_emails": "alex:alex@example.com,ada:ada@example.com",
+                 "admins": "alex,ada"}
+    assert not {"alex", "ada"} - portal.known_identities(also=submitted)
+    assert {"mai"} - portal.known_identities(also=submitted)
