@@ -118,6 +118,7 @@ def _sibling(name: str):
 agentbox_settings = _sibling("agentbox_settings")
 agentbox_household = _sibling("agentbox_household")
 agentbox_status = _sibling("agentbox_status")
+agentbox_onboarding = _sibling("agentbox_onboarding")
 
 STATE = Path(os.environ.get(
     "AGENTBOX_PORTAL_DIR",
@@ -250,6 +251,14 @@ FLASHES = {
                                    "open a link you requested yourself."),
     "settings_saved": "Saved.",
     "invite_sent": "Invited. Their sign-in link is on its way.",
+    "onboarding_requested": "Approved. Their accounts and their own "
+                            "bridge are being set up now \u2014 this "
+                            "takes a minute, and the list below will "
+                            "empty when it is done.",
+    "onboarding_unknown": "No invite is waiting with that id. It may "
+                          "have been completed already.",
+    "onboarding_duplicate": "Already approved \u2014 it is being set "
+                            "up now.",
     "settings_unchanged": "Nothing to change \u2014 those are the current values.",
     "household_saved": "Saved. The bridge picks this up on its next call.",
     "agent_link_cannot_configure": ("This link was created by the assistant, "
@@ -1689,6 +1698,97 @@ def render_status_card() -> str:
     return f"<div class=card><b>How things are</b><div style='margin:.5rem 0 0'>{body}</div></div>"
 
 
+INVITE_DIR = Path(os.environ.get(
+    "AGENTBOX_INVITE_DIR",
+    str(Path("~/.local/state/agentbox/invites").expanduser())))
+
+
+def submitted_invites() -> list[dict]:
+    """Invites somebody filled in that nobody has completed yet.
+
+    A read and nothing else. The portal may see that an onboarding is waiting
+    and may ask for it to be finished; the deciding and the doing belong to
+    `agentbox invite drain`, which re-derives all of this for itself.
+
+    The secret is deliberately not carried out of the record — this renders a
+    page, and the one field that would let somebody impersonate the invitee
+    has no business on it.
+    """
+    out = []
+    try:
+        paths = sorted(INVITE_DIR.glob("*.json"))
+    except OSError:
+        return []
+    for path in paths:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not record.get("used_at") or record.get("completed_at"):
+            continue
+        token_id = str(record.get("id", ""))
+        if not agentbox_onboarding.TOKEN_ID.match(token_id):
+            continue
+        out.append({
+            "id": token_id,
+            "identity": str(record.get("identity", "")),
+            "display_name": str(record.get("display_name", "")),
+            "connectors": [str(c) for c in record.get("connectors", [])],
+            "google_ready": bool(record.get("google_code")),
+            "requested": agentbox_onboarding.already_requested(token_id),
+        })
+    return out
+
+
+def render_onboarding_card() -> str:
+    """Onboarding that has been filled in and is waiting on an admin.
+
+    The household decided on 2026-08-19 that onboarding should not need a
+    terminal. This is the half that used to: somebody filled in the invite
+    form, and finishing it meant `agentbox invite complete` at a shell, which
+    on a phone means not at all.
+
+    The button writes a request into a spool directory. It runs no docker
+    command and holds no bridge token — see cli/agentbox_onboarding.py for why
+    the privilege stays on the other side of that file.
+    """
+    waiting = submitted_invites()
+    if not waiting:
+        return ""
+    rows = []
+    for invite in waiting:
+        who = invite["display_name"] or invite["identity"] or invite["id"]
+        wants = ", ".join(invite["connectors"]) or "nothing personal"
+        if invite["requested"]:
+            action = "<span class=sub>approved \u2014 setting up\u2026</span>"
+            level = "ok"
+        else:
+            action = (
+                f"<form method=post action=/admin/onboard style='margin:0'>"
+                f"<input type=hidden name=token_id "
+                f"value='{html.escape(invite['id'])}'>"
+                f"<button type=submit>Finish setting them up</button></form>")
+            level = "warn"
+        note = ""
+        if "google" in invite["connectors"] and not invite["google_ready"]:
+            # Worth saying here rather than after the fact: completing without
+            # it leaves them sharing the shared bridge, which is wrong for mail.
+            note = ("<div class=sub>They did not finish the Google consent "
+                    "step, so they would share the household bridge rather "
+                    "than get their own. Re-invite them to fix that.</div>")
+            level = "warn"
+        rows.append(
+            f"<div class=row><span class='dot {level}'></span>"
+            f"<span class=name>{html.escape(who)}"
+            f"<div class=sub>asked for: {html.escape(wants)}</div>{note}</span>"
+            f"<span class=when>{action}</span></div>")
+    return (f"<div class=card><b>Waiting to be set up</b>"
+            f"<div class=sub style='margin:.4rem 0 .6rem'>They filled in the "
+            f"invite form. Finishing creates their accounts and their own "
+            f"bridge, so the assistant reaches their mail with their "
+            f"credential and nobody else's.</div>{''.join(rows)}</div>")
+
+
 def render_people_card(flash_error: str = "") -> str:
     """Who lives here, how each of them gets in, and a way to add somebody.
 
@@ -1863,6 +1963,7 @@ def render_admin(identity: str, flash: str,
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
     parts.append(render_status_card())
+    parts.append(render_onboarding_card())
     parts.append(render_people_card(invite_error))
 
     # How sign-in links actually reach people. Shown because the failure is
@@ -2253,6 +2354,51 @@ class PortalHandler(BaseHTTPRequestHandler):
             invite_error=f"{name} has no way to receive a link yet. Hand this "
                          f"over directly — single use, and it expires: {url}"))
 
+    def _onboard(self, session, form) -> None:
+        """Ask for a filled-in invite to be completed.
+
+        Withheld from agent- and chat-minted links under the same capability
+        as inviting, and for the same reason: this is that act finished. An
+        invite decides who lives here; completing it hands them a credential
+        of their own. If the assistant could do either, it could decide who
+        the household is.
+
+        This writes one file and returns. Whether the invite is actually
+        completable is `agentbox invite drain`'s judgement — it re-reads the
+        record itself — and a second copy of those rules here would be one
+        nobody updates when they change. The checks below are only enough to
+        keep the page honest about what it just did.
+        """
+        why = refusal(session["role"], "ops:invite",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        token_id = (form.get("token_id") or [""])[0].strip()
+        # Arrives from a form and is about to become a filename. Rejected here
+        # so a malformed id is a redirect rather than a ValueError unwinding
+        # through the handler thread — the failure mode the link ids had.
+        if not agentbox_onboarding.TOKEN_ID.match(token_id):
+            self._redirect("/admin?m=onboarding_unknown")
+            return
+        if not any(i["id"] == token_id for i in submitted_invites()):
+            self._redirect("/admin?m=onboarding_unknown")
+            return
+        if agentbox_onboarding.already_requested(token_id):
+            self._redirect("/admin?m=onboarding_duplicate")
+            return
+        try:
+            agentbox_onboarding.request(
+                token_id, session["identity"],
+                session.get("origin", ORIGIN_AGENT))
+        except (OSError, ValueError):
+            # Telling somebody their request was filed when it was not is the
+            # same lie the invite path refuses to tell about delivery.
+            self._redirect("/admin?m=onboarding_unknown")
+            return
+        self._redirect("/admin?m=onboarding_requested")
+
     def _save_settings(self, session, form) -> None:
         """Write the household settings, or re-render the form with errors.
 
@@ -2478,6 +2624,10 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if path == "/admin/invite":
             self._invite(session, form)
+            return
+
+        if path == "/admin/onboard":
+            self._onboard(session, form)
             return
 
         if path == "/admin/settings":

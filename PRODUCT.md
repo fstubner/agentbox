@@ -55,14 +55,24 @@ do is read as achieved when it is not. Status measured 2026-08-19.
   proposed about them and approve or reject each one before it is stored.
   *Works today for `alex`. `sam` has no way to sign in, so the proposals
   waiting for them cannot be reached. See the delivery gap below.*
-- **Not yet.** A household member can ask the assistant a question about their
-  own mail, calendar or tasks and get an answer without an operator doing
-  anything. *Only one per-identity bridge exists (`alex-google-bridge`);
-  there is no equivalent for `sam`, so this is structurally unavailable to
-  them, quite apart from sign-in.*
-- **Not yet.** An operator can add a second person and get them signed in
-  without opening a terminal. *The flow is built and tested; it has never
-  completed once, because no delivery channel is configured.*
+- **Not yet — built but never run.** A household member can ask the assistant
+  a question about their own mail, calendar or tasks and get an answer without
+  an operator doing anything. *The machinery is automatic:
+  `provision_google_bridge()` stands up a bridge holding only that person's
+  credential, writes per-identity routing, and recreates the gateway so the
+  routing takes effect. It has never run for `sam` because no invite has ever
+  been created — the spool is empty, and she exists only because her name was
+  added to the identity list by hand.*
+- **Not yet.** An operator can add a second person and get them **fully
+  onboarded** — signed in, with their own accounts and data plane — without
+  opening a terminal. *Decided 2026-08-19: onboarding is the unit, not
+  sign-in. The portal invite does the first half already. The second half,
+  `agentbox invite complete`, is a terminal command today, and that is not a
+  gap in the flow — it is where `cli/agentbox-invite` deliberately put the
+  privilege, arguing that a LAN-reachable page holding the docker socket is
+  the worst thing that could run on this box. Closing this means moving where
+  completion is triggered from without moving where its privilege lives; the
+  argument against a privileged web page stands and is not being overruled.*
 - **Met.** An operator can see which services are running, and which are not,
   from a page rather than a shell. *Verified live 2026-08-19 during an
   evaluation stand-down: four up, five down, reported accurately.*
@@ -138,9 +148,21 @@ target and status, not a wishlist.
 1. **Configure a delivery channel** — SMTP or one Discord pairing. Three
    Success lines are blocked behind it, and none of them can be proven until a
    link actually arrives. Nothing else here matters as much.
-2. **A per-identity bridge for `sam`** — `alex-google-bridge` has no
-   counterpart, so the second household plane does not exist yet in any form.
-3. **Voice beyond Discord** (kept as MVP item 6, decided 2026-08-19) —
+2. **Run an invite for `sam`** — not a thing to build; a thing to run.
+   `agentbox invite create sam`, she fills in the form including the Google
+   consent step, then `agentbox invite complete` provisions her Vikunja
+   account and her own Google bridge. Skipping the consent step is handled and
+   warned about, but leaves her sharing the shared bridge, which is wrong for
+   mail. This is the same root cause as gap 1, not a second one: nobody has
+   ever been onboarded through the flow.
+3. **Onboarding without a terminal** (decided 2026-08-19) — the operator's
+   half of `agentbox invite complete` needs a trigger that is not a shell,
+   while the privilege it needs stays off any LAN-reachable page. The
+   constraint to preserve is the one `cli/agentbox-invite` already states: the
+   collecting surface has no docker socket, no 1Password token, and no bridge
+   tokens. Note that `ops:invite` is already withheld from agent-origin
+   sessions, and must stay withheld from whatever replaces the shell.
+4. **Voice beyond Discord** (kept as MVP item 6, decided 2026-08-19) —
    install `sounddevice` for the push-to-talk TUI path, and supply the
    thinking half of house-wide speech through a Home Assistant webhook rather
    than reimplementing an audio pipeline (`docs/voice.md`).
