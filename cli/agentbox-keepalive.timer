@@ -1,0 +1,21 @@
+# How often to check that the model stack is up.
+#
+# Two minutes. The window this closes is "an evaluation was killed and nobody
+# noticed", which has previously lasted thirteen hours — against that, the
+# difference between one minute and five is not interesting, and a tick costs
+# one pgrep and one systemctl is-active.
+#
+# OnBootSec matters more than the interval: a reboot during a run is one of the
+# exact cases this exists for, and the units would otherwise stay stopped until
+# somebody opened a terminal.
+
+[Unit]
+Description=Periodically restore the Agentbox model stack
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=2min
+AccuracySec=15
+
+[Install]
+WantedBy=timers.target

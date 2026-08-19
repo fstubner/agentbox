@@ -1,0 +1,25 @@
+# Puts the local model stack back when nothing is deliberately holding it down.
+#
+# Install:
+#   cp cli/agentbox-keepalive.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-keepalive.timer
+#
+# To keep the stack down on purpose (maintenance, a hand-run benchmark):
+#   touch ~/.local/state/agentbox/keepalive-disabled
+#
+# See cli/agentbox_keepalive.py for why this exists rather than Restart=always:
+# every one of these stops is deliberate, and systemd does not restart a unit
+# somebody stopped on purpose. The stop is not the bug — nobody putting it back
+# afterwards is.
+
+[Unit]
+Description=Restore the Agentbox model stack if an evaluation left it down
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/oss/agentbox/cli/agentbox keepalive --quiet
+
+NoNewPrivileges=true
+PrivateTmp=true

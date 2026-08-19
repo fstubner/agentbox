@@ -7,7 +7,7 @@
 > directories so the repo stays portable and free of one person's filesystem.
 
 
-Agentbox is a self-hosted personal AI assistant platform on local hardware.
+Agentbox is a self-hosted AI assistant for one household on local hardware.
 The assistant reaches external services only through narrow, policy-gated
 levers, and never holds a raw upstream credential.
 

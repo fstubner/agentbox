@@ -35,6 +35,10 @@ def load_bridge(controllable: str = "", url: str = "http://ha.test:8123",
                 denied: str = ""):
     os.environ["HA_CONTROLLABLE_ENTITIES"] = controllable
     os.environ["HA_DENIED_ENTITIES"] = denied
+    # Pin the policy file somewhere that cannot exist, so these tests exercise
+    # the environment fallback deliberately rather than because /policy happens
+    # to be absent on whatever machine is running them.
+    os.environ.setdefault("HA_POLICY_FILE", "/nonexistent/household.json")
     if domains is None:
         os.environ.pop("HA_CONTROLLABLE_DOMAINS", None)
     else:

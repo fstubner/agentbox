@@ -1,7 +1,8 @@
 # Contributing
 
-This started as a single-operator personal project; contributions that keep
-it useful for that use case are welcome.
+This started as a single-operator personal project and is now built around one
+household of two; contributions that keep it useful for that use case are
+welcome.
 
 - Run `cli/agentbox validate` and the test suite (`pytest tests/`) before
   opening a PR.

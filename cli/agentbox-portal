@@ -47,8 +47,22 @@ Discord, for a screenshot in a chat log — any channel, including ones added
 later, rather than a defence aimed at one of them. Discord is just how you talk
 to the assistant; it is not part of the trust path.
 
-Nothing here is an MCP tool. The assistant cannot mint a link, list links, or
-reach this port.
+The assistant has exactly one route in: `POST /agent/link`, behind a token it
+holds, which mints an ORIGIN_AGENT link that can read but not decide.
+Everything else here is closed to it: it cannot list links, read a session, or
+reach any other route on this port.
+
+Be precise about where the identity binding lives, because it is not
+here.
+This endpoint takes an identity in the request body and will mint for any
+name it recognises. What makes that safe is the caller: the MCP tool exposes no
+identity parameter and passes the one its own bearer token resolved to. This
+port trusts its token holder to have bound identity already.
+
+That paragraph used to read "Nothing here is an MCP tool. The assistant cannot
+mint a link" and stayed that way after the tool was added. A trust claim that
+has quietly stopped being true is worse than none, because it is the thing
+somebody checks instead of the code.
 
 ## Roles
 
@@ -65,8 +79,10 @@ import argparse
 import hashlib
 import hmac
 import html
+import importlib.util as _importlib_util
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -75,6 +91,33 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+
+def _sibling(name: str):
+    """Load a module that ships beside this script.
+
+    The portal is deployed as a single executable rather than an installed
+    package, so its modules are loaded by path. Keeping them as real files
+    rather than inlining everything is what stops this script becoming the
+    only place any of it can be understood.
+    """
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = _importlib_util.spec_from_file_location(
+        name, Path(__file__).resolve().parent / f"{name}.py")
+    module = _importlib_util.module_from_spec(spec)
+    # Registered before execution, not after: @dataclass resolves
+    # sys.modules[cls.__module__] while the class body runs, and gets None if
+    # the module is not there yet. Loading a module by path without this works
+    # right up until the module contains a dataclass.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+agentbox_settings = _sibling("agentbox_settings")
+agentbox_household = _sibling("agentbox_household")
+agentbox_status = _sibling("agentbox_status")
 
 STATE = Path(os.environ.get(
     "AGENTBOX_PORTAL_DIR",
@@ -94,13 +137,10 @@ AGENT_TOKEN = os.environ.get("AGENTBOX_PORTAL_AGENT_TOKEN", "").strip()
 # identity -> email, as "alex:alex@example.com,sam:sam@example.com".
 # Addresses live beside the identity list rather than in it so that adding an
 # address never risks disturbing an authentication token.
-IDENTITY_EMAILS = os.environ.get("AGENTBOX_IDENTITY_EMAILS", "")
 
-SMTP_HOST = os.environ.get("AGENTBOX_SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("AGENTBOX_SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("AGENTBOX_SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("AGENTBOX_SMTP_PASSWORD", "")
-SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", SMTP_USER)
+# The one mail value with no page: the envelope From, which is almost always
+# the account itself and is only separate for relays that require it.
+SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", "")
 
 # A client id is not a secret, which is what makes the split below work: this
 # page can *start* Google's consent flow and receive an authorisation code, but
@@ -179,16 +219,73 @@ FLASHES = {
     "pairing_started": ("Send the code below to the Agentbox bot on Discord "
                         "to finish connecting."),
     "chat_unlinked": "Discord disconnected. Sign-in links will not go there.",
+    "chat_link_cannot_decide": ("This link was opened in a different browser "
+                                "from the one that asked for it, so it can "
+                                "read but not decide. Request a link here and "
+                                "open it without leaving this browser."),
+    "chat_link_cannot_forget": ("This link was opened in a different browser "
+                                "from the one that asked for it, so it can "
+                                "read but not remove memories. Request a link "
+                                "here and open it in this browser."),
+    "chat_link_cannot_disconnect": ("This link was opened in a different "
+                                    "browser from the one that asked for it. "
+                                    "Moving where your sign-in links arrive "
+                                    "needs a link opened in this browser."),
+    "chat_link_cannot_pair": ("This link was opened in a different browser "
+                              "from the one that asked for it. Connecting a "
+                              "chat account decides where your sign-in links "
+                              "go, so it needs a link opened in this browser."),
+    "agent_link_cannot_pair": ("This link was created by the assistant, so it "
+                               "cannot connect a chat account. Connecting one "
+                               "decides where your sign-in links are "
+                               "delivered. Sign in from a link you asked for "
+                               "yourself to do it."),
+    "admin_only": ("That is admin only. Your account can manage its own "
+                   "memories and accounts, but not the household's settings."),
+    "agent_link_cannot_read_ops": ("Operations is not visible from a link the "
+                                   "assistant created \u2014 it lists who "
+                                   "lives here and where their sign-in links "
+                                   "go, and the assistant can read any link it "
+                                   "sends. Ask the bot for one with `link`, or "
+                                   "open a link you requested yourself."),
+    "settings_saved": "Saved.",
+    "invite_sent": "Invited. Their sign-in link is on its way.",
+    "settings_unchanged": "Nothing to change \u2014 those are the current values.",
+    "household_saved": "Saved. The bridge picks this up on its next call.",
+    "agent_link_cannot_configure": ("This link was created by the assistant, "
+                                    "so it cannot change settings. Sign in "
+                                    "from a link you asked for yourself."),
     "google_did_not_complete": ("Google did not complete the connection. "
                                 "Try again, or ask the operator to check the "
                                 "portal log."),
 }
 
 
+def origin_refusal(origin: str, action: str) -> str:
+    """Which flash explains an action refused for how this session signed in.
+
+    Both origins are downgraded, for different reasons, and saying the wrong
+    one sends a person to do something that will not help. Somebody who DMed
+    the bot `link` is told "this link was created by the assistant" — which is
+    untrue, and the fix it implies (ask for your own link) is the one they
+    already did. Their link is limited because it was not opened in the
+    browser that asked for it.
+    """
+    prefix = "chat_link" if origin == ORIGIN_CHAT else "agent_link"
+    return f"{prefix}_cannot_{action}"
+
+
 def flash_text(key: str) -> str:
     """Look up a message. An unknown key renders nothing rather than itself."""
     return FLASHES.get(key, "")
 
+
+SETTINGS = agentbox_settings.SettingsStore(directory=STATE)
+# Device permissions go on the policy mount, not in the portal's private
+# directory — a container has to read them. See agentbox_household.
+HOUSEHOLD = agentbox_household.HouseholdPolicy(directory=Path(os.environ.get(
+    "AGENTBOX_POLICY_DIR",
+    os.path.expanduser("~/.local/state/agentbox/policy"))))
 
 ADMIN = "admin"
 MEMBER = "member"
@@ -244,6 +341,38 @@ AGENT_WITHHELD = frozenset({
     "memory:decide_own",
     "memory:decide_household",
     "connector:disconnect_own",
+    "connector:pair_chat",
+    # `admins` decides who may approve a household memory and who sees this
+    # page at all, and `identity_emails` decides where a sign-in link is
+    # delivered. A link the assistant minted must not be able to move either:
+    # that is the difference between a convenience and a privilege escalation.
+    "ops:write_settings",
+    # Widening what the assistant may actuate in the house is likewise not
+    # something a session the assistant created gets to do.
+    "ops:write_household",
+    # Creating an identity is granting access. If the assistant could invite,
+    # the assistant could decide who lives here.
+    "ops:invite",
+})
+
+# Withheld from assistant-minted links only, not from chat-delivered ones.
+#
+# AGENT_WITHHELD above covers both because for *writes* they are the same
+# risk: neither proves the person doing it is the person who asked. Reading is
+# where they part company, and conflating them was costing something real.
+#
+#   ORIGIN_AGENT  the assistant made this link and can read it, so anything
+#                 the link can see, the assistant can see.
+#   ORIGIN_CHAT   a person has this link on their phone. It is downgraded
+#                 because it was not opened in the browser that asked for it,
+#                 not because anyone untrusted holds it.
+#
+# Operations lists who lives here, their sign-in addresses and their Discord
+# ids. Withholding it from both would have stopped an admin checking on the
+# box from their phone — an ordinary thing to want — in order to keep it from
+# the assistant. Withholding it from the assistant alone costs nothing.
+AGENT_ONLY_WITHHELD = frozenset({
+    "ops:read_health",
 })
 
 # What each role may do. Enumerated rather than computed: a capability that
@@ -255,6 +384,7 @@ ROLE_CAPABILITIES = {
         "memory:decide_own",
         "connector:read_own",
         "connector:disconnect_own",
+        "connector:pair_chat",
     }),
     ADMIN: frozenset({
         "memory:read_own",
@@ -262,8 +392,17 @@ ROLE_CAPABILITIES = {
         "memory:decide_household",
         "connector:read_own",
         "connector:disconnect_own",
+        "connector:pair_chat",
         "ops:read_health",
-        "ops:stage_messaging_credential",
+        # `ops:stage_messaging_credential` was removed on 2026-08-18: it was
+        # granted here and checked nowhere. This table is deliberately
+        # enumerated so that a capability nobody granted is absent rather than
+        # merely unreachable; one that is granted and never consulted is the
+        # same confusion pointing the other way. It comes back with its check,
+        # or not at all.
+        "ops:write_settings",
+        "ops:write_household",
+        "ops:invite",
     }),
 }
 
@@ -275,20 +414,43 @@ def now() -> int:
 # --- identities and roles ------------------------------------------------------
 
 
+def known_identities(also: dict[str, str] | None = None) -> set[str]:
+    """Every name this box recognises as a person.
+
+    Sources are additive because each knows a different subset: sign-in
+    addresses, paired chat accounts, whoever is already an admin, and any
+    names published for the assistant. The last is names only and never
+    tokens — the portal is the LAN-facing surface and has no business holding
+    a bearer credential.
+    """
+    # `also` is the form's own submission, merged over what is stored. The
+    # settings page saves identity_emails and admins under one button, so
+    # checking admins against stored state alone refused the obvious flow:
+    # add somebody's address and name them admin in the same save.
+    names = set(email_map().values()) | discord_identities()
+    for pair in (also or {}).get("identity_emails", "").split(","):
+        name, _, address = pair.partition(":")
+        if name.strip() and address.strip():
+            names.add(name.strip())
+    names |= {n.strip() for n in SETTINGS.value("admins").split(",") if n.strip()}
+    names |= {n.strip() for n in os.environ.get(
+        "AGENTBOX_IDENTITY_NAMES", "").replace(" ", ",").split(",") if n.strip()}
+    return names
+
+
 def admin_names() -> set[str]:
     """Identities with the admin role.
 
     Empty means nobody is an admin, which is the correct failure direction: a
-    misread env file should remove privilege, never hand it out.
+    misread setting should remove privilege, never hand it out.
     """
-    raw = os.environ.get("AGENTBOX_ADMINS", "")
-    return {n.strip() for n in raw.split(",") if n.strip()}
+    return {n.strip() for n in SETTINGS.value("admins").split(",") if n.strip()}
 
 
 def email_map() -> dict[str, str]:
     """Lowercased email -> identity."""
     mapping: dict[str, str] = {}
-    for pair in IDENTITY_EMAILS.split(","):
+    for pair in SETTINGS.value("identity_emails").split(","):
         name, _, address = pair.partition(":")
         if name.strip() and address.strip():
             mapping[address.strip().lower()] = name.strip()
@@ -315,7 +477,32 @@ def can(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> bool:
         return False
     if origin in (ORIGIN_EMAIL, ORIGIN_OPERATOR):
         return True
-    return capability not in AGENT_WITHHELD
+    if capability in AGENT_WITHHELD:
+        return False
+    # Anything not explicitly a chat origin is treated as agent-minted, which
+    # is the safe direction for a value that arrived from disk.
+    return origin == ORIGIN_CHAT or capability not in AGENT_ONLY_WITHHELD
+
+
+def refusal(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> str:
+    """Which gate refused, as a flash key. Empty when nothing refused.
+
+    `can` collapses two independent gates into one boolean, which is right for
+    deciding and wrong for explaining. A member refused an admin-only action
+    was being told their *link* was the problem and sent to request another
+    one — which produces an identical refusal, because the link was never the
+    issue. Saying "sign in differently" to somebody whose role is the
+    constraint is worse than saying nothing.
+    """
+    if capability not in ROLE_CAPABILITIES.get(role, frozenset()):
+        return "admin_only"
+    if origin in (ORIGIN_EMAIL, ORIGIN_OPERATOR):
+        return ""
+    if capability in AGENT_WITHHELD:
+        return "agent_link_cannot_configure"
+    if origin != ORIGIN_CHAT and capability in AGENT_ONLY_WITHHELD:
+        return "agent_link_cannot_read_ops"
+    return ""
 
 
 def require(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> None:
@@ -336,7 +523,21 @@ def _hash(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
+LINK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
 def link_path(link_id: str) -> Path:
+    """Where a link record lives. Rejects anything that is not an id.
+
+    `link_id` arrives from the query string of an unauthenticated request, and
+    went into a path unchecked. Redemption still required a matching
+    secret_hash, so traversal alone proved nothing — but "unexploitable today"
+    is a property of the code around it, not of this function, and it is the
+    kind of thing that stops being true when somebody adds a write. mint_link
+    generates token_urlsafe ids, which this matches exactly.
+    """
+    if not LINK_ID.match(link_id or ""):
+        raise ValueError("not a link id")
     return STATE / "links" / f"{link_id}.json"
 
 
@@ -410,10 +611,15 @@ def redeem_link(link_id: str, secret: str,
     stolen link cannot both succeed.
     """
     generic = "This link is not valid. Ask for a new one."
-    path = link_path(link_id)
     try:
+        path = link_path(link_id)
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        # ValueError covers both a malformed id and unreadable JSON, and both
+        # get the same sentence as a link that never existed. An id shaped
+        # wrongly must not be distinguishable from one that is merely wrong —
+        # and it must certainly not take the handler thread down, since a
+        # closed connection is itself an answer.
         return "", "", generic
     if not hmac.compare_digest(str(record.get("secret_hash", "")),
                                _hash(secret)):
@@ -862,13 +1068,15 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
     the browser differently from a success, or the page becomes an oracle for
     which addresses are registered.
     """
-    if not SMTP_HOST:
+    host = SETTINGS.value("smtp_host")
+    if not host:
         return False, "no SMTP host configured"
+    user = SETTINGS.value("smtp_user")
     import email.message
     import smtplib
     message = email.message.EmailMessage()
     message["Subject"] = "Your Agentbox sign-in link"
-    message["From"] = SMTP_FROM or SMTP_USER
+    message["From"] = user or SMTP_FROM
     message["To"] = address
     message.set_content(
         f"Open this link to sign in to Agentbox:\n\n{url}\n\n"
@@ -877,10 +1085,11 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
         f"If you did not ask for this, you can ignore it \u2014 on its own the "
         f"link is not enough to sign in as you.\n")
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+        port = int(SETTINGS.value("smtp_port") or 587)
+        with smtplib.SMTP(host, port, timeout=15) as smtp:
             smtp.starttls()
-            if SMTP_USER:
-                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            if user:
+                smtp.login(user, SETTINGS.value("smtp_password"))
             smtp.send_message(message)
     except Exception as exc:  # noqa: BLE001
         return False, f"{type(exc).__name__}"
@@ -906,6 +1115,40 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
 # not hold a credential that can message the household.
 
 
+def delivery_channels(identity: str, address: str) -> list[str]:
+    """Which channels could carry a link to this person, in order.
+
+    The single definition. `has_delivery_channel` and `deliver_link` used to
+    each spell out the same conditions, and they had to agree or blocker B1
+    reopened: a predicate saying "nowhere to send it" while delivery succeeds
+    mints an operator-privileged link and then transmits it. Nothing kept
+    them in sync — a third channel added to one and not the other was all it
+    would take.
+    """
+    channels = []
+    if SETTINGS.value("smtp_host") and address:
+        channels.append("email")
+    if chat_account_for(identity):
+        channels.append("discord")
+    return channels
+
+
+def has_delivery_channel(identity: str, address: str) -> bool:
+    """Whether an invite for this person would actually travel somewhere.
+
+    The origin depends on the answer and has to be decided before the link is
+    minted, because the origin is baked into the record. Transmitted over a
+    channel the assistant can read means ORIGIN_CHAT; printed on the admin's
+    screen for a human to carry means ORIGIN_OPERATOR, exactly as
+    `agentbox-portal link` does.
+
+    Erring is safe in one direction only: if this says yes and delivery then
+    fails, the link shown on screen is merely more restricted than it needed
+    to be. The reverse would put an operator-privileged link in a mailbox.
+    """
+    return bool(delivery_channels(identity, address))
+
+
 def deliver_link(identity: str, address: str, url: str) -> bool:
     """Send a sign-in link by every channel configured. True if any worked.
 
@@ -914,15 +1157,19 @@ def deliver_link(identity: str, address: str, url: str) -> bool:
     one must not silently swallow the request.
     """
     delivered = False
+    # Derived, not restated. The predicate that chooses the link's origin and
+    # the code that actually sends it must agree, or a link minted as
+    # hand-over privilege gets transmitted after all.
+    channels = delivery_channels(identity, address)
 
-    if SMTP_HOST and address:
+    if "email" in channels:
         sent, detail = send_link_email(address, url)
         if sent:
             delivered = True
         else:
             sys.stderr.write(f"[portal] email to {identity} failed: {detail}\n")
 
-    if chat_account_for(identity):
+    if "discord" in channels:
         try:
             save_request({
                 "id": secrets.token_urlsafe(9),
@@ -989,6 +1236,14 @@ STYLE = """
  .scope{display:inline-block;font-size:.75rem;background:#eef;color:#334;
         border-radius:.25rem;padding:.1rem .4rem;margin-bottom:.4rem}
  .stmt{margin:0 0 .75rem}
+ h2{font-size:1.05rem;margin:1.6rem 0 .2rem;letter-spacing:-.01em}
+ .row{display:flex;align-items:baseline;gap:.5rem;padding:.2rem 0}
+ .row .name{flex:1}
+ .dot{width:.55rem;height:.55rem;border-radius:50%;flex:none;
+      display:inline-block;position:relative;top:-.1rem}
+ .dot.ok{background:#2e7d32} .dot.warn{background:#c77700}
+ .dot.fail{background:#c62828}
+ .when{color:#888;font-size:.8rem}
  button{font:inherit;padding:.45rem .9rem;border-radius:.35rem;cursor:pointer;
         border:1px solid #bbb;background:#fff;margin-right:.4rem}
  button.yes{background:#1a7f37;border-color:#1a7f37;color:#fff}
@@ -1015,7 +1270,10 @@ def chrome(identity: str, role: str, origin: str, active: str,
     button is missing, and "this link came from the assistant" is the answer.
     """
     tabs = [("/", "Memories"), ("/connectors", "Accounts")]
-    if role == ADMIN:
+    # Offered only when this session could actually open it. An admin on an
+    # assistant-minted link is an admin whose link cannot read Operations, and
+    # a tab that always 403s teaches people the nav lies.
+    if can(role, "ops:read_health", origin):
         tabs.append(("/admin", "Operations"))
     rendered = "".join(
         f"<a href='{href}' class='{'on' if href == active else ''}'>"
@@ -1032,13 +1290,101 @@ def chrome(identity: str, role: str, origin: str, active: str,
             f"<nav class=tabs>{rendered}</nav>{body}</div>")
 
 
+def render_overview(identity: str, role: str, waiting: int,
+                    has_memories: bool) -> str:
+    """What this is, what needs you, and what it can reach.
+
+    The landing page used to open straight onto a memory-approval queue. For
+    somebody signing in for the first time that is a list of statements about
+    themselves, from a thing they have not been told anything about, with two
+    buttons — and the first person to see it had no way to know what Agentbox
+    even was. The queue is still the page's job; this is the sentence that
+    should have come before it.
+
+    The introduction is shown to people who have nothing stored and nothing
+    waiting, which is the closest available reading of "new here". Everyone
+    else gets the one-line version, because a household member reading this
+    for the hundredth time does not need to be told what a household
+    assistant is.
+    """
+    parts = []
+    if not has_memories and not waiting:
+        parts.append(
+            "<div class=card><b>What this is</b>"
+            "<p class=sub style='margin:.4rem 0 0'>Agentbox is your "
+            "household's own assistant, running on a box in your home. It can "
+            "reach your mail, calendar, tasks and the house — and it "
+            "remembers things about you, but only the ones you approve here. "
+            "Nothing is saved because it decided to; every memory on this page "
+            "is waiting for you to say yes.</p></div>")
+
+    lines = []
+    if waiting:
+        lines.append(
+            f"<div class=row><span class='dot warn'></span><span class=name>"
+            f"{waiting} memor{'ies' if waiting != 1 else 'y'} waiting for you"
+            f"</span></div>")
+
+    connected = [c["name"] for c in connector_status(identity) if c["connected"]]
+    chat = chat_account_for(identity)
+    if connected or chat:
+        reach = ", ".join(connected + (["Discord"] if chat else []))
+        lines.append(
+            f"<div class=row><span class='dot ok'></span><span class=name>"
+            f"Connected: {html.escape(reach)}</span>"
+            f"<span class=when><a href='/connectors'>manage</a></span></div>")
+    else:
+        lines.append(
+            "<div class=row><span class='dot warn'></span><span class=name>"
+            "No accounts connected yet</span>"
+            "<span class=when><a href='/connectors'>set up</a></span></div>")
+
+    requests = pending_requests(identity)
+    if requests:
+        lines.append(
+            f"<div class=row><span class='dot warn'></span><span class=name>"
+            f"{len(requests)} account change waiting on the household admin"
+            f"</span></div>")
+
+    # Only admins see the box itself, and only admins pay for the checks that
+    # answer it — this runs a docker call and eight probes.
+    if role == ADMIN:
+        snap = agentbox_status.cached()
+        # Measured state first, evaluation second — the same ordering the
+        # Operations card uses. This branch previously let `evaluating`
+        # short-circuit `failing`, so a genuinely down service was masked by
+        # a benchmark on the page people actually open.
+        if snap.failing:
+            level, text = "fail", f"{len(snap.failing)} service(s) down"
+        elif snap.problems or snap.stale_services:
+            level, text = "warn", "Some things need attention"
+        elif snap.evaluating:
+            level, text = "ok", "Everything is running (evaluation in progress)"
+        else:
+            level, text = "ok", "Everything is running"
+        lines.append(
+            f"<div class=row><span class='dot {level}'></span>"
+            f"<span class=name>{html.escape(text)}</span>"
+            f"<span class=when><a href='/admin'>operations</a></span></div>")
+
+    parts.append(f"<div class=card>{''.join(lines)}</div>")
+    return "".join(parts)
+
+
 def render_home(identity: str, role: str, flash: str,
                 origin: str = ORIGIN_EMAIL) -> bytes:
     try:
         proposals, reachable = own_proposals(identity, role), True
     except BridgeUnreachable:
         proposals, reachable = [], False
-    parts = ["<h1>Memories</h1>",
+    try:
+        stored, _ = stored_memories(identity, role)
+    except BridgeUnreachable:
+        stored = []
+    parts = ["<h1>Agentbox</h1>",
+             f"<p class=sub>Hi {html.escape(identity)}.</p>",
+             render_overview(identity, role, len(proposals), bool(stored)),
+             "<h2>Memories</h2>",
              "<p class=sub>What Agentbox would like to remember about you. "
              "Nothing is saved until you say so.</p>"]
     if origin == ORIGIN_AGENT:
@@ -1177,7 +1523,8 @@ def render_signin(sent: bool = False) -> bytes:
     Only one message belongs here, and it is fixed text.
     """
     told = ("If that address belongs to someone here, a sign-in link is on "
-            "its way. It will only work in this browser.")
+            "its way. Open it in this browser for full access — opened "
+            "anywhere else it can read but not change anything.")
     return page("Sign in \u2014 Agentbox", SIGNIN.format(
         minutes=LINK_TTL_SECONDS // 60,
         flash=f"<div class=flash>{told}</div>" if sent else ""))
@@ -1220,10 +1567,10 @@ def render_connectors(identity: str, role: str, flash: str,
                if rec.get("identity") == identity
                and int(rec.get("expires_at", 0)) > now()]
     if account:
-        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>Connected "
-                f"\u2014 sign-in links come to you on Discord.</p>"
-                f"<form method=post action=/chat/unlink style='display:inline'>"
-                f"<button>Disconnect Discord</button></form>")
+        body = ("<p class=sub style='margin:.3rem 0 .8rem'>Connected "
+                "\u2014 sign-in links come to you on Discord.</p>"
+                "<form method=post action=/chat/unlink style='display:inline'>"
+                "<button>Disconnect Discord</button></form>")
     elif pending:
         body = (f"<p class=sub style='margin:.3rem 0 .6rem'>Send this to the "
                 f"Agentbox bot on Discord, as a direct message:</p>"
@@ -1236,11 +1583,11 @@ def render_connectors(identity: str, role: str, flash: str,
                 f"account is what proves it is yours \u2014 anyone can type a "
                 f"username into a form.</p>")
     else:
-        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>Not connected. "
-                f"Connect it and you can ask for your own sign-in links "
-                f"instead of someone handing you one.</p>"
-                f"<form method=post action=/chat/pair style='display:inline'>"
-                f"<button class=yes>Connect Discord</button></form>")
+        body = ("<p class=sub style='margin:.3rem 0 .8rem'>Not connected. "
+                "Connect it and you can ask for your own sign-in links "
+                "instead of someone handing you one.</p>"
+                "<form method=post action=/chat/pair style='display:inline'>"
+                "<button class=yes>Connect Discord</button></form>")
     parts.append(f"<div class=card><b>Discord</b>{body}</div>")
 
     parts.append(
@@ -1252,26 +1599,281 @@ def render_connectors(identity: str, role: str, flash: str,
                 chrome(identity, role, origin, "/connectors", "".join(parts)))
 
 
+def _ago(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    return f"{seconds // 3600}h ago"
+
+
+def render_status_card() -> str:
+    """What is actually running, rather than a paragraph about why it matters.
+
+    This card replaced one headed "Connector health" whose entire content was
+    an explanation of why checking health would be a good idea. An admin
+    opening Operations wants to know whether the house works; everything to
+    answer that was already computed by `doctor` and reachable only from a
+    terminal.
+
+    Read-only by construction — see agentbox_status for why there is no
+    restart button here.
+    """
+    snap = agentbox_status.cached()
+    age = _ago(max(0, now() - snap.taken_at))
+
+    problems = sorted(snap.problems,
+                      key=lambda c: 0 if c.severity == agentbox_status.FAIL else 1)
+    # An evaluation explains problems; it does not replace them. This block
+    # used to *assert* the stack was down whenever a benchmark was running,
+    # and suppress every problem row underneath that claim. Both halves were
+    # wrong: `certify` runs without quiescing production, so the page
+    # announced a paused evaluation above six healthy services — and had
+    # anything genuinely broken, the one page whose job is to show it would
+    # have hidden it. The headline now follows what was measured; the
+    # evaluation is a footnote on it.
+    if problems:
+        worst = "fail" if snap.failing else "warn"
+        headline = (f"{len(problems)} thing{'s' if len(problems) != 1 else ''} "
+                    f"need{'' if len(problems) != 1 else 's'} attention")
+        note = ("<p class=sub style='margin:.5rem 0 0'>An evaluation is "
+                "running. Benchmarks that need the whole memory budget stop "
+                "the assistant on purpose and start it again afterwards, so "
+                "some of this may be expected — but it is listed rather than "
+                "hidden, because a page that goes quiet during evaluations "
+                "cannot be trusted during one.</p>") if snap.evaluating else ""
+    else:
+        worst, headline = "ok", "Everything is running"
+        note = ("<p class=sub style='margin:.5rem 0 0'>An evaluation is "
+                "running, and nothing is down.</p>") if snap.evaluating else ""
+
+    rows = [f"<div class=row><span class='dot {worst}'></span>"
+            f"<span class=name><b>{html.escape(headline)}</b></span>"
+            f"<span class=when>checked {html.escape(age)}</span></div>"]
+
+    for check in problems:
+        rows.append(
+            f"<div class=row><span class='dot {check.level}'></span>"
+            f"<span class=name>{html.escape(check.name)}"
+            f"<div class=sub style='margin:0'>{html.escape(check.detail)}</div>"
+            f"</span></div>")
+
+    body = "".join(rows) + note
+    if not snap.services:
+        body += ("<p class=sub style='margin:.6rem 0 0'>No containers are "
+                 "visible from here, so this list is incomplete rather than "
+                 "empty — Docker did not answer.</p>")
+    else:
+        lines = []
+        for service in snap.services:
+            if not getattr(service, "deployed", True):
+                # Listed, but not a fault — it does not count against health
+                # either, and a red dot over a green headline is how a page
+                # starts contradicting itself.
+                level, note = "warn", service.status
+            elif not service.running:
+                level, note = "fail", "not running"
+            elif service.stale:
+                # Worth saying: a security fix once sat in git for three weeks
+                # without reaching the running container.
+                level, note = "warn", "running older code than is committed"
+            else:
+                level, note = "ok", service.status
+            lines.append(
+                f"<div class=row><span class='dot {level}'></span>"
+                f"<span class=name>{html.escape(service.label)}</span>"
+                f"<span class=when>{html.escape(note)}</span></div>")
+        body += ("<div style='margin:.7rem 0 0;padding-top:.5rem;"
+                 "border-top:1px solid #eee'>" + "".join(lines) + "</div>")
+
+    return f"<div class=card><b>How things are</b><div style='margin:.5rem 0 0'>{body}</div></div>"
+
+
+def render_people_card(flash_error: str = "") -> str:
+    """Who lives here, how each of them gets in, and a way to add somebody.
+
+    Adding a person used to mean an operator editing a unit file and then
+    running a terminal command to mint a link — so in practice the second
+    person in a household could not be onboarded by the first. The form below
+    does both, and the list above it exists because the failure it prevents is
+    silent: an identity with no address and no Discord account is configured
+    and cannot sign in, and nothing anywhere said so.
+    """
+    emails = email_map()                    # address -> identity
+    by_identity = {name: address for address, name in emails.items()}
+    reachable = discord_identities()
+    # Identities the assistant is configured to act for. Without these the
+    # card missed exactly the state it exists to show: `sam` was a configured
+    # gateway identity who could not sign in, and this list — whose whole
+    # purpose is to surface that — did not mention her. Names only; the
+    # gateway's own variable carries bearer tokens and must not come here.
+    assistant_side = {n.strip() for n in os.environ.get(
+        "AGENTBOX_IDENTITY_NAMES", "").replace(" ", ",").split(",") if n.strip()}
+    known = sorted(set(by_identity) | admin_names() | reachable | assistant_side)
+
+    rows = []
+    for identity in known:
+        address = by_identity.get(identity, "")
+        ways = []
+        if address:
+            ways.append(html.escape(address))
+        if identity in reachable:
+            ways.append("Discord")
+        connected = any(c["connected"] for c in connector_status(identity))
+        if ways:
+            level = "ok"
+            detail = " · ".join(ways)
+        else:
+            # Configured but unreachable: the exact state that used to be
+            # invisible.
+            level = "warn"
+            detail = "no way to receive a sign-in link"
+        role = " (admin)" if identity in admin_names() else ""
+        google = " · Google connected" if connected else ""
+        rows.append(
+            f"<div class=row><span class='dot {level}'></span>"
+            f"<span class=name>{html.escape(identity)}{role}"
+            f"<div class=sub style='margin:0'>{detail}{google}</div></span></div>")
+
+    if not rows:
+        rows.append("<p class=sub style='margin:0'>Nobody is configured yet.</p>")
+
+    error = (f"<div class=flash style='margin:.35rem 0 .2rem'>"
+             f"{html.escape(flash_error)}</div>" if flash_error else "")
+
+    return (
+        f"<div class=card><b>Who lives here</b>"
+        f"<div style='margin:.5rem 0 .2rem'>{''.join(rows)}</div>"
+        f"<div style='margin:.8rem 0 0;padding-top:.7rem;"
+        f"border-top:1px solid #eee'>"
+        f"<b style='font-size:.95rem'>Invite someone</b>"
+        f"<p class=sub style='margin:.3rem 0 .5rem'>Adds them and sends a "
+        f"sign-in link. If there is no way to deliver it, the link is shown "
+        f"here for you to pass on — it is single use and expires.</p>"
+        f"<form method=post action=/admin/invite>"
+        f"<input name=name placeholder='name, e.g. sam' autocomplete=off "
+        f"style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<input name=email type=email placeholder='email (optional)' "
+        f"autocomplete=off style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<button class=yes>Invite</button></form>{error}</div></div>")
+
+
+def _field(setting, value: str, error: str) -> str:
+    """One labelled input. Secrets are never echoed back into the page.
+
+    A secret renders as an empty password box plus whether one is currently
+    stored, and a blank submission means "keep what is there" (see
+    SettingsStore.save). Round-tripping the value through the HTML would put
+    the SMTP password in every admin's browser history and page cache to save
+    one re-typing.
+    """
+    kind = "password" if setting.secret else "text"
+    shown = "" if setting.secret else value
+    note = ""
+    if setting.secret:
+        note = ("<span class=sub> \u2014 stored; leave blank to keep</span>"
+                if value else "<span class=sub> \u2014 not set</span>")
+    clear_box = ""
+    if setting.secret and value:
+        # Blank means keep, so without this there is no way to say "remove it".
+        clear_box = (f"<label class=sub style='display:block;margin:.15rem 0 0'>"
+                     f"<input type=checkbox name='clear_{html.escape(setting.key)}'"
+                     f" value='1'> remove the stored value</label>")
+    return (
+        f"<label style='display:block;margin:.7rem 0 0'>"
+        f"<b>{html.escape(setting.label)}</b>{note}"
+        f"<input type={kind} name='{html.escape(setting.key)}' "
+        f"value='{html.escape(shown)}' autocomplete=off "
+        f"placeholder='{html.escape(setting.placeholder)}' "
+        f"style='display:block;width:100%;margin:.25rem 0 .2rem;"
+        f"padding:.4rem .5rem'>"
+        + (f"<span class=sub>{html.escape(setting.hint)}</span>"
+           f"<details style='margin:.15rem 0 0'>"
+           f"<summary class=sub style='cursor:pointer;font-size:.8rem'>Why"
+           f"</summary>"
+           f"<div class=sub style='margin:.25rem 0 0'>"
+           f"{html.escape(setting.help)}</div></details>"
+           if setting.hint else
+           f"<span class=sub>{html.escape(setting.help)}</span>")
+        + clear_box
+        + (f"<div class=flash style='margin:.35rem 0 0'>"
+           f"{html.escape(error)}</div>" if error else "")
+        + "</label>")
+
+
+def render_settings_card(errors: dict, submitted: dict) -> str:
+    """The settings form, rendered from the table rather than by hand.
+
+    Adding a setting is an entry in agentbox_settings.SETTINGS; there is no
+    markup here that knows about any particular one, so there is no per-setting
+    guard to forget.
+    """
+    sections = []
+    for group in agentbox_settings.GROUPS:
+        fields = "".join(
+            _field(setting,
+                   submitted.get(setting.key, SETTINGS.value(setting.key)),
+                   errors.get(setting.key, ""))
+            for setting in agentbox_settings.SETTINGS
+            if setting.group == group)
+        sections.append(f"<div class=card><b>{html.escape(group)}</b>{fields}</div>")
+    return (f"<form method=post action=/admin/settings>{''.join(sections)}"
+            f"<div style='margin:.8rem 0 0'><button class=yes>Save settings"
+            f"</button></div></form>")
+
+
+def render_household_card(error: str, submitted: str | None) -> str:
+    """Which entities the assistant may act on.
+
+    Separate form and separate file from the settings above, because this one
+    is read by a container. See agentbox_household for why that means it
+    cannot live alongside the admin list.
+    """
+    current = (submitted if submitted is not None
+               else "\n".join(HOUSEHOLD.controllable()))
+    refused = ", ".join(agentbox_household.NEVER_CONTROLLABLE)
+    return (
+        f"<div class=card><b>What the assistant may control</b>"
+        f"<p class=sub style='margin:.4rem 0 0'>One entity id per line. "
+        f"Lights and switches work without listing them; this is for anything "
+        f"else you want reachable. The {html.escape(refused)} domains are "
+        f"refused by the bridge whatever this says, so naming one is rejected "
+        f"here rather than accepted and quietly ignored.</p>"
+        f"<form method=post action=/admin/household>"
+        f"<textarea name=entities rows=6 autocomplete=off "
+        f"style='display:block;width:100%;margin:.5rem 0 .2rem;"
+        f"padding:.4rem .5rem;font-family:ui-monospace,monospace'>"
+        f"{html.escape(current)}</textarea>"
+        + (f"<div class=flash style='margin:.35rem 0 .2rem'>"
+           f"{html.escape(error)}</div>" if error else "")
+        + "<button class=yes style='margin:.5rem 0 0'>Save devices</button>"
+        "</form></div>")
+
+
 def render_admin(identity: str, flash: str,
-                 origin: str = ORIGIN_EMAIL) -> bytes:
+                 origin: str = ORIGIN_EMAIL,
+                 errors: dict | None = None,
+                 submitted: dict | None = None,
+                 household_error: str = "",
+                 household_submitted: str | None = None,
+                 invite_error: str = "") -> bytes:
     parts = ["<h1>Operations</h1>",
-             "<p class=sub>Admin only. Connector health and messaging setup.</p>"]
+             "<p class=sub>Admin only. How the box is doing, who lives here, "
+             "and how everything is set up.</p>"]
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-    parts.append(
-        "<div class=card><b>Connector health</b>"
-        "<p class=sub style='margin:.4rem 0 0'>Revoking access at Google leaves "
-        "this box holding a dead refresh token; without a check the first "
-        "symptom is a confusing tool failure days later.</p></div>")
+    parts.append(render_status_card())
+    parts.append(render_people_card(invite_error))
 
     # How sign-in links actually reach people. Shown because the failure is
     # invisible by construction: the sign-in page must answer identically for
     # a registered and an unregistered address, so it can never say "that went
     # nowhere". This is the only place a person finds out.
     channels = []
-    if SMTP_HOST:
-        channels.append(f"Email via {html.escape(SMTP_HOST)} as "
-                        f"{html.escape(SMTP_USER or 'an unnamed account')}")
+    if SETTINGS.value("smtp_host"):
+        channels.append(
+            f"Email via {html.escape(SETTINGS.value('smtp_host'))} as "
+            f"{html.escape(SETTINGS.value('smtp_user') or 'an unnamed account')}")
     reachable = sorted(discord_identities())
     if reachable:
         channels.append("Discord DM to " + ", ".join(html.escape(n) for n in reachable))
@@ -1286,13 +1888,15 @@ def render_admin(identity: str, flash: str,
         body = ("<div style='padding:.15rem 0'>Nothing configured \u2014 links "
                 "are minted and reach nobody.</div>")
         note = ("<p class=sub style='margin:.5rem 0 0'>Set "
-                "<code>AGENTBOX_SMTP_HOST</code> and friends for email, or "
-                "<code>AGENTBOX_DISCORD_IDENTITIES</code> for Discord DMs. "
-                "Until one exists, an operator hands links over directly with "
+                "a mail server below, or connect Discord on your Accounts "
+                "page. Until one exists, an operator hands links over "
+                "directly with "
                 "<code>agentbox-portal link &lt;name&gt;</code>.</p>")
     parts.append(f"<div class=card><b>How sign-in links are delivered</b>"
                  f"<div class=sub style='margin:.4rem 0 0'>{body}</div>"
                  f"{note}</div>")
+    parts.append(render_settings_card(errors or {}, submitted or {}))
+    parts.append(render_household_card(household_error, household_submitted))
     parts.append("<footer><a href='/logout'>Sign out</a></footer>")
     return page("Operations \u2014 Agentbox",
                 chrome(identity, ADMIN, origin, "/admin", "".join(parts)))
@@ -1395,7 +1999,23 @@ class PortalHandler(BaseHTTPRequestHandler):
     server_version = "agentbox-portal"
 
     def log_message(self, fmt, *args):  # noqa: A002
-        sys.stderr.write(f"[portal] {fmt % args}\n")
+        sys.stderr.write(f"[portal] {self._redact(fmt % args)}\n")
+
+    @staticmethod
+    def _redact(line: str) -> str:
+        """Strip query strings before anything reaches the log.
+
+        `log_message` was overridden and `log_request` was not, so the stdlib
+        logged the whole request line — including `/login?id=…&k=<secret>`.
+        The link secret is hashed on disk precisely so that directory leaking
+        yields nothing usable; writing the plaintext into the journal put it
+        somewhere longer-lived and less protected. 23 live secrets were found
+        there.
+
+        Redacting every query string rather than the `k` parameter alone: the
+        next parameter worth hiding should not need anyone to remember this.
+        """
+        return re.sub(r"(\?)\S*", r"\1<redacted>", line)
 
     def _send(self, code: int, body: bytes, headers: dict | None = None) -> None:
         self.send_response(code)
@@ -1442,6 +2062,13 @@ class PortalHandler(BaseHTTPRequestHandler):
             # cannot drive a POST here with the user's cookie attached.
             self.send_response(303)
             self.send_header("Location", "/")
+            # No `Secure` flag, deliberately and not happily: this server
+            # speaks plain HTTP, so `Secure` would stop the browser sending
+            # the cookie at all and nobody could sign in. HttpOnly and
+            # SameSite=Lax are set. The session cookie therefore crosses the
+            # LAN in clear, and the real remedy is TLS in front of this port,
+            # not a flag that trades a working product for the appearance of
+            # one. Recorded here so the next reader knows it was weighed.
             self.send_header("Set-Cookie",
                              f"sid={sid}; HttpOnly; SameSite=Lax; Path=/")
             self.send_header("Set-Cookie",
@@ -1473,10 +2100,16 @@ class PortalHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/admin":
-            if not can(session["role"], "ops:read_health"):
+            # The origin was not passed here, so the second gate never ran on
+            # this route at all — every capability check in the system takes
+            # both, and this one silently took the default. That is why a link
+            # the assistant minted could read Operations.
+            why = refusal(session["role"], "ops:read_health",
+                          session.get("origin", ORIGIN_AGENT))
+            if why:
                 self._send(403, page("Not allowed",
-                                     "<h1>Not allowed</h1><p>Operations is "
-                                     "admin only.</p>"))
+                                     f"<h1>Not allowed</h1>"
+                                     f"<p>{html.escape(flash_text(why))}</p>"))
                 return
             self._send(200, render_admin(
                 session["identity"], flash,
@@ -1531,6 +2164,163 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _invite(self, session, form) -> None:
+        """Add a person and send them a sign-in link.
+
+        Creating an identity is granting access, so this is withheld from
+        agent- and chat-minted links exactly like editing the admin list: the
+        assistant being able to invite somebody would be the assistant being
+        able to decide who lives here.
+
+        The link is minted ORIGIN_CHAT, not ORIGIN_OPERATOR.
+
+        The first version reasoned that an invite is an admin handing access
+        to somebody they know, the same as `agentbox-portal link`. The
+        difference it missed is the one that matters: the CLI prints a link
+        for a human to hand over, while this one is *transmitted* — by email,
+        or into a Discord DM — over channels the assistant can read. With no
+        browser nonce to bind, the downgrade in `redeem_link` never fires, so
+        an operator-privileged link sat in a mailbox the assistant holds a
+        read tool for, able to approve memories and disconnect accounts.
+
+        This module's own docstring states the rule it broke: "Whoever merely
+        reads the link cannot use it. That holds for email, for Discord, for a
+        screenshot in a chat log." The sibling path in agentbox-approvals
+        already minted ORIGIN_CHAT for exactly this reason.
+
+        Chat origin costs the invitee nothing they need on arrival: they can
+        read everything and request a browser-bound link themselves, which is
+        the only way anyone should be getting write access anyway.
+        """
+        why = refusal(session["role"], "ops:invite",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        name = (form.get("name") or [""])[0].strip()
+        address = (form.get("email") or [""])[0].strip()
+
+        def fail(message: str) -> None:
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                invite_error=message))
+
+        try:
+            name = agentbox_settings.clean_names(name)
+            address = agentbox_settings.clean_email_or_blank(address)
+        except agentbox_settings.InvalidSetting as exc:
+            return fail(str(exc))
+        if not name or "," in name:
+            return fail("Give one name, for example sam.")
+
+        # Append rather than replace. Saving the whole map from a two-field
+        # form would silently drop everybody not mentioned in it.
+        if address:
+            existing = email_map()
+            existing = {a: n for a, n in existing.items() if n != name}
+            existing[address.lower()] = name
+            pairs = ",".join(f"{n}:{a}" for a, n in sorted(existing.items()))
+            try:
+                SETTINGS.save({"identity_emails": pairs})
+            except agentbox_settings.InvalidSetting as exc:
+                return fail(str(exc))
+
+        # Downgrade only what actually travels. Minting ORIGIN_CHAT
+        # unconditionally closed the mailbox hole but took the hand-over path
+        # with it: on a box with no delivery channel configured — which is
+        # this one — every invite produced a link that could not approve a
+        # memory, so a new member could not do the first thing the product
+        # promises them without an operator opening a terminal.
+        travels = has_delivery_channel(name, address)
+        try:
+            url, _ = mint_link(
+                name, PUBLIC_URL,
+                origin=ORIGIN_CHAT if travels else ORIGIN_OPERATOR)
+        except RuntimeError as exc:
+            return fail(str(exc))
+
+        if deliver_link(name, address, url):
+            self._redirect("/admin?m=invite_sent")
+            return
+        # Nowhere to send it. Showing the admin the link is the honest
+        # fallback — the same act as the terminal command, and carrying the
+        # same origin as it, since a link handed over by a person has not
+        # passed through a channel anything else can read. The alternative is
+        # telling somebody an invite was sent when it was not.
+        self._send(200, render_admin(
+            session["identity"], "", session.get("origin", ORIGIN_AGENT),
+            invite_error=f"{name} has no way to receive a link yet. Hand this "
+                         f"over directly — single use, and it expires: {url}"))
+
+    def _save_settings(self, session, form) -> None:
+        """Write the household settings, or re-render the form with errors.
+
+        Errors are rendered from this POST rather than carried through a
+        redirect, because a validation message quotes what the person typed.
+        Flash messages travel in the URL as *keys* into a fixed table
+        precisely so no one can craft a link that shows another admin an
+        arbitrary sentence, and echoing input through `?m=` would give that
+        back. Re-rendering also keeps the rest of the form filled in.
+        """
+        why = refusal(session["role"], "ops:write_settings",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+        submitted = {setting.key: (form.get(setting.key) or [""])[0]
+                     for setting in agentbox_settings.SETTINGS}
+        errors: dict[str, str] = {}
+        clear = frozenset(
+            setting.key for setting in agentbox_settings.SETTINGS
+            if setting.secret and (form.get(f"clear_{setting.key}") or [""])[0])
+        # `clean_admins` refuses an empty list, which stops the box being
+        # left with no administrator. It validates shape only, so `mai` for
+        # `sam` passes it and locks everyone out just as thoroughly — the
+        # same unrecoverable state by a likelier route.
+        wanted = {n.strip() for n in submitted.get("admins", "").split(",")
+                  if n.strip()}
+        unknown = sorted(wanted - known_identities(also=submitted))
+        if unknown:
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                errors={"admins": (
+                    f"nobody here is called {', '.join(unknown)}. Invite them "
+                    f"first, or check the spelling — an admin list naming "
+                    f"only people who do not exist locks this page for "
+                    f"everyone, and cannot be undone from it.")},
+                submitted=submitted))
+            return
+        try:
+            changed = SETTINGS.save(submitted, clear=clear)
+        except agentbox_settings.InvalidSetting as exc:
+            # The store validates everything before writing anything, so a
+            # rejection here means nothing was stored — the form is showing
+            # the truth when it shows what was typed.
+            errors[exc.key] = str(exc)
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                errors=errors, submitted=submitted))
+            return
+        self._redirect("/admin?m="
+                       + ("settings_saved" if changed else "settings_unchanged"))
+
+    def _save_household(self, session, form) -> None:
+        why = refusal(session["role"], "ops:write_household",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+        raw = (form.get("entities") or [""])[0]
+        try:
+            HOUSEHOLD.save(raw)
+        except agentbox_household.InvalidEntity as exc:
+            self._send(400, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                household_error=str(exc), household_submitted=raw))
+            return
+        self._redirect("/admin?m=household_saved")
+
     def _connector_action(self, session, form) -> None:
         identity, role = session["identity"], session["role"]
         action = (form.get("action") or [""])[0]
@@ -1557,7 +2347,8 @@ class PortalHandler(BaseHTTPRequestHandler):
         if action == "disconnect":
             if not can(role, "connector:disconnect_own",
                        session.get("origin", ORIGIN_AGENT)):
-                self._redirect("/connectors?m=agent_link_cannot_disconnect")
+                self._redirect("/connectors?m=" + origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "disconnect"))
                 return
             save_request({
                 "id": secrets.token_urlsafe(9),
@@ -1654,6 +2445,17 @@ class PortalHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/chat/pair":
+            # Withheld for the same reason as unlinking, and more urgently.
+            # Pairing decides where this person's sign-in links are delivered,
+            # and the code it mints is shown on a page the assistant can read
+            # whenever it holds a link it produced. Unlinking only removes a
+            # channel; pairing points one somewhere new, so if either belongs
+            # behind a link the person asked for themselves, it is this one.
+            if not can(session["role"], "connector:pair_chat",
+                       session.get("origin", ORIGIN_AGENT)):
+                self._redirect("/connectors?m=" + origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "pair"))
+                return
             start_pairing(session["identity"])
             self._redirect("/connectors?m=pairing_started")
             return
@@ -1663,7 +2465,8 @@ class PortalHandler(BaseHTTPRequestHandler):
             # moving where somebody's sign-in links arrive is not a convenience.
             if not can(session["role"], "connector:disconnect_own",
                        session.get("origin", ORIGIN_AGENT)):
-                self._redirect("/connectors?m=agent_link_cannot_disconnect")
+                self._redirect("/connectors?m=" + origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "disconnect"))
                 return
             unlink_chat(session["identity"])
             self._redirect("/connectors?m=chat_unlinked")
@@ -1673,6 +2476,18 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._connector_action(session, form)
             return
 
+        if path == "/admin/invite":
+            self._invite(session, form)
+            return
+
+        if path == "/admin/settings":
+            self._save_settings(session, form)
+            return
+
+        if path == "/admin/household":
+            self._save_household(session, form)
+            return
+
         if path == "/memory/forget":
             try:
                 _, message = forget_memory(
@@ -1680,7 +2495,8 @@ class PortalHandler(BaseHTTPRequestHandler):
                     (form.get("id") or [""])[0],
                     session.get("origin", ORIGIN_AGENT))
             except PermissionError:
-                message = "agent_link_cannot_forget"
+                message = origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "forget")
             self._redirect(f"/?m={urllib.parse.quote(message)}")
             return
 
@@ -1694,7 +2510,8 @@ class PortalHandler(BaseHTTPRequestHandler):
                     session.get("origin", ORIGIN_AGENT),
                     statement=(form.get("statement") or [""])[0])
             except PermissionError:
-                message = "agent_link_cannot_decide"
+                message = origin_refusal(
+                    session.get("origin", ORIGIN_AGENT), "decide")
             self._redirect(f"/?m={urllib.parse.quote(message)}")
             return
         self._send(404, page("Not found", "<h1>Not found</h1>"))
@@ -1711,7 +2528,8 @@ def cmd_link(args) -> int:
     a link handed over by the operator is honest about who is delivering it.
     """
     try:
-        url, link_id = mint_link(args.identity, args.base_url)
+        url, link_id = mint_link(args.identity, args.base_url,
+                                 origin=getattr(args, "origin", ORIGIN_OPERATOR))
     except RuntimeError as exc:
         print(f"[fail] {exc}", file=sys.stderr)
         return 1
@@ -1722,6 +2540,47 @@ def cmd_link(args) -> int:
     return 0
 
 
+def reap_expired() -> tuple[int, int]:
+    """Delete session and link records that can no longer authenticate anyone.
+
+    Nothing removed these, so they accumulated: 34 sessions and 5 link records
+    were still on disk days after every one of them had expired. None of it is
+    exploitable — redemption checks `expires_at` and `used_at` regardless — but
+    each file holds an identity and a secret hash, and keeping a credential
+    record past the point where it can authorise anything is a disclosure
+    surface with no remaining purpose.
+
+    Runs at startup rather than on a timer: the portal restarts often enough,
+    and a reaper that needs its own scheduler is a second thing to keep alive.
+    Failure here is not worth refusing to serve over — an unreadable record is
+    skipped, not fatal.
+    """
+    sessions = links = 0
+    for directory, counter in (("sessions", "s"), ("links", "l")):
+        base = STATE / directory
+        if not base.is_dir():
+            continue
+        for record_file in base.glob("*.json"):
+            try:
+                record = json.loads(record_file.read_text(encoding="utf-8"))
+                expired = int(record.get("expires_at", 0)) <= now()
+                # A used link is spent even if its clock has not run out.
+                spent = bool(record.get("used_at"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if not (expired or spent):
+                continue
+            try:
+                record_file.unlink()
+            except OSError:
+                continue
+            if counter == "s":
+                sessions += 1
+            else:
+                links += 1
+    return sessions, links
+
+
 def cmd_serve(args) -> int:
     STATE.mkdir(parents=True, exist_ok=True)
     # Mint the consent-state secret now, not on the first reconnect click. If
@@ -1729,6 +2588,10 @@ def cmd_serve(args) -> int:
     # where systemd shows it — not as a 500 halfway through someone's OAuth
     # flow days later.
     _state_secret()
+    dead_sessions, dead_links = reap_expired()
+    if dead_sessions or dead_links:
+        print(f"[ok] reaped {dead_sessions} expired session(s) and "
+              f"{dead_links} spent link(s)", file=sys.stderr)
     server = ThreadingHTTPServer((args.host, args.port), PortalHandler)
     print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
     # Said loudly at startup because it cannot be said at the point of failure.
@@ -1736,10 +2599,13 @@ def cmd_serve(args) -> int:
     # anything else would reveal which addresses are registered — so an
     # unconfigured SMTP host produces a link nobody receives and a page that
     # looks like it worked. This is the only place a human finds out.
-    if IDENTITY_EMAILS and not SMTP_HOST:
-        print("[warn] addresses are configured but AGENTBOX_SMTP_HOST is not: "
-              "sign-in links will be minted and never sent. Use "
-              "`agentbox-portal link <name>` until SMTP is set.", file=sys.stderr)
+    if SETTINGS.value("identity_emails") and not SETTINGS.value("smtp_host"):
+        print("[warn] sign-in addresses are configured but no mail server is: "
+              "links will be minted and never sent, and the page cannot say so "
+              "because answering differently for a registered address would "
+              "reveal who lives here. Set one under Operations, connect "
+              "Discord on the Accounts page, or hand links over with "
+              "`agentbox-portal link <name>`.", file=sys.stderr)
     print(f"[..] admins: {', '.join(sorted(admin_names())) or 'none'}",
           file=sys.stderr)
     try:
@@ -1757,6 +2623,11 @@ def main() -> int:
     link.add_argument("identity")
     link.add_argument("--base-url", default=os.environ.get(
         "AGENTBOX_PORTAL_URL", "http://agentbox.local:8771"))
+    link.add_argument("--origin", choices=(ORIGIN_OPERATOR, ORIGIN_CHAT),
+                      default=ORIGIN_OPERATOR,
+                      help="operator: handed over directly, full privilege. "
+                           "chat: delivered over a channel the assistant can "
+                           "read, so it can look but not act.")
     link.set_defaults(func=cmd_link)
 
     serve = sub.add_parser("serve", help="run the portal")

@@ -15,10 +15,12 @@ a human reads carefully first. An approval prompt that appears every time
 somebody asks for a light is one that gets granted unread within a week, and by
 then it is granting nothing.
 
-So control is three narrow tools over an **operator-configured entity
+So control is three narrow tools over a **household-configured entity
 allowlist**, and two independent refusals underneath:
 
-- an entity absent from `HA_CONTROLLABLE_ENTITIES` is refused;
+- an entity absent from the allowlist is refused. It lives on the read-only
+  policy mount, written by the portal's Operations page — writable by the
+  operator, never by this container or the assistant;
 - an entity in a security domain is refused **even if allowlisted**, because
   that list is edited by a tired human and `lock.front_door` looks a lot like
   `light.front_door` at the end of a long day.
@@ -38,6 +40,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import automation
@@ -85,7 +88,7 @@ SECURITY_DOMAINS = frozenset({"lock", "alarm_control_panel", "cover",
 #   media_player  casting puts content on a screen other people can see, which
 #                 is why PRIVATE_SCREENS exists at all.
 #
-# Anything outside these domains still needs naming in HA_CONTROLLABLE_ENTITIES.
+# Anything outside these domains still needs naming in the allowlist below.
 CONTROLLABLE_DOMAINS = frozenset(
     d.strip() for d in os.environ.get("HA_CONTROLLABLE_DOMAINS",
                                       "light,scene").split(",")
@@ -93,9 +96,59 @@ CONTROLLABLE_DOMAINS = frozenset(
 
 # Individual entities allowed on top of the domains above — a media_player to
 # cast to, a specific switch someone has thought about.
-CONTROLLABLE = frozenset(
+#
+# Read from the read-only policy mount rather than the environment, so adding
+# a device is something the household does on the Operations page instead of
+# something an operator does by editing a systemd unit and restarting this
+# container. The portal writes it; this mount is :ro, so the assistant cannot,
+# which is the same arrangement the grants file uses and for the same reason.
+#
+# The environment variable is still honoured when the file is absent, so a box
+# configured before this existed keeps working until the form is saved once.
+POLICY_FILE = Path(os.environ.get("HA_POLICY_FILE", "/policy/household.json"))
+
+_ENV_CONTROLLABLE = frozenset(
     e.strip() for e in os.environ.get("HA_CONTROLLABLE_ENTITIES", "").split(",")
     if e.strip())
+
+# Re-read when the file changes rather than on every call: is_controllable
+# runs once per entity in a listing, and a stat is much cheaper than a parse.
+#
+# Keyed on st_mtime_ns rather than st_mtime, and on size as well. Second
+# resolution is not enough: correcting a typo means two saves moments apart,
+# and if they happen to be the same length — swapping one entity id for
+# another of equal length is the ordinary case — a coarser key would serve the
+# old set until something else changed. That would keep a permission somebody
+# had just revoked, which is the one direction this must never fail in.
+_policy_cache: tuple[tuple[int, int], frozenset[str]] | None = None
+
+
+def controllable_entities() -> frozenset[str]:
+    """Entities permitted on top of CONTROLLABLE_DOMAINS.
+
+    A missing, unreadable or malformed file yields the environment fallback
+    rather than an exception: this is consulted on the refusal path, and a
+    bridge that raises here would turn a bad edit into a broken bridge instead
+    of a narrower one. Failing closed means fewer permissions, never fewer
+    refusals.
+    """
+    global _policy_cache
+    try:
+        info = POLICY_FILE.stat()
+        stamp = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        return _ENV_CONTROLLABLE
+    if _policy_cache is not None and _policy_cache[0] == stamp:
+        return _policy_cache[1]
+    try:
+        data = json.loads(POLICY_FILE.read_text(encoding="utf-8"))
+        entities = data["controllable_entities"]
+        value = frozenset(str(e) for e in entities) if isinstance(entities, list) \
+            else _ENV_CONTROLLABLE
+    except (OSError, ValueError, KeyError, TypeError):
+        value = _ENV_CONTROLLABLE
+    _policy_cache = (stamp, value)
+    return value
 
 # Escape hatch the other way: an entity here is refused even if its domain is
 # allowed. For the light that is not really a light, or the one in a room
@@ -142,7 +195,7 @@ def is_controllable(entity_id: str) -> bool:
         return False
     if entity_id in NOT_CONTROLLABLE:
         return False
-    return domain in CONTROLLABLE_DOMAINS or entity_id in CONTROLLABLE
+    return domain in CONTROLLABLE_DOMAINS or entity_id in controllable_entities()
 
 LEAN_FIELDS = ("entity_id", "state", "friendly_name")
 
@@ -265,7 +318,7 @@ def require_controllable(entity_id: str, expected_domains: tuple[str, ...]) -> N
         raise BridgeError(
             403, f"'{entity_id}' is not in the operator's controllable list. "
                  f"Reading it is fine; acting on it needs the operator to add "
-                 f"it to HA_CONTROLLABLE_ENTITIES.")
+                 f"it on the Operations page of the portal.")
 
 
 def flatten(entity: dict) -> dict:
@@ -645,7 +698,7 @@ def get_schema(handler, body):
                    "POST /v1/light", "POST /v1/scene", "POST /v1/climate",
                    "GET /v1/automations", "POST /v1/automations"],
         "views": {"lean": list(LEAN_FIELDS), "full": "adds attributes"},
-        "controllable": sorted(CONTROLLABLE),
+        "controllable": sorted(controllable_entities()),
         "never_actuated": sorted(SECURITY_DOMAINS),
         "cannot": ["call arbitrary services", "actuate locks, alarms or covers",
                    "control an entity outside the operator's allowlist",
@@ -699,7 +752,7 @@ class HomeAssistantBridge(BridgeHandler):
         except BridgeError as exc:
             return {"ok": False, "upstream": {"url": HA_URL, "error": exc.message}}
         return {"ok": True, "upstream": {"url": HA_URL,
-                                         "controllable": len(CONTROLLABLE)}}
+                                         "controllable": len(controllable_entities())}}
 
 
 if __name__ == "__main__":

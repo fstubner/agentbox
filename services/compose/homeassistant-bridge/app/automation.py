@@ -188,7 +188,7 @@ def validate(raw_text: str, parsed: Any, controllable: frozenset[str]) -> dict:
             raise AutomationRefused(
                 f"'{entity}' is not in the operator's controllable list, so an "
                 f"automation must not act on it either. Add it to "
-                f"HA_CONTROLLABLE_ENTITIES first if that is intended.")
+                f"it on the portal's Operations page first if that is intended.")
 
     return {
         "services": sorted(set(services)),

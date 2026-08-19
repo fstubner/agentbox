@@ -17,8 +17,8 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -27,6 +27,47 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.parent))
+
+
+_keepalive_module = None
+_status_module = None
+
+
+def _keepalive():
+    """Load cli/agentbox_keepalive.py, once. See _status for why it is lazy."""
+    global _keepalive_module
+    if _keepalive_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_keepalive",
+            Path(__file__).resolve().parent / "agentbox_keepalive.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_keepalive"] = module
+        spec.loader.exec_module(module)
+        _keepalive_module = module
+    return _keepalive_module
+
+
+def _status():
+    """Load cli/agentbox_status.py, once.
+
+    Imported lazily rather than at module scope: `scaffold` execs this file
+    inside a generated temp repo where the sibling may not be present, and a
+    hard import would turn that into a startup crash instead of a missing
+    optional feature.
+    """
+    global _status_module
+    if _status_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_status", Path(__file__).resolve().parent / "agentbox_status.py")
+        module = _ilu.module_from_spec(spec)
+        # A module loaded by path must be in sys.modules before it executes, or
+        # any dataclass inside it fails to resolve its own annotations.
+        sys.modules["agentbox_status"] = module
+        spec.loader.exec_module(module)
+        _status_module = module
+    return _status_module
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
@@ -43,38 +84,14 @@ def report(level: str, msg: str) -> None:
 
 
 def source_sha(service: str) -> str:
-    """Hash exactly the files the Dockerfile copies, plus the compose file.
+    """Delegates to agentbox_status, which is the one definition of this.
 
-    Derived from the Dockerfile's own COPY lines rather than a directory walk,
-    so it measures precisely what determines the image. Shared sources live in
-    services/templates and policies/ and are copied from the repo root at build
-    time — reading the COPY lines means the hash follows them without anyone
-    maintaining a second list.
-
-    This replaced a directory walk that hashed the README, so a doc edit marked
-    a service stale. A freshness check that fires on documentation is one people
-    learn to click past, and this one exists because a security fix once sat in
-    git for three weeks without reaching the running container.
+    The portal needs the same answer to say whether a service is stale, and a
+    second implementation written for that page hashed git history instead of
+    file contents — reporting every service on the box as stale. One function,
+    imported by both, is the only way that stays true.
     """
-    svc_dir = REPO / "services" / "compose" / service
-    dockerfile = svc_dir / "Dockerfile"
-    paths = []
-    if dockerfile.exists():
-        paths.append(dockerfile)
-        for line in dockerfile.read_text(encoding="utf-8").splitlines():
-            m = re.match(r"^COPY\s+(\S+)\s", line.strip())
-            if m:
-                paths.append(REPO / m.group(1))
-    for candidate in ("compose.yaml", "compose.yml"):
-        if (svc_dir / candidate).exists():
-            paths.append(svc_dir / candidate)
-    h = hashlib.sha256()
-    for f in sorted(set(paths), key=lambda x: str(x)):
-        if not f.is_file():
-            continue
-        h.update(str(f.relative_to(REPO)).encode())
-        h.update(f.read_bytes())
-    return h.hexdigest()[:16]
+    return _status().source_sha(service)
 
 
 def load_policy() -> dict:
@@ -305,7 +322,15 @@ def validate() -> int:
     ruff_configured = any((REPO / name).is_file()
                           for name in ("pyproject.toml", "ruff.toml", ".ruff.toml"))
     if shutil.which("ruff") and ruff_configured:
-        lint = subprocess.run(["ruff", "check", "--quiet", "."],
+        # `.` alone silently skips every file without a .py suffix, which is
+        # all three CLI entry points — the largest Python in the repo, and the
+        # ones holding the auth and settings logic. They went unlinted from
+        # the day this gate was added until somebody read its output closely.
+        # Globbed rather than listed so a new entry point is covered by
+        # existing, not by somebody remembering to add it here.
+        scripts = [str(p) for p in (REPO / "cli").glob("agentbox*")
+                   if p.is_file() and p.suffix == ""]
+        lint = subprocess.run(["ruff", "check", "--quiet", ".", *scripts],
                               cwd=str(REPO), capture_output=True, text=True,
                               timeout=120)
         if lint.returncode != 0:
@@ -355,6 +380,11 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     if validate() != 0:
         return 1
 
+    # The policy every bridge enforces travels on the read-only mount rather
+    # than inside the image. Synced here so a deploy can never start a
+    # container against a policy older than the one committed.
+    policy_sync(quiet=True)
+
     env_dir = os.environ.get("AGENTBOX_ENV_DIR")
     if not env_dir:
         for candidate in ("~/.config/agentbox", "~/.config/agent-control-plane"):
@@ -371,8 +401,11 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     env["AGENTBOX_SOURCE_SHA"] = source_sha(service)
     project = service
 
-    compose_cmd = ["docker", "compose", "-p", project, "-f", "compose.yaml",
-                   "config", "--no-interpolate"] if dry_run else                   ["docker", "compose", "-p", project, "-f", "compose.yaml", "up", "-d", "--build"]
+    compose = ["docker", "compose", "-p", project, "-f", "compose.yaml"]
+    # --build is not optional: without it compose reuses the existing image and
+    # the deploy reports success having shipped nothing but the git commit.
+    compose_cmd = (compose + ["config", "--no-interpolate"] if dry_run
+                   else compose + ["up", "-d", "--build"])
 
     if env_file.exists():
         text = env_file.read_text(encoding="utf-8")
@@ -525,7 +558,21 @@ ENDPOINTS = {
     # The builder is not on the assistant's critical path — it proposes code,
     # it does not serve a request. A warning, so an outage here never masks one
     # that stops the assistant working.
-    "vision model": ("http://127.0.0.1:1240/v1/models", WARN),
+    # The vision model binds the docker bridge gateway, not loopback: the Home
+    # Assistant bridge reaches it from inside a container via
+    # host.docker.internal, and a container cannot reach a host's 127.0.0.1.
+    # 172.17.0.1 is an address on the host (docker0), so the host can still
+    # probe it, while 172.16/12 is private to the bridge and not routed off
+    # the box — unlike 0.0.0.0, which would expose it to the LAN. That
+    # matters more here than for the other models: this one carries no API
+    # key.
+    #
+    # Probing 127.0.0.1 reported "vision model responding" from the host
+    # while look_at_camera had been failing at the network layer, because
+    # the check and the caller disagreed about what reachable meant.
+    "vision model": (os.environ.get(
+        "AGENTBOX_VISION_BASE", "http://172.17.0.1:1240/v1")
+        + "/models", WARN),
     "control plane api": ("http://127.0.0.1:8000/api/evals/health", WARN),
     "control plane ui": ("http://127.0.0.1:4321/", WARN),
 }
@@ -1015,6 +1062,82 @@ def bridge_readiness() -> int:
     return bad
 
 
+def policy_dir() -> Path:
+    return Path(os.environ.get(
+        "AGENTBOX_POLICY_DIR",
+        str(Path("~/.local/state/agentbox/policy").expanduser())))
+
+
+def policy_sync(quiet: bool = False) -> int:
+    """Copy the committed approval policy onto the read-only bridge mount.
+
+    The policy used to be COPYd into every image, so changing one line meant
+    rebuilding and redeploying seven containers. That coupled a file that
+    changes weekly to the lifecycle of code that changes rarely — and it was
+    already inconsistent, because `grants.json` has always been read live from
+    this same mount, and a grant is the sharper decision of the two: it
+    permits one specific action right now.
+
+    What baking it in did buy was provenance — the image hash said which
+    policy was being enforced. `policy_drift` replaces that with a comparison
+    of the actual bytes, which answers the same question better.
+
+    Writing where the assistant can write confers no authority: this directory
+    is operator-owned and mounted :ro into every bridge.
+    """
+    source = REPO / "policies" / "approval-policy.yaml"
+    target = policy_dir() / "approval-policy.yaml"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = source.read_bytes()
+        if target.exists() and target.read_bytes() == payload:
+            if not quiet:
+                report(OK, "runtime policy already current")
+            return 0
+        tmp = target.with_suffix(".tmp")
+        tmp.write_bytes(payload)
+        # Readable by the containers that mount this; not writable by them.
+        tmp.chmod(0o644)
+        tmp.replace(target)
+    except OSError as exc:
+        report(FAIL, f"could not sync runtime policy: {exc}")
+        return 1
+    if not quiet:
+        report(OK, f"runtime policy synced to {target}")
+    return 0
+
+
+def policy_drift() -> int:
+    """Whether the policy bridges enforce still matches the committed one.
+
+    This is the check the image hash used to provide. It is a better one: it
+    compares what is actually being enforced rather than when the image
+    happened to be built.
+    """
+    source = REPO / "policies" / "approval-policy.yaml"
+    target = policy_dir() / "approval-policy.yaml"
+    try:
+        committed = source.read_bytes()
+    except OSError as exc:
+        report(FAIL, f"cannot read the committed policy: {exc}")
+        return 1
+    if not target.exists():
+        # Bridges fall back to the copy baked into the image, so this is a
+        # warning rather than an outage. Worth saying loudly: policy edits are
+        # silently not taking effect.
+        report(WARN, f"no runtime policy at {target}; bridges are enforcing "
+                     f"the copy baked into their images. Run "
+                     f"`cli/agentbox policy sync`")
+        return 0
+    if target.read_bytes() != committed:
+        report(FAIL, f"runtime policy differs from the committed one "
+                     f"({target}); bridges are enforcing something that is "
+                     f"not in git. Run `cli/agentbox policy sync`")
+        return 1
+    report(OK, "runtime policy matches the committed one")
+    return 0
+
+
 def deploy_freshness() -> int:
     """Flag running containers whose image source differs from current source."""
     stale = 0
@@ -1038,7 +1161,8 @@ def deploy_freshness() -> int:
             continue
         current = source_sha(service)
         if label != current:
-            report(FAIL, f"stale: {service} running source {label} != current {current} — run cli/agentbox deploy {service}")
+            report(FAIL, f"stale: {service} running source {label} != "
+                         f"current {current} — run cli/agentbox deploy {service}")
             stale += 1
         else:
             report(OK, f"deploy fresh: {service}")
@@ -1072,6 +1196,7 @@ def doctor() -> int:
     pct = disk.used * 100 // disk.total
     report(OK if pct < 90 else WARN, f"disk usage {pct}%")
     bad += deploy_freshness()
+    bad += policy_drift()
     bad += bridge_readiness()
     bad += assistant_containment()
     bad += connector_credentials()
@@ -1578,7 +1703,7 @@ def load_runtime_tiers() -> dict[str, list[str]]:
         if not line.startswith(" "):
             break
         stripped = line.strip()
-        if stripped.endswith(":") or stripped.endswith(": []"):
+        if stripped.endswith((":", ": []")):
             current = stripped.split(":", 1)[0].strip()
             tiers.setdefault(current, [])
         elif stripped.startswith("- ") and current:
@@ -2908,6 +3033,9 @@ def scenarios() -> int:
     spec = _ilu.spec_from_file_location(
         "agentbox_scenarios", Path(__file__).resolve().parent / "agentbox_scenarios.py")
     lib = _ilu.module_from_spec(spec)
+    # See the note in agentbox-portal's _sibling: a module loaded by path must
+    # be in sys.modules before it executes, or any dataclass inside it fails.
+    sys.modules["agentbox_scenarios"] = lib
     spec.loader.exec_module(lib)
 
     token = smoke_token("agentbox-mcp")
@@ -2997,6 +3125,10 @@ def main() -> None:
     cs = con_sub.add_parser("sync")
     cs.add_argument("--quiet", action="store_true",
                     help="say nothing when there is nothing to do")
+    ka = sub.add_parser("keepalive",
+                        help="restore the model stack if an evaluation left it down")
+    ka.add_argument("--quiet", action="store_true",
+                    help="say nothing unless something was restored")
     pr = sub.add_parser("proposals", help="review code changes the assistant has proposed")
     pr_sub = pr.add_subparsers(dest="proposals_cmd", required=True)
     pr_sub.add_parser("list")
@@ -3009,6 +3141,8 @@ def main() -> None:
     pol_sub = pol.add_subparsers(dest="pol_cmd", required=True)
     check = pol_sub.add_parser("check")
     check.add_argument("action")
+    pol_sub.add_parser("sync", help="copy the committed policy onto the bridge mount")
+    pol_sub.add_parser("drift", help="is the enforced policy the committed one")
     up = sub.add_parser("update",
                         help="pull a newer third-party image and redeploy")
     up.add_argument("service")
@@ -3117,6 +3251,8 @@ def main() -> None:
         sys.exit(rules_remove(args.name))
     if args.cmd == "connectors":
         sys.exit(connectors_sync(args.quiet))
+    if args.cmd == "keepalive":
+        sys.exit(_keepalive().main(["--quiet"] if args.quiet else []))
     if args.cmd == "proposals":
         if args.proposals_cmd == "list":
             sys.exit(proposals_list())
@@ -3125,6 +3261,10 @@ def main() -> None:
         sys.exit(proposals_merge(args.name))
     if args.cmd == "status":
         sys.exit(status())
+    if args.cmd == "policy" and args.pol_cmd == "sync":
+        sys.exit(policy_sync())
+    if args.cmd == "policy" and args.pol_cmd == "drift":
+        sys.exit(policy_drift())
     if args.cmd == "policy" and args.pol_cmd == "check":
         sys.exit(policy_check(args.action))
     if args.cmd == "update":

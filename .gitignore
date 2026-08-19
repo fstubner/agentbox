@@ -15,3 +15,4 @@ data/
 !*.op.env.example
 results/
 out/
+.agent-evidence/

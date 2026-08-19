@@ -57,6 +57,12 @@ Environment=GOOGLE_ENABLE_DRIVE_READ_ALL=1
 # Who is an admin. Everyone else is a member: their own memories and their own
 # connectors, no operations. Empty would mean nobody is an admin, which is the
 # right direction for a misread value to fail in.
+# Identities the gateway is configured to act for, so the portal can show
+# somebody who exists to the assistant but has no way to sign in — the state
+# the "Who lives here" card exists to surface. Names only: the gateway's own
+# AGENTBOX_IDENTITIES carries bearer credentials, and this service is the
+# LAN-facing one.
+Environment=AGENTBOX_IDENTITY_NAMES=alex,sam
 Environment=AGENTBOX_ADMINS=alex
 
 # Sign-in addresses. An address here is not a credential — it only decides
@@ -75,6 +81,12 @@ Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 #   AGENTBOX_SMTP_USER=you@gmail.com
 #   AGENTBOX_SMTP_PASSWORD=<app password>
 EnvironmentFile=-%h/.config/agent-control-plane/portal-smtp.env
+# The token the assistant presents to /agent/link. Without it the
+# endpoint 403s with or without a header, which is the correct
+# direction to be off but means the ORIGIN_AGENT downgrade is only
+# ever exercised by tests. A leading dash so a box without the file
+# still starts, with the endpoint simply inert.
+EnvironmentFile=-%h/.config/agent-control-plane/portal-agent.env
 
 # The address links point at, and the base of the Google redirect URI.
 # Loopback by default because Google refuses .local and bare LAN hostnames

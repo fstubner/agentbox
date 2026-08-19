@@ -1,8 +1,16 @@
 # Agentbox
 
-A self-hosted personal AI assistant platform for a single operator on local
-hardware. Runs a local LLM behind a gateway with narrow, policy-gated levers:
-task management, email/calendar bridges, and role-routed local worker models.
+A self-hosted AI assistant for one household on local hardware. Runs a local
+LLM behind a gateway with narrow, policy-gated levers: task management,
+email/calendar bridges, and role-routed local worker models.
+
+Two people share it, with a household plane and private planes: tasks,
+shopping and joint scheduling are shared; each person's mail, calendar detail
+and personal memory are not. Identity is bound to the session that
+authenticated, never passed as a tool argument — see `PRODUCT.md`.
+
+A box with no identities configured still runs as a single operator; that is a
+supported deployment, not the shape this is designed around.
 
 Design principles:
 
