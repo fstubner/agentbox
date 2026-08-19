@@ -1,0 +1,29 @@
+# Watches for an approval the portal wrote.
+#
+# A path unit rather than a timer because an approval is an event, not a
+# condition to sample: somebody tapped a button and is waiting, so a two-minute
+# poll would be two minutes of a page saying nothing happened yet.
+#
+# PathExistsGlob, specifically, and not DirectoryNotEmpty. `agentbox invite
+# drain` settles each request into onboarding/settled/ rather than deleting it,
+# so the directory is permanently non-empty once anything has ever been
+# approved — DirectoryNotEmpty would latch true and re-trigger forever. The
+# glob only matches requests at the top level, which is exactly the set that
+# still wants acting on.
+#
+# systemd re-arms this when the condition goes false, which happens the moment
+# drain settles the last request. A drain that fails still settles, with the
+# reason, so a bad record ends as one journal line rather than a loop.
+#
+# The condition is also evaluated when the unit starts, so approvals written
+# while this was stopped are picked up at boot rather than sitting unnoticed.
+
+[Unit]
+Description=Watch for onboarding approvals from the portal
+
+[Path]
+PathExistsGlob=%h/.local/state/agentbox/onboarding/*.json
+Unit=agentbox-onboarding.service
+
+[Install]
+WantedBy=paths.target

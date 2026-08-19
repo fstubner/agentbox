@@ -48,6 +48,7 @@ tiers:
     - drive_write_own_folder         # the agent's own Drive folder only
     - speak_aloud                    # quiet hours enforced in the speaker service
     - request_signin_link            # what it mints is bounded, not the minting
+    - propose_invite                 # writes a draft; sending is a human act
     - email_state_change             # archive / mark read; reversible, stays in the account
 
     # drive_read is `allowed` for the same reason personal_data_read is: the
@@ -152,6 +153,7 @@ tools:
 
   # speaker
   request_signin_link: request_signin_link
+  propose_invite: propose_invite
   speak_aloud: speak_aloud
   list_speakers: home_read_state
 

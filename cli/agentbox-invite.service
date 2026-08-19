@@ -1,0 +1,55 @@
+# The collecting half of onboarding — the form somebody fills in on their phone.
+#
+# Install:
+#   cp cli/agentbox-invite.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-invite
+#
+# Deliberately the least privileged thing on this box. cli/agentbox-invite
+# explains why at length: it has no docker socket, no 1Password token, no
+# bridge tokens, and cannot create an identity. It writes one spool file and
+# that is all it can do, because it is a LAN-reachable page that strangers are
+# sent links to.
+#
+# It runs as a unit rather than being started by hand because the link is now
+# delivered by email or DM — an invitation that arrives while nobody has a
+# terminal open would otherwise reach a closed port, which reads to the
+# recipient as the household being broken rather than the page being down.
+#
+# Restart=always for the same reason: the person holding the link is not in a
+# position to ask anyone to restart anything.
+#
+# --unattended is not decoration. Run by hand, `serve` exits 1 with nothing
+# outstanding, because that almost always means `create` was forgotten. Under
+# Restart=always that is a crash loop every five seconds, which is how this
+# unit behaved the first time it was installed. The flag says explicitly that
+# an empty spool is the normal resting state here, and cli/agentbox-invite
+# records why that differs from the hand-run case.
+
+# AGENTBOX_INVITE_ORIGIN is deliberately NOT set here, so the form skips the
+# Google step rather than offering one that breaks.
+#
+# The origin is both where Google sends the person back and where they opened
+# the form, and those disagree the moment somebody uses a phone: loopback
+# resolves to their handset, and Google will not accept the LAN name instead.
+# Skipping is the better failure. They finish onboarding, get their account,
+# and connect Google afterwards from the portal under "Your accounts", where
+# the redirect is loopback and consent happens at this machine.
+#
+# Set it only if invitees will fill the form in on the box itself, in which
+# case http://127.0.0.1:8770 works and the Google step happens inline.
+
+[Unit]
+Description=Agentbox onboarding form
+After=network-online.target
+
+[Service]
+ExecStart=%h/oss/agentbox/cli/agentbox-invite serve --unattended
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

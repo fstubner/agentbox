@@ -31,6 +31,7 @@ REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.pare
 
 _keepalive_module = None
 _status_module = None
+_onboarding_module = None
 
 
 def _keepalive():
@@ -68,6 +69,21 @@ def _status():
         spec.loader.exec_module(module)
         _status_module = module
     return _status_module
+
+def _onboarding():
+    """Load cli/agentbox_onboarding.py, once. See _status for why it is lazy."""
+    global _onboarding_module
+    if _onboarding_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_onboarding",
+            Path(__file__).resolve().parent / "agentbox_onboarding.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_onboarding"] = module
+        spec.loader.exec_module(module)
+        _onboarding_module = module
+    return _onboarding_module
+
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
@@ -357,6 +373,22 @@ def validate() -> int:
         else:
             report(OK, f"tool schemas ~{tokens:,} tokens/turn across {count} "
                        f"tools (budget {TOOL_SCHEMA_TOKEN_BUDGET:,})")
+
+    oversized, grown = file_size_drift()
+    if oversized or grown:
+        detail = []
+        if oversized:
+            detail.append("new file(s) over the limit: "
+                          + ", ".join(f"{f} ({n})" for f, n in oversized))
+        if grown:
+            detail.append("already-large file(s) that grew: "
+                          + ", ".join(f"{f} ({was} -> {n})"
+                                      for f, was, n in grown))
+        error("; ".join(detail) + ". Split it, or raise its recorded ceiling "
+              "in LARGE_FILES deliberately.")
+    else:
+        report(OK, f"no source file over {LARGE_FILE_LIMIT} lines except the "
+                   f"{len(LARGE_FILES)} already recorded")
 
     report(OK if failures == 0 else FAIL, f"validate finished with {failures} error(s)")
     return 1 if failures else 0
@@ -2458,9 +2490,10 @@ def invite_complete(token_id: str) -> int:
         if not code:
             report(WARN, "she chose google but did not finish the consent "
                          "screen, so there is no code to exchange")
-            print("      Re-invite her and have her complete the Google step; "
-                  "until then\n      she shares your Google bridge, which is "
-                  "wrong for mail.")
+            print("      Not a problem to re-invite for: she connects Google "
+                  "herself from\n      the portal under 'Your accounts', "
+                  "which provisions the same\n      bridge. Until she does, "
+                  "she shares yours, which is wrong for mail.")
         else:
             refresh_token = exchange_oauth_code(code, redirect_uri)
             if refresh_token and provision_google_bridge(name, refresh_token):
@@ -2481,6 +2514,141 @@ def invite_complete(token_id: str) -> int:
     report(OK, f"invite {token_id} completed")
     print("\nFinally: cli/agentbox deploy agentbox-mcp")
     return 0
+
+
+def invite_drain() -> int:
+    """Complete the invites an admin approved from the portal.
+
+    The privileged half of onboarding, triggered by a file instead of by a
+    person at a shell. The household decided on 2026-08-19 that onboarding
+    should not need a terminal; this is where that lands without the docker
+    socket moving to a web page.
+
+    Everything deciding *whether* to act is re-derived here from the invite
+    record. The request is trusted for exactly one thing — which invite is
+    meant — and `pending()` has already checked that claim against the
+    request's own filename before this sees it.
+
+    Runs unattended, so it never retries: a failure settles with its reason
+    rather than staying in the spool to fire again on the next trigger, which
+    is how an unattended worker turns one bad record into a loop.
+    """
+    onb = _onboarding()
+    requests = onb.pending()
+    if not requests:
+        return 0
+
+    failed = 0
+    for req in requests:
+        token_id = req["token_id"]
+        if onb.expired(req):
+            onb.settle(req, "expired",
+                       "sat in the spool longer than an approval stays a "
+                       "decision")
+            report(WARN, f"invite {token_id}: approval expired unused")
+            continue
+
+        record = _invite(token_id)
+        if not record:
+            onb.settle(req, "unknown", "no invite with that id")
+            report(WARN, f"invite {token_id}: approved but no such invite")
+            continue
+        if not record.get("used_at"):
+            onb.settle(req, "not_submitted", "she has not filled it in yet")
+            report(WARN, f"invite {token_id}: approved before it was filled in")
+            continue
+        if record.get("completed_at"):
+            # Two admins approving the same invite, or a retrigger, should
+            # converge quietly rather than read as something going wrong.
+            onb.settle(req, "already_completed", "completed before this ran")
+            continue
+
+        code = invite_complete(token_id)
+        if code == 0:
+            onb.settle(req, "completed",
+                       f"approved by {req.get('requested_by', 'unknown')}")
+        else:
+            failed += 1
+            onb.settle(req, "failed", f"`invite complete` exited {code}")
+            report(FAIL, f"invite {token_id}: completion failed")
+    return 1 if failed else 0
+
+
+# --- file size, including the files nothing else measures ----------------------
+
+LARGE_FILE_LIMIT = 400
+
+# Files already past the point where one sitting reads the whole thing. Each
+# number is a ceiling, not a blessing: these may shrink and must not grow, and
+# a file not listed here may not cross the limit at all.
+#
+# This exists because the smell checker that flags large files globs `*.py`,
+# so the four biggest things in this repo are invisible to it — `cli/agentbox`
+# and `cli/agentbox-portal` among them, which between them hold the argument
+# parsing, the policy checks and every HTTP handler. A gate blind to its own
+# worst case reports clean and means nothing, so the repo measures itself.
+#
+# Raising an entry is allowed and is meant to be a visible line in a diff.
+LARGE_FILES = {
+    "cli/agentbox": 3477,
+    "cli/agentbox-portal": 3151,
+    "services/compose/memory-bridge/app/bridge.py": 1075,
+    "services/compose/google-workspace-bridge/app/bridge.py": 937,
+    "cli/agentbox-approvals": 788,
+    "services/compose/homeassistant-bridge/app/bridge.py": 759,
+    "tests/test_mcp_base.py": 650,
+    "tests/test_portal_auth.py": 632,
+    "tests/test_memory_feedback.py": 602,
+    "cli/agentbox-invite": 546,
+    "services/templates/mcp/mcp_base.py": 546,
+    "tests/test_homeassistant.py": 540,
+    "tests/test_drive_constraints.py": 499,
+    "cli/agentbox_status.py": 488,
+    "cli/agentbox_settings.py": 439,
+    "tests/test_builder.py": 403,
+}
+
+
+def source_files() -> list[Path]:
+    """Tracked Python, plus the extensionless scripts that are also Python.
+
+    Extension is not a reliable signal here: the four largest files in the
+    repo have none, because they are commands people type.
+    """
+    listing = subprocess.run(["git", "ls-files"], cwd=str(REPO),
+                             capture_output=True, text=True, check=False)
+    out = []
+    for name in listing.stdout.split():
+        path = REPO / name
+        if path.suffix == ".py":
+            out.append(path)
+            continue
+        if path.suffix:
+            continue
+        try:
+            if path.read_bytes()[:2] == b"#!":
+                out.append(path)
+        except OSError:
+            continue
+    return out
+
+
+def file_size_drift() -> tuple[list, list]:
+    """(files newly over the limit, recorded files that grew)."""
+    oversized, grown = [], []
+    for path in source_files():
+        try:
+            lines = len(path.read_text(encoding="utf-8").splitlines())
+        except (OSError, UnicodeDecodeError):
+            continue
+        name = str(path.relative_to(REPO))
+        recorded = LARGE_FILES.get(name)
+        if recorded is None:
+            if lines > LARGE_FILE_LIMIT:
+                oversized.append((name, lines))
+        elif lines > recorded:
+            grown.append((name, recorded, lines))
+    return oversized, grown
 
 
 def env_dir() -> str:
@@ -3100,6 +3268,8 @@ def main() -> None:
     inv_sub = inv.add_subparsers(dest="invite_cmd", required=True)
     invc = inv_sub.add_parser("complete")
     invc.add_argument("token_id")
+    inv_sub.add_parser(
+        "drain", help="complete the invites an admin approved from the portal")
     idn = sub.add_parser("identity", help="manage who the assistant can act for")
     idn_sub = idn.add_subparsers(dest="identity_cmd", required=True)
     idn_sub.add_parser("list")
@@ -3224,6 +3394,8 @@ def main() -> None:
     if args.cmd == "smoke":
         sys.exit(smoke())
     if args.cmd == "invite":
+        if args.invite_cmd == "drain":
+            sys.exit(invite_drain())
         sys.exit(invite_complete(args.token_id))
     if args.cmd == "identity":
         if args.identity_cmd == "list":

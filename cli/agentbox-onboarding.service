@@ -1,0 +1,36 @@
+# The privileged half of onboarding, triggered by a file instead of a shell.
+#
+# Install:
+#   cp cli/agentbox-onboarding.{service,path} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-onboarding.path
+#
+# Why this is a separate unit rather than a button in the portal:
+#
+# Completing an invite runs `docker compose up` for a new bridge. The portal is
+# a LAN-reachable page handling untrusted requests, and cli/agentbox-invite
+# argues at length that such a page must never be the thing holding the docker
+# socket. So the portal writes a request and this reads it — the portal gains
+# no capability, and a bug in request handling cannot reach a container.
+#
+# That argument is currently weaker than it sounds and this unit does not fix
+# it: agentbox-portal.service runs as the operator, who is in the `docker`
+# group, so the socket is already reachable to that process. What stops it is
+# the absence of a code path, not a privilege boundary. Taking the portal out
+# of the docker group is the follow-up that makes the claim true; until then
+# this split is real for the code and aspirational for the process.
+#
+# No `op run` wrapper, unlike agentbox-portal.service: service_env_values()
+# resolves op:// references itself, sourcing 1password.env from the env
+# directory, so this needs to run as somebody who can read that file and
+# nothing more.
+
+[Unit]
+Description=Complete the invites an admin approved from the portal
+
+[Service]
+Type=oneshot
+ExecStart=%h/oss/agentbox/cli/agentbox invite drain
+
+NoNewPrivileges=true
+PrivateTmp=true
