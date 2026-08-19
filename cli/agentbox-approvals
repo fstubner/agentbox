@@ -455,25 +455,50 @@ def deliver_pending_links(token: str) -> None:
             record = json.loads(entry.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if record.get("action") != "deliver_link" or record.get("completed_at"):
+        action = record.get("action")
+        if action not in ("deliver_link", "deliver_invite"):
+            continue
+        if record.get("completed_at"):
             continue
         identity = str(record.get("identity", ""))
-        user = mapping.get(identity)
-        if not user:
-            log(f"no Discord id for {identity}; sign-in link not delivered")
-            continue
+        if action == "deliver_invite":
+            # There is nobody to look up. An invitation goes to somebody who
+            # has no identity on this box yet — that is what it is for — so
+            # the recipient is carried on the record, put there by an admin
+            # approving a draft rather than by the assistant that wrote it.
+            user = str(record.get("discord_user_id", ""))
+            if not user:
+                log(f"invite for {identity} has no Discord id; not delivered")
+                continue
+        else:
+            user = mapping.get(identity)
+            if not user:
+                log(f"no Discord id for {identity}; sign-in link not delivered")
+                continue
         channel = dm_channel(user, token)
         if not channel:
             continue
-        posted = discord("POST", f"/channels/{channel}/messages", token, {
-            "content": (
+        if action == "deliver_invite":
+            greeting = str(record.get("display_name", "")) or "there"
+            content = (
+                f"Hi {greeting} — you have been invited to join a household "
+                f"Agentbox, an assistant running on somebody's own "
+                f"hardware.\n{record.get('url')}\nOpen it to set up your "
+                f"account. It works once and expires. Nothing is created "
+                f"until the person who runs the box confirms it, so there may "
+                f"be a wait after you fill in the form. If you were not "
+                f"expecting this, ignore it and tell whoever sent it.")
+        else:
+            content = (
                 f"Here is your Agentbox sign-in link.\n{record.get('url')}\n"
                 f"It works once and expires shortly. Opened in the browser you "
                 f"asked from, it gives you everything. Opened anywhere else — "
                 f"including from this app — you can read your memories and "
                 f"accounts but not approve or disconnect anything, because "
                 f"anyone who saw this message could be the one opening it. "
-                f"That includes me.")})
+                f"That includes me.")
+        posted = discord("POST", f"/channels/{channel}/messages", token, {
+            "content": content})
         if not posted:
             continue
         # The URL is a credential until it expires. Drop it as soon as it is

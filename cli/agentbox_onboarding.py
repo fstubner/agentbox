@@ -164,3 +164,146 @@ def already_requested(token_id: str) -> bool:
         return request_path(token_id).exists()
     except ValueError:
         return False
+
+
+# --- invitations the assistant drafted -----------------------------------------
+#
+# The assistant may compose an invitation and choose how it travels. It may not
+# decide who lives here, so what it writes is a proposal: it appears on
+# Operations and sends nothing until an admin says so.
+#
+# The threat this shape answers is specific. The assistant reads household
+# mail, so a message saying "please add alex@example.com to your assistant" is
+# untrusted input that reaches the model. Without the approval step, composing
+# that invitation and sending it would be one tool call, and a stranger would
+# hold a credential that creates an identity on this box.
+
+IDENTITY_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+INVITE_TTL_HOURS = 48
+
+
+def invite_dir() -> Path:
+    return Path(os.environ.get(
+        "AGENTBOX_INVITE_DIR",
+        str(Path("~/.local/state/agentbox/invites").expanduser())))
+
+
+def proposals_dir() -> Path:
+    return spool_dir() / "proposals"
+
+
+class NameTaken(ValueError):
+    """Proposed for somebody who already lives here."""
+
+
+def create_invite(identity: str, existing: set[str],
+                  ttl_hours: int = INVITE_TTL_HOURS) -> dict:
+    """Mint an invite record. Unprivileged: this writes one file.
+
+    `existing` is required rather than looked up, so no caller can forget it.
+    An invite names the identity its holder will become, and completing one
+    for a name already in use would re-provision that person's bridge with
+    whoever answered the form — handing an attacker `alex` rather than
+    creating an `alex`. There is no legitimate reason to invite somebody to a
+    name that is taken, so this refuses rather than disambiguating.
+    """
+    identity = (identity or "").strip().lower()
+    if not IDENTITY_NAME.match(identity):
+        raise ValueError(
+            "a name must be lowercase letters, digits, dashes or underscores, "
+            "starting with a letter — for example sam")
+    if identity in {e.strip().lower() for e in existing}:
+        raise NameTaken(f"{identity} already lives here")
+
+    import secrets as _secrets
+    record = {
+        "id": _secrets.token_hex(8),
+        "secret": _secrets.token_urlsafe(32),
+        "identity": identity,
+        "created_at": int(time.time()),
+        "expires_at": int(time.time()) + ttl_hours * 3600,
+        "used_at": None,
+    }
+    directory = invite_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{record['id']}.json"
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    # The secret is in here, and it is what makes the link a credential.
+    path.chmod(0o600)
+    return record
+
+
+def invite_url(record: dict, host: str, port: int = 8770) -> str:
+    return (f"http://{host}:{port}/?i={record['id']}"
+            f"&t={record['secret']}")
+
+
+def propose(identity: str, display_name: str, address: str = "",
+            discord_user_id: str = "", proposed_by: str = "") -> dict:
+    """Record an invitation the assistant drafted. Sends nothing.
+
+    Deliberately does not check whether the name is free. That check belongs
+    where the invite is actually minted, and doing it here as well would let
+    the two disagree — with this copy, the one an admin reads, being the
+    optimistic one.
+    """
+    import secrets as _secrets
+    record = {
+        "id": _secrets.token_hex(8),
+        "identity": (identity or "").strip().lower(),
+        "display_name": (display_name or "").strip()[:80],
+        "address": (address or "").strip()[:200],
+        "discord_user_id": (discord_user_id or "").strip()[:32],
+        "proposed_by": proposed_by,
+        "proposed_at": int(time.time()),
+    }
+    directory = proposals_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o700)
+    path = directory / f"{record['id']}.json"
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    path.chmod(0o600)
+    return record
+
+
+def proposals() -> list[dict]:
+    """Drafted invitations waiting on an admin, oldest first."""
+    out = []
+    try:
+        paths = sorted(proposals_dir().glob("*.json"))
+    except OSError:
+        return []
+    for path in paths:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not TOKEN_ID.match(str(record.get("id", ""))):
+            continue
+        if path.name != f"{record['id']}.json":
+            continue
+        record["path"] = path
+        out.append(record)
+    out.sort(key=lambda r: int(r.get("proposed_at", 0)))
+    return out
+
+
+def proposal(proposal_id: str) -> dict | None:
+    if not TOKEN_ID.match(proposal_id or ""):
+        return None
+    for record in proposals():
+        if record["id"] == proposal_id:
+            return record
+    return None
+
+
+def discard_proposal(record: dict) -> None:
+    """Drop a proposal. Not archived: an invitation nobody sent is not an
+    event worth keeping, and the assistant may well draft it again."""
+    path = record.get("path")
+    if isinstance(path, Path):
+        try:
+            path.unlink()
+        except OSError:
+            pass

@@ -1,0 +1,35 @@
+# The collecting half of onboarding — the form somebody fills in on their phone.
+#
+# Install:
+#   cp cli/agentbox-invite.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentbox-invite
+#
+# Deliberately the least privileged thing on this box. cli/agentbox-invite
+# explains why at length: it has no docker socket, no 1Password token, no
+# bridge tokens, and cannot create an identity. It writes one spool file and
+# that is all it can do, because it is a LAN-reachable page that strangers are
+# sent links to.
+#
+# It runs as a unit rather than being started by hand because the link is now
+# delivered by email or DM — an invitation that arrives while nobody has a
+# terminal open would otherwise reach a closed port, which reads to the
+# recipient as the household being broken rather than the page being down.
+#
+# Restart=always for the same reason: the person holding the link is not in a
+# position to ask anyone to restart anything.
+
+[Unit]
+Description=Agentbox onboarding form
+After=network-online.target
+
+[Service]
+ExecStart=%h/oss/agentbox/cli/agentbox-invite serve
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

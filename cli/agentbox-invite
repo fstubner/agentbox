@@ -37,7 +37,6 @@ import hmac
 import html
 import json
 import os
-import secrets
 import sys
 import time
 import urllib.parse
@@ -370,18 +369,50 @@ class InviteHandler(BaseHTTPRequestHandler):
 # --- operator commands -----------------------------------------------------------
 
 
+def _shared():
+    """cli/agentbox_onboarding.py, which owns the invite record format.
+
+    Loaded rather than duplicated: this record carries the secret that makes
+    the link a credential, and the portal mints the same thing when an admin
+    approves a draft. Two copies of that shape drift, and the one that drifts
+    silently is the one nobody runs by hand.
+    """
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location(
+        "agentbox_onboarding",
+        Path(__file__).resolve().parent / "agentbox_onboarding.py")
+    module = _ilu.module_from_spec(spec)
+    sys.modules["agentbox_onboarding"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def configured_identities() -> set[str]:
+    """Who the gateway already acts for.
+
+    Passed to create_invite so it can refuse a name that is taken. Completing
+    an invite for an existing identity re-provisions that person's bridge with
+    whoever answered the form, which turns an invitation into a takeover.
+    """
+    raw = os.environ.get("AGENTBOX_IDENTITY_NAMES", "")
+    return {n.strip().lower() for n in raw.replace(" ", ",").split(",")
+            if n.strip()}
+
+
 def cmd_create(args) -> int:
-    token_id = secrets.token_hex(8)
-    secret = secrets.token_urlsafe(32)
-    record = {
-        "id": token_id,
-        "secret": secret,
-        "identity": args.name,
-        "created_at": now(),
-        "expires_at": now() + args.ttl_hours * 3600,
-        "used_at": None,
-    }
-    save_invite(record)
+    shared = _shared()
+    try:
+        record = shared.create_invite(
+            args.name, configured_identities(), args.ttl_hours)
+    except shared.NameTaken:
+        print(f"'{args.name}' already lives here. Inviting somebody to a name "
+              f"that is taken would hand them that account, not create one.")
+        return 1
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    token_id = record["id"]
+    secret = record["secret"]
     host = args.host or "agentbox.local"
     print(f"Invite for '{args.name}' — valid {args.ttl_hours}h, single use.\n")
     print(f"  http://{host}:{BIND_PORT}/?i={token_id}&t={secret}\n")
