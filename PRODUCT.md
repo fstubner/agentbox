@@ -119,6 +119,23 @@ do is read as achieved when it is not. Status measured 2026-08-19.
   compromised; an approval only helps if a human reads carefully.
 - **Nothing spoken leaves the box** — a deliberate trade of speech quality for
   locality (`docs/voice.md`).
+- **Granting Google consent away from the box needs a real hostname.** Google
+  refuses a private IP or a `.local` name as an OAuth redirect URI and accepts
+  only HTTPS on a resolvable name, or loopback. Imposed by Google, not chosen
+  here, and it applies to no other part of the system.
+
+  It is a limit on one step rather than a barrier to adoption, and the code is
+  arranged so it stays that way. `AGENTBOX_PORTAL_URL` is where people reach
+  the portal and must resolve from a phone; `AGENTBOX_OAUTH_REDIRECT_BASE` is
+  what Google is told and defaults to loopback. A household with no
+  infrastructure at all gets onboarding, tasks, memory and the house over
+  plain LAN HTTP, and connects Google in a browser on the box — for people who
+  live together, sitting down at it once. Pointing both variables at one
+  `https://` name lifts that, and is the only thing a hostname buys.
+
+  These were a single setting until 2026-08-19, which made the two
+  requirements mutually exclusive: a value a phone could reach broke consent,
+  and loopback made every delivered link point at the recipient's own device.
 
 ## Anti-goals
 

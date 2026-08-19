@@ -92,7 +92,16 @@ EnvironmentFile=-%h/.config/agent-control-plane/portal-agent.env
 # Loopback by default because Google refuses .local and bare LAN hostnames
 # outright; `agentbox validate` fails if this is set to something the console
 # will not accept.
-Environment=AGENTBOX_PORTAL_URL=http://127.0.0.1:8771
+# What goes into sign-in links and invitations, so it has to resolve from a
+# phone. Loopback here meant every link delivered by email pointed the
+# recipient at their own device. mDNS rather than the LAN IP because the
+# address is handed out by DHCP and the name is not.
+Environment=AGENTBOX_PORTAL_URL=http://agentbox.local:8771
+# What Google is told, which is a different question with a different answer:
+# it refuses private IPs and .local, and accepts loopback. Consent is
+# therefore granted in a browser on this box. Set both to one https:// name
+# to allow it from anywhere.
+Environment=AGENTBOX_OAUTH_REDIRECT_BASE=http://127.0.0.1:8771
 
 # Bound to all interfaces so a phone on the LAN can reach it. The magic-link
 # flow is what protects it, not the network boundary.

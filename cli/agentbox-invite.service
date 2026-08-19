@@ -26,6 +26,19 @@
 # an empty spool is the normal resting state here, and cli/agentbox-invite
 # records why that differs from the hand-run case.
 
+# AGENTBOX_INVITE_ORIGIN is deliberately NOT set here, so the form skips the
+# Google step rather than offering one that breaks.
+#
+# The origin is both where Google sends the person back and where they opened
+# the form, and those disagree the moment somebody uses a phone: loopback
+# resolves to their handset, and Google will not accept the LAN name instead.
+# Skipping is the better failure. They finish onboarding, get their account,
+# and connect Google afterwards from the portal under "Your accounts", where
+# the redirect is loopback and consent happens at this machine.
+#
+# Set it only if invitees will fill the form in on the box itself, in which
+# case http://127.0.0.1:8770 works and the Google step happens inline.
+
 [Unit]
 Description=Agentbox onboarding form
 After=network-online.target

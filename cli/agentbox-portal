@@ -179,6 +179,39 @@ if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
 # Same variable and default as cli/agentbox, deliberately. Two names for one
 # endpoint is how a portal ends up quietly pointed at nothing.
 PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
+
+# Where Google is told to send somebody back, which is deliberately NOT
+# PUBLIC_URL even though it was for a long time.
+#
+# One value was doing two jobs with incompatible requirements. PUBLIC_URL has
+# to resolve from a phone, or every sign-in link and invitation is unusable.
+# Google refuses a private IP as a redirect URI and accepts only HTTPS on a
+# real hostname, or loopback — and loopback on somebody's phone is their
+# phone. Set PUBLIC_URL to something a phone can reach and Google rejects the
+# consent flow; set it to loopback and the links go nowhere.
+#
+# That collision, not Google itself, was the reason this looked like it needed
+# Tailscale or a domain to adopt at all. Split apart, a box with no
+# infrastructure gets working onboarding, tasks, memory and house control over
+# plain LAN HTTP, and the one thing that still wants a hostname — granting
+# Google consent from somewhere other than this machine — is an upgrade rather
+# than a prerequisite. Point both at the same https:// name to get it.
+#
+# The default is loopback because that is the setting that always works: it
+# means consent is granted in a browser on this box, which for a household is
+# a person sitting down at it once.
+OAUTH_REDIRECT_BASE = os.environ.get("AGENTBOX_OAUTH_REDIRECT_BASE",
+                                     "http://127.0.0.1:8771")
+
+
+def oauth_redirect_uri() -> str:
+    """The redirect URI, derived once.
+
+    Both halves of the flow must send Google the identical string — the
+    consent request and the token exchange — and Google compares it to what is
+    registered. Two call sites building it separately is how they drift.
+    """
+    return f"{OAUTH_REDIRECT_BASE.rstrip('/')}/google/callback"
 MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
                                    "http://127.0.0.1:3471")
 
@@ -959,7 +992,7 @@ def google_consent_url(state: str) -> str:
     """
     query = urllib.parse.urlencode({
         "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": f"{PUBLIC_URL.rstrip('/')}/google/callback",
+        "redirect_uri": oauth_redirect_uri(),
         "response_type": "code",
         "scope": GOOGLE_SCOPES,
         "access_type": "offline",
@@ -1818,7 +1851,8 @@ def render_onboarding_card() -> str:
             # it leaves them sharing the shared bridge, which is wrong for mail.
             note = ("<div class=sub>They did not finish the Google consent "
                     "step, so they would share the household bridge rather "
-                    "than get their own. Re-invite them to fix that.</div>")
+                    "than get their own. They can connect Google themselves "
+                    "afterwards, from their own portal.</div>")
             level = "warn"
         rows.append(
             f"<div class=row><span class='dot {level}'></span>"
@@ -2781,7 +2815,7 @@ class PortalHandler(BaseHTTPRequestHandler):
             "connector": "google",
             "action": "reconnect",
             "code": code,
-            "redirect_uri": f"{PUBLIC_URL.rstrip('/')}/google/callback",
+            "redirect_uri": oauth_redirect_uri(),
             "created_at": now(),
             "completed_at": None,
         })
