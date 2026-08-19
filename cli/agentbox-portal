@@ -300,6 +300,8 @@ FLASHES = {
                                    "open a link you requested yourself."),
     "settings_saved": "Saved.",
     "invite_sent": "Invited. Their sign-in link is on its way.",
+    "invite_created": "Invitation sent. They fill in a short form, then "
+                      "it comes back here for you to finish.",
     "proposal_discarded": "Discarded. Nothing was sent.",
     "proposal_gone": "That draft is no longer there.",
     "proposal_name_taken": "Somebody by that name already lives here, "
@@ -1982,6 +1984,41 @@ def render_proposals_card() -> str:
             f"deciding who lives here is yours.</div>{''.join(rows)}</div>")
 
 
+def render_new_invite_card(error: str = "") -> str:
+    """Start somebody's onboarding without opening a terminal.
+
+    The last part of that claim that was still untrue. Everything after this
+    step moved off the shell already — the invitee fills in a web form, and an
+    admin finishes it from Operations — but starting one still meant
+    `agentbox invite create` at a keyboard, so the household could not actually
+    add a person from a phone.
+
+    There was never a reason for it to want a shell. Creating an invite writes
+    one JSON record: no docker socket, no bridge token, no 1Password. The
+    privileged half is completion, and that already lives in its own unit.
+
+    Deliberately separate from the form on the people card, which mints a
+    sign-in link for somebody the gateway already knows about. This one is for
+    a person who does not exist here yet and needs accounts of their own.
+    """
+    note = ""
+    if error:
+        note = f"<div class=sub style='margin-top:.6rem'>{error}</div>"
+    return (
+        f"<div class=card><b>Invite somebody new</b>"
+        f"<div class=sub style='margin:.4rem 0 .7rem'>They get a link to a "
+        f"short form. Nothing is created until you approve it here "
+        f"afterwards.</div>"
+        f"<form method=post action=/admin/invite-create>"
+        f"<input name=account_name placeholder='name, e.g. sam' autocomplete=off "
+        f"style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<input name=email type=email placeholder='email (optional)' "
+        f"autocomplete=off style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<input name=discord_user_id placeholder='Discord id (optional)' "
+        f"autocomplete=off style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<button class=yes>Send invitation</button></form>{note}</div>")
+
+
 def render_people_card(flash_error: str = "") -> str:
     """Who lives here, how each of them gets in, and a way to add somebody.
 
@@ -2149,7 +2186,8 @@ def render_admin(identity: str, flash: str,
                  submitted: dict | None = None,
                  household_error: str = "",
                  household_submitted: str | None = None,
-                 invite_error: str = "") -> bytes:
+                 invite_error: str = "",
+                 new_invite_error: str = "") -> bytes:
     parts = ["<h1>Operations</h1>",
              "<p class=sub>Admin only. How the box is doing, who lives here, "
              "and how everything is set up.</p>"]
@@ -2158,6 +2196,7 @@ def render_admin(identity: str, flash: str,
     parts.append(render_status_card())
     parts.append(render_proposals_card())
     parts.append(render_onboarding_card())
+    parts.append(render_new_invite_card(new_invite_error))
     parts.append(render_people_card(invite_error))
 
     # How sign-in links actually reach people. Shown because the failure is
@@ -2605,6 +2644,59 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _create_invite(self, session, form) -> None:
+        """Create an invite and send whoever it names the form link.
+
+        Withheld from downgraded origins under `ops:invite`, like every other
+        door into deciding who lives here. That matters more here than on the
+        draft path: this one produces the credential, where a draft produces
+        only something to read.
+
+        The name check is not cosmetic. Completing an invite re-provisions
+        that identity's bridge with whoever answered the form, so an invite
+        naming somebody who already lives here is not an invitation — it hands
+        them that account. `create_invite` takes the existing names as a
+        required argument so this cannot be forgotten.
+        """
+        why = refusal(session["role"], "ops:invite",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        def fail(message: str) -> None:
+            self._send(200, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                new_invite_error=message))
+
+        name = (form.get("account_name") or [""])[0].strip().lower()
+        address = (form.get("email") or [""])[0].strip()
+        user_id = (form.get("discord_user_id") or [""])[0].strip()
+        try:
+            record = agentbox_onboarding.create_invite(
+                name, known_identities())
+        except agentbox_onboarding.NameTaken:
+            return fail(f"Somebody called {html.escape(name)} already lives "
+                        f"here. Inviting them to that name would hand over "
+                        f"the account rather than create one.")
+        except ValueError as exc:
+            return fail(html.escape(str(exc)))
+
+        url = agentbox_onboarding.invite_url(
+            record, invite_public_host(), INVITE_PORT)
+        channels = deliver_invite(
+            {"identity": name, "display_name": name, "address": address,
+             "discord_user_id": user_id}, url)
+        if channels:
+            self._redirect("/admin?m=invite_created")
+            return
+        # Nowhere to send it. The same honest fallback the rest of this page
+        # uses: show the link rather than claim a delivery that did not happen.
+        # The invite still exists and is theirs to hand over.
+        return fail(
+            f"Nothing is configured to carry that, so it was not sent. Hand "
+            f"this over directly \u2014 single use, and it expires: {url}")
+
     def _proposal(self, session, form) -> None:
         """Send or discard an invitation the assistant drafted.
 
@@ -2979,6 +3071,10 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if path == "/admin/proposal":
             self._proposal(session, form)
+            return
+
+        if path == "/admin/invite-create":
+            self._create_invite(session, form)
             return
 
         if path == "/admin/settings":
