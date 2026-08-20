@@ -164,7 +164,15 @@ def valid_invite(token_id: str, secret: str) -> tuple[dict | None, str]:
     if not hmac.compare_digest(str(record.get("secret", "")), secret):
         return None, generic
     if record.get("used_at"):
-        return None, "This invite has already been used. Ask for a new one."
+        # Not an error, and "ask for a new one" was the wrong instruction:
+        # they already did the only thing being asked of them. The DONE page
+        # is served as the POST response, so a refresh — or tapping the link
+        # again from the message it arrived in — lands here, on the least
+        # technical person in the flow.
+        return None, ("You have already filled this in \u2014 thank you. "
+                      "Nothing more is needed from you. Whoever runs this box "
+                      "finishes the setup, and you will be able to sign in "
+                      "once they have.")
     if now() > int(record.get("expires_at", 0)):
         return None, "This invite has expired. Ask for a new one."
     return record, ""

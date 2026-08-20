@@ -332,6 +332,14 @@ def lan_exposure() -> list[Check]:
                "8765": "router", "8000": "control plane api",
                "4321": "control plane ui", "8771": "household portal",
                "8772": "speaker"}
+    # Services known to require a credential on every route. The portal is
+    # here because it does: every path, including unknown ones, answers 401
+    # unauthenticated. Saying otherwise made the operator's headline health
+    # view state something false about the box's most privileged service —
+    # and a warning that is wrong is one people learn to dismiss, which costs
+    # more than the warning was worth.
+    authenticated = {"8771": "it authenticates every route"}
+
     exposed = []
     for line in out.splitlines()[1:]:
         fields = line.split()
@@ -340,11 +348,18 @@ def lan_exposure() -> list[Check]:
         local = fields[3]
         address, _, port = local.rpartition(":")
         if port in watched and address in ("0.0.0.0", "*", "[::]", "::"):
+            if port in authenticated:
+                tail = (f"{authenticated[port]}, so this is a wider surface "
+                        f"rather than open data")
+            else:
+                # Deliberately not "it asks for no password": that is unknown
+                # for most of these, and asserting it was the bug.
+                tail = "this check cannot confirm it requires a credential"
             exposed.append(Check(
                 name=f"{watched[port]} reachable from the network",
                 ok=False,
                 detail=f"listening on {local} rather than 127.0.0.1 — anything "
-                       f"on the LAN can reach it, and it asks for no password",
+                       f"on the LAN can reach it, and {tail}",
                 severity=WARN))
     return exposed
 

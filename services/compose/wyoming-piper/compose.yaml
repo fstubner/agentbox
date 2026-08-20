@@ -1,0 +1,52 @@
+# Text to speech for the house, on this box.
+#
+# The counterpart to wyoming-whisper: Home Assistant sends the assistant's
+# reply here and gets audio back to play on whichever satellite heard the
+# question.
+#
+# Same voice the gateway already speaks with — en_US-lessac-medium — so a reply
+# does not change character depending on whether it arrived through Discord or
+# through a room. That consistency is worth more than it sounds: a household
+# learns one voice as "the assistant", and two would read as two systems.
+#
+# The gateway shipped configured for `tts.provider: edge`, which synthesises
+# through Microsoft's cloud, and docs/voice.md records changing it: every
+# spoken reply, including anything read out of email to compose it, would
+# otherwise have left the box. This service is that decision applied to the
+# house rather than only to Discord.
+
+services:
+  wyoming-piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: wyoming-piper
+    command:
+      - --voice
+      - en_US-lessac-medium
+    # Loopback only, for the same reason as the transcriber: Home Assistant is
+    # host-networked and reaches it here without any LAN exposure.
+    ports:
+      - "127.0.0.1:10200:10200"
+    volumes:
+      - piper_voices:/data
+    cpus: "1.00"
+    # Piper is small and CPU-only. This is a ceiling, not a reservation.
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket;socket.create_connection(('127.0.0.1',10200),3)\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    labels:
+      agentbox.service: wyoming-piper
+      agentbox.exposure: private
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
+
+volumes:
+  piper_voices:

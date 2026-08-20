@@ -63,16 +63,25 @@ do is read as achieved when it is not. Status measured 2026-08-19.
   routing takes effect. It has never run for `sam` because no invite has ever
   been created — the spool is empty, and she exists only because her name was
   added to the identity list by hand.*
-- **Not yet.** An operator can add a second person and get them **fully
-  onboarded** — signed in, with their own accounts and data plane — without
-  opening a terminal. *Decided 2026-08-19: onboarding is the unit, not
-  sign-in. The portal invite does the first half already. The second half,
-  `agentbox invite complete`, is a terminal command today, and that is not a
-  gap in the flow — it is where `cli/agentbox-invite` deliberately put the
-  privilege, arguing that a LAN-reachable page holding the docker socket is
-  the worst thing that could run on this box. Closing this means moving where
-  completion is triggered from without moving where its privilege lives; the
-  argument against a privileged web page stands and is not being overruled.*
+- **Complete, never run.** An operator can add a second person and get them
+  **fully onboarded** — signed in, with their own accounts and data plane —
+  without opening a terminal. *Decided 2026-08-19: onboarding is the unit, not
+  sign-in. Every step is now a web action: create the invite on Operations,
+  they fill in a form, an admin approves it, and a path unit does the
+  privileged half. No new privilege moved onto the page: the approval is a file
+  the worker reads, not an action the portal takes.*
+
+  *That is weaker than a privilege boundary, and `cli/agentbox-onboarding.service`
+  says so in its own words. `agentbox-portal.service` runs as the operator, who
+  is in the `docker` group, so the socket is already reachable to that process —
+  what stops it is the absence of a code path, not a wall. Real for the code and
+  aspirational for the process until the portal gets its own user.*
+
+  *Not counted as met, because no part of it has carried a real person. The
+  flow was driven end to end against the running portal with a test invite,
+  and the one step deliberately not exercised is approval, which provisions
+  real accounts. It also still depends on gap 1 below: with no delivery
+  channel, an admin has to hand the link over rather than send it.*
 - **Met.** An operator can see which services are running, and which are not,
   from a page rather than a shell. *Verified live 2026-08-19 during an
   evaluation stand-down: four up, five down, reported accurately.*
@@ -95,7 +104,8 @@ do is read as achieved when it is not. Status measured 2026-08-19.
 3. **The house** — lights and scenes controllable; locks, alarms, covers and
    cameras refused in code. *(Working.)*
 4. **Self-service access** — sign-in links, per-person accounts, and an
-   invite flow that needs no terminal. *(Built, never completed end to end.)*
+   invite flow that needs no terminal. *(Complete as of 2026-08-19; no real
+   person has been through it.)*
 5. **Operations you can see** — service health, staleness, disk, and what the
    assistant is allowed to do. *(Working.)*
 6. **Local speech** — voice in and out, on-box only. *(Discord path working;
@@ -172,14 +182,7 @@ target and status, not a wishlist.
    warned about, but leaves her sharing the shared bridge, which is wrong for
    mail. This is the same root cause as gap 1, not a second one: nobody has
    ever been onboarded through the flow.
-3. **Onboarding without a terminal** (decided 2026-08-19) — the operator's
-   half of `agentbox invite complete` needs a trigger that is not a shell,
-   while the privilege it needs stays off any LAN-reachable page. The
-   constraint to preserve is the one `cli/agentbox-invite` already states: the
-   collecting surface has no docker socket, no 1Password token, and no bridge
-   tokens. Note that `ops:invite` is already withheld from agent-origin
-   sessions, and must stay withheld from whatever replaces the shell.
-4. **Voice beyond Discord** (kept as MVP item 6, decided 2026-08-19) —
+3. **Voice beyond Discord** (kept as MVP item 6, decided 2026-08-19) —
    install `sounddevice` for the push-to-talk TUI path, and supply the
    thinking half of house-wide speech through a Home Assistant webhook rather
    than reimplementing an audio pipeline (`docs/voice.md`).
@@ -193,5 +196,9 @@ target and status, not a wishlist.
   keepalive SIGTERMs them for an evaluation, so systemd marks them `failed`.
   Operations correctly reports the services as down — measured state before
   evaluation state, deliberately — but does not say the evaluation is why.
-- **`docs/roadmap.md` is the live gap record** — it tracks what was asked for
-  against what exists, and is more current than this file on feature status.
+- **`docs/roadmap.md` tracks what was asked for against what exists.** It is
+  broader than this file on features nobody has started. It is not
+  automatically fresher: on 2026-08-20 an acceptance pass found it still
+  describing onboarding as a terminal flow, days after that stopped being true,
+  while this file said to trust it over itself. Both are hand-maintained, and
+  either can be the stale one.

@@ -300,6 +300,11 @@ FLASHES = {
                                    "open a link you requested yourself."),
     "settings_saved": "Saved.",
     "invite_sent": "Invited. Their sign-in link is on its way.",
+    "invite_created": "Invitation sent. They fill in a short form, then "
+                      "it comes back here for you to finish.",
+    "invite_undelivered": "Invitation created, but nothing is configured to "
+                          "carry it. Its link is below \u2014 hand it over "
+                          "directly.",
     "proposal_discarded": "Discarded. Nothing was sent.",
     "proposal_gone": "That draft is no longer there.",
     "proposal_name_taken": "Somebody by that name already lives here, "
@@ -1849,7 +1854,14 @@ def render_onboarding_card() -> str:
         return ""
     rows = []
     for invite in waiting:
-        who = invite["display_name"] or invite["identity"] or invite["id"]
+        # The account name leads, because that is what approving this creates:
+        # an identity, and a bridge holding that person's credential. The
+        # display name is whatever the invitee typed into a form, so it is
+        # shown as theirs rather than as the subject of the decision — with
+        # only that on the card, somebody could type "sam" and be approved as
+        # if they were.
+        who = invite["identity"] or invite["id"]
+        called = invite["display_name"]
         wants = ", ".join(invite["connectors"]) or "nothing personal"
         if invite["requested"]:
             action = "<span class=sub>approved \u2014 setting up\u2026</span>"
@@ -1870,9 +1882,13 @@ def render_onboarding_card() -> str:
                     "than get their own. They can connect Google themselves "
                     "afterwards, from their own portal.</div>")
             level = "warn"
+        says = ""
+        if called:
+            says = (f"<div class=sub>calls themselves "
+                    f"&ldquo;{html.escape(called)}&rdquo;</div>")
         rows.append(
             f"<div class=row><span class='dot {level}'></span>"
-            f"<span class=name>{html.escape(who)}"
+            f"<span class=name>{html.escape(who)}{says}"
             f"<div class=sub>asked for: {html.escape(wants)}</div>{note}</span>"
             f"<span class=when>{action}</span></div>")
     return (f"<div class=card><b>Waiting to be set up</b>"
@@ -1980,6 +1996,66 @@ def render_proposals_card() -> str:
             f"<div class=sub style='margin:.4rem 0 .6rem'>Nothing has been "
             f"sent. It can write an invitation and pick how it travels; "
             f"deciding who lives here is yours.</div>{''.join(rows)}</div>")
+
+
+def render_new_invite_card(error: str = "") -> str:
+    """Start somebody's onboarding without opening a terminal.
+
+    The last part of that claim that was still untrue. Everything after this
+    step moved off the shell already — the invitee fills in a web form, and an
+    admin finishes it from Operations — but starting one still meant
+    `agentbox invite create` at a keyboard, so the household could not actually
+    add a person from a phone.
+
+    There was never a reason for it to want a shell. Creating an invite writes
+    one JSON record: no docker socket, no bridge token, no 1Password. The
+    privileged half is completion, and that already lives in its own unit.
+
+    Deliberately separate from the form on the people card, which mints a
+    sign-in link for somebody the gateway already knows about. This one is for
+    a person who does not exist here yet and needs accounts of their own.
+    """
+    note = ""
+    if error:
+        note = f"<div class=sub style='margin-top:.6rem'>{error}</div>"
+
+    # Every invite that is still live, with the link that opens it. This exists
+    # because the form now redirects rather than rendering the link from the
+    # POST — without somewhere durable to show it, an admin who refreshed or
+    # closed the tab had no way back to a credential they had just created,
+    # which is what made minting a second one feel reasonable.
+    waiting = []
+    for record in agentbox_onboarding.outstanding():
+        url = agentbox_onboarding.invite_url(
+            record, invite_public_host(), INVITE_PORT)
+        hours = max(0, (int(record.get("expires_at", 0)) - now()) // 3600)
+        waiting.append(
+            f"<div class=row><span class='dot warn'></span>"
+            f"<span class=name>{html.escape(str(record.get('identity', '')))}"
+            f"<div class=sub>not opened yet \u00b7 expires in {hours}h</div>"
+            f"<div class=sub style='word-break:break-all'>"
+            f"{html.escape(url)}</div></span></div>")
+    outstanding = ""
+    if waiting:
+        outstanding = (
+            f"<div class=sub style='margin:.9rem 0 .3rem'><b>Waiting to be "
+            f"opened</b> \u2014 each link works once, and only for the person "
+            f"you send it to.</div>{''.join(waiting)}")
+
+    return (
+        f"<div class=card><b>Invite somebody new</b>"
+        f"<div class=sub style='margin:.4rem 0 .7rem'>They get a link to a "
+        f"short form. Nothing is created until you approve it here "
+        f"afterwards.</div>"
+        f"<form method=post action=/admin/invite-create>"
+        f"<input name=account_name placeholder='name, e.g. sam' autocomplete=off "
+        f"style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<input name=email type=email placeholder='email (optional)' "
+        f"autocomplete=off style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<input name=discord_user_id placeholder='Discord id (optional)' "
+        f"autocomplete=off style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"<button class=yes>Send invitation</button></form>{note}"
+        f"{outstanding}</div>")
 
 
 def render_people_card(flash_error: str = "") -> str:
@@ -2149,7 +2225,8 @@ def render_admin(identity: str, flash: str,
                  submitted: dict | None = None,
                  household_error: str = "",
                  household_submitted: str | None = None,
-                 invite_error: str = "") -> bytes:
+                 invite_error: str = "",
+                 new_invite_error: str = "") -> bytes:
     parts = ["<h1>Operations</h1>",
              "<p class=sub>Admin only. How the box is doing, who lives here, "
              "and how everything is set up.</p>"]
@@ -2158,6 +2235,7 @@ def render_admin(identity: str, flash: str,
     parts.append(render_status_card())
     parts.append(render_proposals_card())
     parts.append(render_onboarding_card())
+    parts.append(render_new_invite_card(new_invite_error))
     parts.append(render_people_card(invite_error))
 
     # How sign-in links actually reach people. Shown because the failure is
@@ -2605,6 +2683,62 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _create_invite(self, session, form) -> None:
+        """Create an invite and send whoever it names the form link.
+
+        Withheld from downgraded origins under `ops:invite`, like every other
+        door into deciding who lives here. That matters more here than on the
+        draft path: this one produces the credential, where a draft produces
+        only something to read.
+
+        The name check is not cosmetic. Completing an invite re-provisions
+        that identity's bridge with whoever answered the form, so an invite
+        naming somebody who already lives here is not an invitation — it hands
+        them that account. `create_invite` takes the existing names as a
+        required argument so this cannot be forgotten.
+        """
+        why = refusal(session["role"], "ops:invite",
+                      session.get("origin", ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        def fail(message: str) -> None:
+            self._send(200, render_admin(
+                session["identity"], "", session.get("origin", ORIGIN_AGENT),
+                new_invite_error=message))
+
+        name = (form.get("account_name") or [""])[0].strip().lower()
+        address = (form.get("email") or [""])[0].strip()
+        user_id = (form.get("discord_user_id") or [""])[0].strip()
+        try:
+            record = agentbox_onboarding.create_invite(
+                name, known_identities())
+        except agentbox_onboarding.NameTaken:
+            return fail(f"Somebody called {html.escape(name)} already lives "
+                        f"here. Inviting them to that name would hand over "
+                        f"the account rather than create one.")
+        except agentbox_onboarding.AlreadyInvited:
+            return fail(f"{html.escape(name)} already has an invite waiting, "
+                        f"and its link is below. A second one would be a "
+                        f"second credential for the same person.")
+        except ValueError as exc:
+            return fail(html.escape(str(exc)))
+
+        url = agentbox_onboarding.invite_url(
+            record, invite_public_host(), INVITE_PORT)
+        channels = deliver_invite(
+            {"identity": name, "display_name": name, "address": address,
+             "discord_user_id": user_id}, url)
+        # Always a redirect, even when there is nothing to deliver by. This
+        # used to render the link straight from the POST, which on a box with
+        # no delivery channel is every invite — so a refresh re-submitted and
+        # minted another live credential. The link is not lost by redirecting:
+        # the card below lists every outstanding invite and its link, which an
+        # admin who closed the tab could not get back before.
+        self._redirect("/admin?m="
+                       + ("invite_created" if channels else "invite_undelivered"))
+
     def _proposal(self, session, form) -> None:
         """Send or discard an invitation the assistant drafted.
 
@@ -2979,6 +3113,10 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if path == "/admin/proposal":
             self._proposal(session, form)
+            return
+
+        if path == "/admin/invite-create":
+            self._create_invite(session, form)
             return
 
         if path == "/admin/settings":

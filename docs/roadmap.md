@@ -516,7 +516,15 @@ Google. Provisioning one is `scaffold` + the OAuth helper + per-identity
 routing — all of which exist as pieces and none of which is joined up. That
 joining is the work.
 
-### 14. Invite-based onboarding — **built**
+### 14. Invite-based onboarding — **built, and no longer needs a terminal**
+
+Updated 2026-08-20. Every step is now a web action: an admin creates the invite
+on Operations, the invitee fills in the form, an admin approves it there, and
+`agentbox-onboarding.path` runs `agentbox invite drain` for the privileged
+half. The two-phase split below is unchanged and is the reason this is safe —
+what moved is where completion is *triggered*, not where its privilege lives.
+
+The terminal commands still work and are documented in `docs/runbook.md`.
 
 `cli/agentbox-invite` (collect) plus `agentbox invite complete`
 (provision). Verified end to end: a spent link is refused, a wrong
