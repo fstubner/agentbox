@@ -197,6 +197,45 @@ class NameTaken(ValueError):
     """Proposed for somebody who already lives here."""
 
 
+class AlreadyInvited(ValueError):
+    """An invite for this name is already outstanding."""
+
+
+def outstanding(identity: str = "", now: int | None = None) -> list[dict]:
+    """Invites that are still live: nobody has used them and they have time.
+
+    Each one is a credential — the runbook says so in as many words — so
+    knowing which are outstanding is not bookkeeping. Without it, minting was
+    unbounded: three identical submissions produced three simultaneously valid
+    links for one person, and on a box with no delivery channel the page that
+    shows the link is rendered by the POST itself, so a browser refresh did it
+    silently.
+    """
+    now = int(time.time()) if now is None else now
+    want = (identity or "").strip().lower()
+    out = []
+    try:
+        paths = sorted(invite_dir().glob("*.json"))
+    except OSError:
+        return []
+    for path in paths:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("used_at") or record.get("completed_at"):
+            continue
+        try:
+            if int(record.get("expires_at", 0)) <= now:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if want and str(record.get("identity", "")).lower() != want:
+            continue
+        out.append(record)
+    return out
+
+
 def create_invite(identity: str, existing: set[str],
                   ttl_hours: int = INVITE_TTL_HOURS) -> dict:
     """Mint an invite record. Unprivileged: this writes one file.
@@ -215,6 +254,12 @@ def create_invite(identity: str, existing: set[str],
             "starting with a letter — for example sam")
     if identity in {e.strip().lower() for e in existing}:
         raise NameTaken(f"{identity} already lives here")
+    # Checked here rather than at the call site, for the same reason `existing`
+    # is a required argument: a second live invite for one person is a second
+    # credential, and the caller that forgets is the one rendering a page where
+    # a refresh repeats the request.
+    if outstanding(identity):
+        raise AlreadyInvited(f"{identity} already has an invite waiting")
 
     import secrets as _secrets
     record = {

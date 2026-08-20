@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import sys
 
 import pytest
@@ -271,9 +272,76 @@ def test_the_form_says_nothing_is_created_until_approved(portal):
     assert "approve" in card or "nothing is created" in card
 
 
-def test_an_undeliverable_invite_shows_the_link_rather_than_claiming_it_sent(portal):
-    """The same honest fallback the rest of this page uses. The invite exists
-    either way; what changes is whether anybody was told the truth about it."""
-    body = code_of("cli/agentbox-portal").split("def _create_invite")[1][:1900]
-    assert "if channels:" in body
-    assert "invite_url" in body
+def test_creating_an_invite_always_redirects(portal):
+    """Found by an independent acceptance pass.
+
+    The undeliverable path rendered the link straight from the POST — and with
+    no delivery channel configured, which is this box, that is every invite. A
+    browser refresh re-submitted and minted another live credential; three
+    identical submissions produced three valid links for one person.
+    """
+    body = code_of("cli/agentbox-portal").split("def _create_invite")[1][:2200]
+    assert "self._redirect" in body
+    # The success path may not render a page of its own.
+    assert "invite_url" not in body.split("self._redirect")[1][:400]
+
+
+def test_a_second_live_invite_for_one_person_is_refused(spool):
+    """Each one is a credential. Two outstanding for the same name is two."""
+    spool.create_invite("newcomer", set())
+    with pytest.raises(spool.AlreadyInvited):
+        spool.create_invite("newcomer", set())
+
+
+def test_the_dedupe_cannot_be_forgotten_by_a_caller(spool):
+    """Enforced where the record is written, like the name check beside it,
+    so the CLI and the portal cannot disagree about it."""
+    body = code_of("cli/agentbox_onboarding.py").split("def create_invite")[1][:1200]
+    assert "outstanding(" in body
+    assert "AlreadyInvited" in body
+
+
+def test_a_used_invite_stops_blocking_a_new_one(spool):
+    """Dedupe is about live credentials, not about the name forever."""
+    record = spool.create_invite("newcomer", set())
+    path = spool.invite_dir() / f"{record['id']}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["used_at"] = 1
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert spool.create_invite("newcomer", set())
+
+
+def test_the_admin_can_still_reach_a_link_after_a_refresh(portal, spool):
+    """What made minting a second one feel reasonable: the link was only ever
+    shown once, by the POST that created it."""
+    spool.create_invite("newcomer", set())
+    card = portal.render_new_invite_card()
+    assert "Waiting to be opened" in card
+    assert "newcomer" in card
+    assert "/?i=" in card
+
+
+def submitted_invite(tmp_path, token_id, identity, display_name):
+    """An invite somebody filled in — what the approval card is built from."""
+    path = tmp_path / "invites" / f"{token_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "id": token_id, "identity": identity, "display_name": display_name,
+        "secret": "s", "connectors": [], "used_at": 1,
+        "expires_at": 9_999_999_999}), encoding="utf-8")
+
+
+def test_the_approval_card_names_the_account_not_only_the_typed_name(portal, tmp_path):
+    """Found by an independent acceptance pass.
+
+    The card showed `display_name or identity or id`, and the form requires a
+    display name — so the account name was never shown. An invitee could type
+    "sam" and the approving admin would read "sam", while the thing being
+    approved was an identity and a bridge for whatever account name the invite
+    actually carried.
+    """
+    submitted_invite(tmp_path, "a" * 16, "stranger", "sam")
+    card = portal.render_onboarding_card()
+    assert "stranger" in card
+    # What they typed is still shown, but as theirs rather than as the subject.
+    assert "calls themselves" in card

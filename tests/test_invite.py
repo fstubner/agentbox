@@ -80,10 +80,19 @@ def test_an_expired_invite_is_refused(inv):
 
 
 def test_a_spent_invite_is_refused(inv):
-    """Single use. Otherwise a forwarded link creates a second identity."""
+    """Single use. Otherwise a forwarded link creates a second identity.
+
+    The refusal is what matters and is unchanged. What it *says* was corrected
+    on 2026-08-20: it used to tell them to ask for a new link, when they had
+    already done the only thing being asked of them and the next move is the
+    admin's. A refusal that misdirects the person reading it produces a second
+    credential nobody needed.
+    """
     make(inv, used_at=inv.now())
     record, reason = inv.valid_invite("abc123", "s3cret")
-    assert record is None and "already been used" in reason
+    assert record is None
+    assert "ask for a new one" not in reason.lower()
+    assert "already filled this in" in reason.lower()
 
 
 def test_the_secret_is_compared_in_constant_time(inv):

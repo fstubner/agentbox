@@ -2590,8 +2590,8 @@ LARGE_FILE_LIMIT = 400
 #
 # Raising an entry is allowed and is meant to be a visible line in a diff.
 LARGE_FILES = {
-    "cli/agentbox": 3477,
-    "cli/agentbox-portal": 3247,
+    "cli/agentbox": 3478,
+    "cli/agentbox-portal": 3289,
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,
     "cli/agentbox-approvals": 788,
@@ -2599,11 +2599,12 @@ LARGE_FILES = {
     "tests/test_mcp_base.py": 650,
     "tests/test_portal_auth.py": 632,
     "tests/test_memory_feedback.py": 602,
-    "cli/agentbox-invite": 546,
+    "cli/agentbox-invite": 554,
     "services/templates/mcp/mcp_base.py": 546,
     "tests/test_homeassistant.py": 540,
     "tests/test_drive_constraints.py": 499,
-    "cli/agentbox_status.py": 488,
+    "cli/agentbox_onboarding.py": 431,
+    "cli/agentbox_status.py": 503,
     "cli/agentbox_settings.py": 439,
     "tests/test_builder.py": 403,
 }

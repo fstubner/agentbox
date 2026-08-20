@@ -68,10 +68,14 @@ do is read as achieved when it is not. Status measured 2026-08-19.
   without opening a terminal. *Decided 2026-08-19: onboarding is the unit, not
   sign-in. Every step is now a web action: create the invite on Operations,
   they fill in a form, an admin approves it, and a path unit does the
-  privileged half. The privilege never moved onto the page — `cli/agentbox-
-  invite`'s argument against a LAN-reachable process holding the docker socket
-  stands, and the approval is a file the worker reads rather than an action
-  the portal takes.*
+  privileged half. No new privilege moved onto the page: the approval is a file
+  the worker reads, not an action the portal takes.*
+
+  *That is weaker than a privilege boundary, and `cli/agentbox-onboarding.service`
+  says so in its own words. `agentbox-portal.service` runs as the operator, who
+  is in the `docker` group, so the socket is already reachable to that process —
+  what stops it is the absence of a code path, not a wall. Real for the code and
+  aspirational for the process until the portal gets its own user.*
 
   *Not counted as met, because no part of it has carried a real person. The
   flow was driven end to end against the running portal with a test invite,
@@ -192,5 +196,9 @@ target and status, not a wishlist.
   keepalive SIGTERMs them for an evaluation, so systemd marks them `failed`.
   Operations correctly reports the services as down — measured state before
   evaluation state, deliberately — but does not say the evaluation is why.
-- **`docs/roadmap.md` is the live gap record** — it tracks what was asked for
-  against what exists, and is more current than this file on feature status.
+- **`docs/roadmap.md` tracks what was asked for against what exists.** It is
+  broader than this file on features nobody has started. It is not
+  automatically fresher: on 2026-08-20 an acceptance pass found it still
+  describing onboarding as a terminal flow, days after that stopped being true,
+  while this file said to trust it over itself. Both are hand-maintained, and
+  either can be the stale one.

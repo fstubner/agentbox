@@ -72,30 +72,49 @@ cover anyone, as every pre-identity grant does.
 
 ### Onboarding somebody
 
+All of it is a web flow as of 2026-08-19. None of these steps needs a terminal.
+
+1. **Operations → "Invite somebody new."** A short account name, plus an email
+   address or a Discord id. With a delivery channel configured the invitation
+   is sent; without one it appears under "Waiting to be opened" for you to hand
+   over. Only one invite per name may be outstanding, because each one is a
+   credential.
+2. **They open the link and fill in the form** — a display name, and which
+   services they want their own account for. That is their whole involvement.
+   They never see Vikunja's login page or a terminal.
+3. **Operations → "Waiting to be set up" → "Finish setting them up."** That
+   writes an approval into a spool. `agentbox-onboarding.path` notices, and
+   `agentbox invite drain` does the privileged half: creates the identity, the
+   Vikunja account, and a Google bridge holding only their credential.
+
+The approval card names the **account** being created, and shows separately
+what the invitee called themselves. Those are different things, and only the
+first is what you are approving — somebody can type any display name they like.
+
+**The link is a credential.** It authorises creating an identity on this box,
+which buys more than a bridge token does. Single use, expires in 48h, and a
+refusal never says whether the id or the secret was wrong. Send it directly,
+not to a group chat.
+
+**The Google step is skipped unless `AGENTBOX_INVITE_ORIGIN` is set**, and on
+this deployment it deliberately is not. Google refuses a private IP or a
+`.local` name as a redirect URI and accepts loopback — which, on somebody's
+phone, is their phone. Skipping is the better failure: they finish onboarding
+and connect Google afterwards from their own portal under "Your accounts",
+which provisions the same per-identity bridge. Set it only if invitees will
+fill the form in on the box itself, where `http://127.0.0.1:8770` works.
+
+The terminal path still exists and is unchanged:
+
 ```
 cli/agentbox-invite create sam
-AGENTBOX_INVITE_ORIGIN=http://127.0.0.1:8770 \
-AGENTBOX_GOOGLE_CLIENT_ID=<client id> \
-  cli/agentbox-invite serve
 cli/agentbox invite complete <id>
 ```
 
-`AGENTBOX_INVITE_ORIGIN` must be the URL **she** opens, and
-`<that origin>/google/callback` must be registered as a redirect URI on the
-OAuth client — the same `redirect_uri_mismatch` that has already bitten once.
-Without both set, the Google step is skipped and `serve` says so.
-
-She opens the link on her phone, picks a name, ticks which services she wants
-her own account for, and that is her whole involvement. She never sees Vikunja's
-login page or a terminal.
-
-**The link is a credential** — it authorises creating an identity on this box,
-which buys more than a bridge token does. Single use, expires in 24h, and a
-refusal never says whether the id or the secret was wrong. Send it directly, not
-to a group chat.
-
-**Run `serve` only while an invite is outstanding.** It binds to the LAN so a
-phone can reach it, and it refuses to start when nothing is pending.
+`agentbox-invite serve` runs as a unit now, with `--unattended`, so the form is
+up whether or not anything is outstanding. It refuses every request without a
+valid invite token either way; what changed is that an invitation delivered by
+email reaches somebody who cannot ask anybody to start a server for them.
 
 #### Why it is two commands and not one
 

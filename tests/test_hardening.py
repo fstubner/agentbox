@@ -235,3 +235,59 @@ def test_the_repo_is_within_its_own_ceilings(cli):
     oversized, grown = cli.file_size_drift()
     assert not oversized, oversized
     assert not grown, grown
+
+
+# --- from the independent acceptance pass, 2026-08-20 -------------------------
+
+
+def test_a_finished_invitee_is_not_told_to_ask_for_a_new_link(tmp_path,
+                                                              monkeypatch):
+    """They already did the only thing asked of them.
+
+    The DONE page is the POST response, so a refresh — or tapping the link
+    again in the message it arrived in — lands on this message, and it used to
+    say "ask for a new one". That is the wrong instruction given to the least
+    technical person in the flow, and it invites a second credential for
+    somebody who needs none.
+    """
+    invite = load("agentbox_invite", "agentbox-invite", tmp_path, monkeypatch)
+    token_id = "e" * 16
+    path = tmp_path / "invites" / f"{token_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "id": token_id, "identity": "someone", "secret": "s",
+        "used_at": 1, "expires_at": int(time.time()) + 3600}),
+        encoding="utf-8")
+    _, reason = invite.valid_invite(token_id, "s")
+    assert "ask for a new one" not in reason.lower()
+    assert "already filled this in" in reason.lower()
+    assert "sign in" in reason.lower()
+
+
+def test_operations_does_not_claim_the_portal_is_unauthenticated():
+    """It authenticates every route, including unknown ones.
+
+    Stating otherwise put something false at the top of the operator's health
+    view, about the most privileged service on the box — and a warning that is
+    wrong is one people learn to dismiss.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "agentbox_status", REPO / "cli" / "agentbox_status.py")
+    status = importlib.util.module_from_spec(spec)
+    sys.modules["agentbox_status"] = status
+    spec.loader.exec_module(status)
+    for check in status.lan_exposure():
+        if ":8771" in check.detail:
+            assert "asks for no password" not in check.detail
+            assert "authenticates every route" in check.detail
+            break
+
+
+def test_the_exposure_warning_does_not_assert_what_it_cannot_know():
+    """The original wording was applied to every watched port. It is knowable
+    for the portal and not for most of the others, and asserting it anyway is
+    what made it wrong."""
+    source = (REPO / "cli" / "agentbox_status.py").read_text(encoding="utf-8")
+    body = source.split("def lan_exposure")[1]
+    assert "cannot confirm it requires a credential" in body
