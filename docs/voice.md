@@ -84,7 +84,84 @@ missing again and Discord voice is off.
 
 ## House-wide microphones and speakers
 
-Not built. See `docs/roadmap.md` — the short version is that Home Assistant
-already solves the satellite half (wake word, audio streaming, ESP32 and
-Raspberry Pi firmware) and this platform should supply the thinking half
-through a webhook, rather than reimplementing an audio pipeline.
+Home Assistant owns the audio; this box owns the thinking. The satellite half —
+wake word, streaming, echo cancellation, firmware for cheap boards — is what
+Home Assistant's Assist stack already does well, and reimplementing it here
+would be months of work to arrive somewhere worse.
+
+Four pieces. Two of them are here, one is hardware, one is not built.
+
+### 1. Local transcription and speech — `services/compose/wyoming-{whisper,piper}`
+
+Home Assistant on this deployment is a plain container, not Home Assistant OS,
+so there is no add-on store and the Assist pipeline ships with
+`stt_engine: None` and `tts_engine: None`. A satellite without them wakes,
+streams, and is met with silence.
+
+These two serve the same models the gateway already uses — Whisper `base` and
+`en_US-lessac-medium` — over the Wyoming protocol, bound to `127.0.0.1`.
+Home Assistant runs with host networking, so it reaches them there without
+either port touching the LAN.
+
+```bash
+cli/agentbox deploy wyoming-whisper
+cli/agentbox deploy wyoming-piper
+```
+
+They cost memory continuously, on a box whose defining constraint is 16 GB
+shared with a model server. Limits are set (1536m and 512m) rather than left
+open, because an unbounded transcriber is how that becomes a swap storm in the
+middle of somebody's sentence.
+
+Then in Home Assistant: **Settings → Devices → Add integration → Wyoming
+Protocol**, twice — `127.0.0.1:10300` for speech-to-text and `127.0.0.1:10200`
+for text-to-speech. Then **Settings → Voice assistants** and set both on the
+pipeline.
+
+### 2. A satellite — the Raspberry Pi
+
+Any Pi with a microphone works. Install `wyoming-satellite` on it, point it at
+this box's Home Assistant, and it appears as a device to assign a pipeline to.
+Its whole job is audio: it never talks to Agentbox directly.
+
+Prefer this over the alternative below. A Pi keeps the promise at the top of
+this file; the alternative does not.
+
+### 3. The Echos — supported, and they break locality
+
+This house has five Alexa devices, a Chromecast and a Sony TV, and Home
+Assistant can speak a reply through any of them. That works today with no
+purchase and no wiring.
+
+State the cost plainly, because it is the exact thing this document exists to
+refuse: audio played through an Echo goes through Amazon. Piper synthesises the
+words locally and then hands them to a device that is cloud-coupled by design,
+so the reply leaves the box. For a shopping-list confirmation that may be a
+trade worth making; for anything read out of email it is not.
+
+Use them for output where convenience wins, and understand that any room whose
+only speaker is an Echo is a room where `PRODUCT.md`'s "nothing spoken leaves
+the box" is not true.
+
+### 4. The route back to the assistant — not built
+
+Home Assistant's own conversation agent answers today. Pointing a pipeline at
+*this* assistant means a webhook: `hermes webhook subscribe` already provides
+the entry point, with HMAC secrets and per-target delivery, so the Agentbox side
+is a route and a policy decision rather than a new service.
+
+Two things settle before it is built, both from `docs/roadmap.md` and both still
+open:
+
+- **Which room heard it.** The satellite id has to survive the round trip or
+  every reply comes back everywhere at once.
+- **What a spoken request is allowed to do.** A spoken request has no operator
+  reading carefully before it lands, so an approval is a worse fit here than in
+  Discord. Voice wants a *narrower* capability set rather than the same one with
+  a prompt in front of it — which under this platform's own rule, that absence
+  beats gating, means the voice route simply does not carry those tools.
+
+  `policies/approval-policy.yaml` cannot express that today: it has tiers and a
+  tool map, and no per-channel dimension. Adding a policy section that nothing
+  enforces would be worse than adding none, so the decision belongs with the
+  route, not ahead of it.
