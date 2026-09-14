@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def cli(tmp_path, monkeypatch):
-    loader = importlib.machinery.SourceFileLoader("abx_backup", str(REPO / "cli" / "agentbox"))
+    loader = importlib.machinery.SourceFileLoader("abx_backup", str(REPO / "cli" / "agentbox_backup.py"))
     spec = importlib.util.spec_from_loader("abx_backup", loader)
     module = importlib.util.module_from_spec(spec)
     sys.modules["abx_backup"] = module
@@ -103,8 +103,8 @@ def test_the_container_hands_the_files_back_to_this_user():
     """Files copied out of the volume landed owned by the container's uid, so
     the host could not delete them. Thirteen runs, thirteen orphaned staging
     directories, each an unencrypted copy of every private memory."""
-    source = (REPO / "cli" / "agentbox").read_text()
-    block = source.split("def backup(")[1].split("def ")[0]
+    source = (REPO / "cli" / "agentbox_backup.py").read_text()
+    block = source.split("def backup(")[1].split("\ndef ")[0]
     assert "chown -R" in block
     assert "os.getuid()" in block and "os.getgid()" in block
 
@@ -117,7 +117,7 @@ def _code_only(block: str) -> str:
 
 def test_cleanup_failure_is_reported_not_swallowed():
     """ignore_errors=True is why it hid for thirteen runs."""
-    source = (REPO / "cli" / "agentbox").read_text()
+    source = (REPO / "cli" / "agentbox_backup.py").read_text()
     block = _code_only(source.split("def backup(")[1].split("\ndef ")[0])
     assert "ignore_errors" not in block
     assert "could not remove" in block
@@ -126,7 +126,7 @@ def test_cleanup_failure_is_reported_not_swallowed():
 def test_archives_and_staging_are_not_world_readable():
     """They hold private memories. Archives were 664 and the staging tree 644
     until 2026-08-14."""
-    source = (REPO / "cli" / "agentbox").read_text()
-    block = source.split("def backup(")[1].split("def ")[0]
+    source = (REPO / "cli" / "agentbox_backup.py").read_text()
+    block = source.split("def backup(")[1].split("\ndef ")[0]
     assert "archive.chmod(0o600)" in block
     assert "staging.chmod(0o700)" in block

@@ -32,6 +32,38 @@ REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.pare
 _keepalive_module = None
 _status_module = None
 _onboarding_module = None
+_backup_module = None
+_identity_module = None
+
+
+def _identity():
+    """Load cli/agentbox_identity.py, once. See _status for why it is lazy."""
+    global _identity_module
+    if _identity_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_identity",
+            Path(__file__).resolve().parent / "agentbox_identity.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_identity"] = module
+        spec.loader.exec_module(module)
+        _identity_module = module
+    return _identity_module
+
+
+def _backup():
+    """Load cli/agentbox_backup.py, once. See _status for why it is lazy."""
+    global _backup_module
+    if _backup_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_backup",
+            Path(__file__).resolve().parent / "agentbox_backup.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_backup"] = module
+        spec.loader.exec_module(module)
+        _backup_module = module
+    return _backup_module
 
 
 def _keepalive():
@@ -1280,152 +1312,16 @@ def update(service: str) -> int:
 
 def backup(keep: int = 14) -> int:
     """Archive the stateful services. Verifies the archive before pruning."""
-    state_dir = Path(os.environ.get(
-        "AGENT_CONTROL_PLANE_STATE_DIR",
-        str(Path("~/.local/state/agent-control-plane").expanduser())))
-    stamp = subprocess.run(["date", "-u", "+%Y%m%dT%H%M%SZ"],
-                           capture_output=True, text=True).stdout.strip()
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    archive = BACKUP_DIR / f"agentbox-{stamp}.tar.gz"
-    staging = BACKUP_DIR / f".staging-{stamp}"
-    staging.mkdir(parents=True, exist_ok=True)
-    staging.chmod(0o700)
-    (staging / "vikunja").mkdir(parents=True, exist_ok=True)
-    (staging / "memory").mkdir(parents=True, exist_ok=True)
-
-    vikunja_src = state_dir / "vikunja"
-    if vikunja_src.is_dir():
-        subprocess.run(["cp", "-a", f"{vikunja_src}/.", str(staging / "vikunja")], check=False)
-    else:
-        report(WARN, f"vikunja state not found at {vikunja_src}")
-
-    # The memory store lives in a docker volume, so it is read out through a
-    # throwaway container rather than from the host filesystem.
-    #
-    # The container chowns what it copied back to this user before exiting.
-    # Without that the files land owned by the container's uid, this process
-    # cannot delete them, and the cleanup below fails — which is exactly what
-    # happened for thirteen consecutive runs: thirteen archives, thirteen
-    # orphaned staging directories, the oldest owned by root, each holding a
-    # readable copy of every private household memory.
-    volume = os.environ.get("AGENTBOX_MEMORY_VOLUME", "memory-bridge_memory_data")
-    proc = subprocess.run(
-        ["docker", "run", "--rm", "-v", f"{volume}:/src:ro",
-         "-v", f"{staging / 'memory'}:/dst", "alpine", "sh", "-c",
-         f"cp -a /src/. /dst/ && chown -R {os.getuid()}:{os.getgid()} /dst"],
-        capture_output=True, text=True)
-    if proc.returncode != 0:
-        report(WARN, f"memory volume not archived: {proc.stderr.strip()[:120]}")
-
-    subprocess.run(["tar", "-czf", str(archive), "-C", str(staging), "."], check=False)
-    # Private memories, so not group- or world-readable. The staging tree was
-    # mode 644 and the archives 664 until 2026-08-14.
-    archive.chmod(0o600)
-
-    # Not ignore_errors: a cleanup that cannot run is the whole defect above,
-    # and it hid for thirteen runs precisely because nothing reported it.
-    try:
-        shutil.rmtree(staging)
-    except OSError as exc:
-        report(FAIL, f"could not remove {staging}: {exc}. It holds an "
-                     f"unencrypted copy of the memory store — remove it by hand.")
-
-    # An archive nobody has opened is not a backup. Verify before pruning, so a
-    # broken run cannot delete the last good copy.
-    verify = subprocess.run(["tar", "-tzf", str(archive)], capture_output=True, text=True)
-    entries = [ln for ln in verify.stdout.splitlines() if ln.strip() not in ("./", ".")]
-    if verify.returncode != 0 or not entries:
-        report(FAIL, f"archive failed verification, keeping everything: {archive.name}")
-        return 1
-    size = archive.stat().st_size
-    report(OK, f"backup {archive.name} — {len(entries)} entries, {size // 1024} KB")
-
-    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"))
-    for old in archives[:-keep] if len(archives) > keep else []:
-        old.unlink()
-        report(OK, f"pruned {old.name}")
-    return 0
+    return _backup().backup(keep, report=report)
 
 
 def restore_check(archive_name: str = "") -> int:
-    """Rehearse a restore: unpack an archive and prove it could rebuild state.
-
-    Untested restore is the standard way people find out they have no backups.
-    `tar -tzf` proved only that the file was readable — not that the memory
-    store parses, not that it holds anything, not that Vikunja's data came
-    along. Nothing verified any of that, and no restore had ever been run.
-
-    Deliberately a drill, not a live restore. Putting data back means stopping
-    services and overwriting a volume, which is the operator's decision to make
-    deliberately; this answers the question that has to be answered *before*
-    that, which is whether the archive is worth restoring at all.
-    """
-    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"), reverse=True)
-    if archive_name:
-        archives = [a for a in archives if a.name == archive_name]
-    if not archives:
-        report(FAIL, f"no archive found in {BACKUP_DIR}")
-        return 1
-    archive = archives[0]
-
-    with tempfile.TemporaryDirectory(prefix="agentbox-restore-check-") as tmp:
-        target = Path(tmp)
-        proc = subprocess.run(["tar", "-xzf", str(archive), "-C", str(target)],
-                              capture_output=True, text=True)
-        if proc.returncode != 0:
-            report(FAIL, f"{archive.name} would not extract: "
-                         f"{proc.stderr.strip()[:200]}")
-            return 1
-
-        problems = []
-        memory = target / "memory" / "memory.json"
-        if not memory.is_file():
-            problems.append("no memory/memory.json in the archive")
-        else:
-            try:
-                store = json.loads(memory.read_text(encoding="utf-8"))
-            except ValueError as exc:
-                problems.append(f"memory store does not parse: {exc}")
-            else:
-                # Shape, not just parseability: an empty dict is valid JSON and
-                # would restore a household that remembers nothing.
-                for key in ("memories", "proposals"):
-                    if not isinstance(store.get(key), list):
-                        problems.append(f"memory store has no '{key}' list")
-                counts = {k: len(v) for k, v in store.items()
-                          if isinstance(v, list)}
-                report(OK, f"memory store restores: {counts}")
-
-        vikunja = target / "vikunja"
-        files = list(vikunja.rglob("*")) if vikunja.is_dir() else []
-        if not any(f.is_file() for f in files):
-            problems.append("vikunja directory is empty — tasks would not "
-                            "come back")
-        else:
-            report(OK, f"vikunja restores: {sum(1 for f in files if f.is_file())} file(s)")
-
-        if problems:
-            for problem in problems:
-                report(FAIL, problem)
-            report(FAIL, f"{archive.name} would NOT fully restore")
-            return 1
-
-    report(OK, f"{archive.name} verified — extracts, parses, and holds state")
-    print("\nTo restore for real: stop the services, replace the memory volume "
-          "and the vikunja state dir from this archive, then redeploy.\n"
-          "See docs/runbook.md — do it deliberately, not from this command.")
-    return 0
+    """Rehearse a restore: unpack an archive and prove it could rebuild state."""
+    return _backup().restore_check(archive_name, report=report)
 
 
 def backup_list() -> int:
-    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"), reverse=True)
-    if not archives:
-        print(f"no backups in {BACKUP_DIR}")
-        return 0
-    for a in archives:
-        print(f"{a.name}  {a.stat().st_size // 1024:6d} KB")
-    print(f"\nrestore with: tar -xzf {archives[0]} -C <target>")
-    return 0
+    return _backup().backup_list()
 
 
 # --- reviewing the assistant's proposals -------------------------------------
@@ -1912,187 +1808,42 @@ IDENTITY_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
 
 
 def identity_env_path() -> Path:
-    return Path(env_dir()) / "agentbox-mcp.env"
+    return _identity().identity_env_path(env_dir)
 
 
 def read_env_file(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                key, _, value = line.partition("=")
-                values[key.strip()] = value.strip()
-    return values
+    return _identity().read_env_file(path)
 
 
 def write_env_value(path: Path, key: str, value: str) -> None:
-    """Rewrite one key in place, preserving order and comments."""
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    out, replaced = [], False
-    for line in lines:
-        if line.split("=", 1)[0].strip() == key and not line.lstrip().startswith("#"):
-            out.append(f"{key}={value}")
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.append(f"{key}={value}")
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
-    path.chmod(0o600)
+    return _identity().write_env_value(path, key, value)
 
 
 def parse_identities(raw: str) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for entry in raw.split(","):
-        entry = entry.strip()
-        if entry and ":" in entry:
-            name, _, token = entry.partition(":")
-            if name.strip() and token.strip():
-                out[name.strip()] = token.strip()
-    return out
-
-
-def identity_list() -> int:
-    values = read_env_file(identity_env_path())
-    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
-    if not identities:
-        report(WARN, "no identities configured — running single-operator")
-        print("\nAdd one with: cli/agentbox identity add <name>")
-        return 0
-    # A household is not just a list of names: it is who may do what, and
-    # whether each person can actually get in. Those four facts live in four
-    # environment variables across two systemd units, so until this read them
-    # together the only way to answer "can Sam sign in?" was to go and look in
-    # four places and reason about it.
-    portal = unit_environment("agentbox-portal")
-    approvals = unit_environment("agentbox-approvals")
-    admins = {n.strip() for n in portal.get("AGENTBOX_ADMINS", "").split(",")
-              if n.strip()}
-    emails = dict(pair.split(":", 1) for pair in
-                  portal.get("AGENTBOX_IDENTITY_EMAILS", "").split(",")
-                  if ":" in pair)
-    chat = dict(pair.split(":", 1) for pair in
-                (approvals.get("AGENTBOX_DISCORD_IDENTITIES", "")
-                 or portal.get("AGENTBOX_DISCORD_IDENTITIES", "")
-                 ).replace(" ", ",").split(",") if ":" in pair)
-    smtp = bool(portal.get("AGENTBOX_SMTP_HOST"))
-
-    print(f"{len(identities)} identit"
-          f"{'y' if len(identities) == 1 else 'ies'}:\n")
-    print(f"  {'name':<10} {'role':<7} {'sign in by':<22} own bridges")
-    for name in sorted(identities):
-        suffix = name.upper().replace("-", "_")
-        # Which services this person reaches through their own bridge rather
-        # than the shared one — the difference between "her mail" and "our
-        # tasks", and the thing that is easy to get wrong silently.
-        own = [prefix.lower() for prefix in ("GOOGLE", "VIKUNJA", "MEMORY", "HA")
-               if values.get(f"{prefix}_BRIDGE_TOKEN_{suffix}")]
-        ways = []
-        if smtp and name in emails:
-            ways.append("email")
-        if name in chat:
-            ways.append("Discord DM")
-        role = "admin" if name in admins else "member"
-        print(f"  {name:<10} {role:<7} "
-              f"{', '.join(ways) if ways else 'operator link only':<22} "
-              f"{', '.join(own) if own else 'none (all shared)'}")
-
-    unreachable = [n for n in sorted(identities)
-                   if n not in chat and not (smtp and n in emails)]
-    print("\nMemory: each identity sees their own scope plus 'household'.")
-    if unreachable:
-        # Not an error: handing someone a link is a legitimate way to run a
-        # household. It is only worth saying because the sign-in page cannot —
-        # it must answer identically for a registered and an unregistered
-        # address, or it becomes a way to enumerate who lives here.
-        print(f"\n{', '.join(unreachable)} cannot request a link "
-              f"themselves. Give them one with: "
-              f"cli/agentbox-portal link <name>")
-        print("To let them self-serve, set AGENTBOX_DISCORD_IDENTITIES "
-              "(no SMTP needed) or AGENTBOX_SMTP_HOST.")
-    return 0
+    return _identity().parse_identities(raw)
 
 
 def unit_environment(unit: str) -> dict:
-    """Environment of a user unit, as systemd actually has it.
+    return _identity().unit_environment(unit)
 
-    Read from systemd rather than the repo copy: what is installed and what is
-    checked in drift, and the question being answered here is about the running
-    household, not the intended one.
-    """
-    out = {}
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "show", unit, "-p", "Environment"],
-            capture_output=True, text=True, timeout=20, check=False)
-    except Exception:  # noqa: BLE001 — a listing must not fail on this
-        return out
-    for chunk in (result.stdout or "").replace("Environment=", "").split():
-        key, _, value = chunk.partition("=")
-        if key:
-            out[key] = value
-    return out
+
+def identity_list() -> int:
+    return _identity().identity_list(
+        env_dir, report_fn=report,
+        read_env_fn=read_env_file, unit_env_fn=unit_environment)
 
 
 def identity_add(name: str) -> int:
-    if not IDENTITY_NAME.match(name):
-        report(FAIL, "identity must be lowercase letters, digits, dash or "
-                     "underscore, starting with a letter")
-        return 2
-    path = identity_env_path()
-    if not path.exists():
-        report(FAIL, f"no gateway env at {path}; deploy agentbox-mcp first")
-        return 1
-    values = read_env_file(path)
-    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
-    if name in identities:
-        report(FAIL, f"identity '{name}' already exists")
-        return 1
-
-    import secrets
-    token = secrets.token_hex(32)
-    identities[name] = token
-    write_env_value(path, "AGENTBOX_IDENTITIES",
-                    ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
-    report(OK, f"added identity '{name}'")
-
-    first_identity = len(identities) == 1
-    print(f"\n  token: {token}\n")
-    print("Next:")
-    print(f"  1. Store it:  op item edit Agentbox/agentbox --token_{name}='{token}'")
-    print("  2. Redeploy:  cli/agentbox deploy agentbox-mcp")
-    if first_identity:
-        print("\n  NOTE: this is the first identity, so AGENTBOX_MCP_SHARED_TOKEN")
-        print("  stops working. Point the Hermes gateway config at this token")
-        print("  instead, or it will get 401 on every call.")
-    print(f"\n  Optional — give {name} their own Google account rather than "
-          f"sharing yours:")
-    suffix = name.upper().replace("-", "_")
-    print(f"    GOOGLE_BRIDGE_URL_{suffix}=http://{name}-google-bridge:8080")
-    print(f"    GOOGLE_BRIDGE_TOKEN_{suffix}=<that bridge's token>")
-    print(f"  Without those, {name} shares the existing Google bridge — which "
-          f"is\n  correct for shared services and wrong for personal mail.")
-    return 0
+    return _identity().identity_add(
+        name, env_dir, report_fn=report,
+        read_env_fn=read_env_file, write_env_fn=write_env_value)
 
 
 def identity_remove(name: str) -> int:
-    path = identity_env_path()
-    values = read_env_file(path)
-    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
-    if name not in identities:
-        report(FAIL, f"no identity '{name}'")
-        return 1
-    del identities[name]
-    write_env_value(path, "AGENTBOX_IDENTITIES",
-                    ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
-    report(OK, f"removed identity '{name}'; redeploy agentbox-mcp to apply")
-    if not identities:
-        report(WARN, "no identities remain — the gateway falls back to "
-                     "AGENTBOX_MCP_SHARED_TOKEN")
-    print(f"\nTheir memories are NOT deleted. They are still scoped to "
-          f"'{name}'\nand simply unreachable. Remove them deliberately if "
-          f"that is what you want.")
-    return 0
+    return _identity().identity_remove(
+        name, env_dir, report_fn=report,
+        read_env_fn=read_env_file, write_env_fn=write_env_value)
+
 
 
 # --- completing an invite -------------------------------------------------------
