@@ -341,7 +341,7 @@ def test_the_cli_warning_agrees_with_the_live_sources():
     """The approve-time message names which sources are live. It is a plain
     tuple in cli/agentbox (the CLI cannot import the gateway's modules), so
     this is the check that keeps the two from drifting."""
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_rules.py")
     assert f'live = {tuple(evaluator.LIVE_SOURCES)!r}'.replace("'", '"') \
         in source.replace("'", '"')
 

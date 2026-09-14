@@ -32,6 +32,86 @@ REPO = Path(os.environ.get("AGENTBOX_REPO", Path(__file__).resolve().parent.pare
 _keepalive_module = None
 _status_module = None
 _onboarding_module = None
+_backup_module = None
+_identity_module = None
+_memory_module = None
+_rules_module = None
+_scaffold_module = None
+
+
+def _scaffold():
+    """Load cli/agentbox_scaffold.py, once. See _status for why it is lazy."""
+    global _scaffold_module
+    if _scaffold_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_scaffold",
+            Path(__file__).resolve().parent / "agentbox_scaffold.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_scaffold"] = module
+        spec.loader.exec_module(module)
+        _scaffold_module = module
+    return _scaffold_module
+
+
+def _rules_mod():
+    """Load cli/agentbox_rules.py, once. See _status for why it is lazy."""
+    global _rules_module
+    if _rules_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_rules",
+            Path(__file__).resolve().parent / "agentbox_rules.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_rules"] = module
+        spec.loader.exec_module(module)
+        _rules_module = module
+    return _rules_module
+
+
+def _memory():
+    """Load cli/agentbox_memory.py, once. See _status for why it is lazy."""
+    global _memory_module
+    if _memory_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_memory",
+            Path(__file__).resolve().parent / "agentbox_memory.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_memory"] = module
+        spec.loader.exec_module(module)
+        _memory_module = module
+    return _memory_module
+
+
+def _identity():
+    """Load cli/agentbox_identity.py, once. See _status for why it is lazy."""
+    global _identity_module
+    if _identity_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_identity",
+            Path(__file__).resolve().parent / "agentbox_identity.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_identity"] = module
+        spec.loader.exec_module(module)
+        _identity_module = module
+    return _identity_module
+
+
+def _backup():
+    """Load cli/agentbox_backup.py, once. See _status for why it is lazy."""
+    global _backup_module
+    if _backup_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_backup",
+            Path(__file__).resolve().parent / "agentbox_backup.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_backup"] = module
+        spec.loader.exec_module(module)
+        _backup_module = module
+    return _backup_module
 
 
 def _keepalive():
@@ -729,146 +809,41 @@ RULE_FINGERPRINT_FIELDS = ("name", "identity", "when", "if", "do")
 
 
 def rule_fingerprint(record: dict) -> str:
-    core = {key: record.get(key) for key in RULE_FINGERPRINT_FIELDS}
-    return hashlib.sha256(json.dumps(
-        core, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return _rules_mod().rule_fingerprint(record)
 
 
 def _rule_approvals() -> dict[str, str]:
-    try:
-        data = json.loads(RULES_APPROVED_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return {str(e.get("name", "")): str(e.get("sha", ""))
-            for e in (data.get("approved", []) if isinstance(data, dict) else [])
-            if e.get("name") and e.get("sha")}
+    return _rules_mod()._rule_approvals(RULES_APPROVED_PATH)
 
 
 def _write_rule_approvals(entries: dict[str, str]) -> None:
-    RULES_APPROVED_PATH.parent.mkdir(parents=True, exist_ok=True)
-    RULES_APPROVED_PATH.write_text(json.dumps(
-        {"approved": [{"name": name, "sha": sha}
-                      for name, sha in sorted(entries.items())]},
-        indent=2), encoding="utf-8")
+    return _rules_mod()._write_rule_approvals(entries, RULES_APPROVED_PATH)
 
 
 def _rules() -> list[dict]:
-    out = []
-    approved = _rule_approvals()
-    if not RULES_DIR.is_dir():
-        return out
-    for path in sorted(RULES_DIR.glob("*.json")):
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        record["_path"] = str(path)
-        # Derived from the operator's approval record, never from the file:
-        # the file sits on the gateway-writable mount and carries no authority.
-        sha = approved.get(str(record.get("name")))
-        record["_active"] = sha == rule_fingerprint(record)
-        record["_edited_since_approval"] = bool(sha) and not record["_active"]
-        out.append(record)
-    return out
+    return _rules_mod()._rules(RULES_DIR, RULES_APPROVED_PATH)
 
 
 def rules_list() -> int:
-    """Show standing rules and what each one actually does.
-
-    Printed in full rather than summarised. A rule is the assistant's only way
-    to cause something to happen when nobody is watching, so the person
-    deciding needs to read the whole thing, not a description of it.
-    """
-    found = _rules()
-    if not found:
-        print("no rules")
-        return 0
-    for record in found:
-        state = "ACTIVE " if record.get("_active") else "inactive"
-        print(f"[{state}] {record.get('name')}  (as {record.get('identity')})")
-        if record.get("_edited_since_approval"):
-            print("          !! changed since it was approved — the approval "
-                  "is void and it will not fire. Re-read it and approve again.")
-        if record.get("description"):
-            print(f"          {record['description']}")
-        when = record.get("when", {})
-        print(f"          when: {when}")
-        for predicate in record.get("if") or []:
-            print(f"          if:   {predicate}")
-        for action in record.get("do") or []:
-            print(f"          do:   {action.get('tool')} {action.get('args')}")
-        print()
-    print("activate with: cli/agentbox rules approve <name>")
-    return 0
+    return _rules_mod().rules_list(RULES_DIR, RULES_APPROVED_PATH)
 
 
 def rules_decide(name: str, activate: bool) -> int:
-    """Approve or deactivate one rule.
-
-    Approval is an entry in the operator-owned approvals file, pinning a
-    fingerprint of what the rule executes. Nothing is written to the rule
-    file itself — that sits on the gateway-writable mount, and an approval
-    the approved party could write would not be one. Pinning means an
-    approved rule that is later edited (by anything) simply stops firing.
-    """
-    for record in _rules():
-        if record.get("name") != name:
-            continue
-        entries = _rule_approvals()
-        if activate:
-            entries[name] = rule_fingerprint(record)
-        else:
-            entries.pop(name, None)
-        try:
-            _write_rule_approvals(entries)
-        except OSError as exc:
-            report(FAIL, f"could not write {RULES_APPROVED_PATH}: {exc}")
-            return 1
-        report(OK, f"{'activated' if activate else 'deactivated'} rule "
-                   f"'{name}'")
-        if activate:
-            report(WARN, "this rule now runs unattended, as "
-                         f"{record.get('identity')}, until deactivated. If "
-                         f"the rule file changes in any way, the approval is "
-                         f"void and it stops firing.")
-            # Say so at the moment of approval, not in a document. An approved
-            # rule that silently never fires is exactly the confident-but-wrong
-            # state this system keeps having to hunt down. Kept in step with
-            # evaluator.LIVE_SOURCES by tests/test_rules_evaluator.py.
-            live = ("schedule", "homeassistant")
-            source = str((record.get("when") or {}).get("source", ""))
-            if source in live:
-                report(OK, f"'{source}' events are live — this rule can fire "
-                           f"within a minute or two of matching")
-            else:
-                report(WARN, f"'{source}' events are NOT wired up yet (live: "
-                             f"{', '.join(live)}), so this rule is recorded "
-                             f"but cannot fire until that source lands")
-        return 0
-    report(FAIL, f"no rule named '{name}'")
-    return 1
+    return _rules_mod().rules_decide(
+        name, activate,
+        rules_dir=RULES_DIR,
+        rules_approved_path=RULES_APPROVED_PATH,
+        report_fn=report,
+    )
 
 
 def rules_remove(name: str) -> int:
-    for record in _rules():
-        if record.get("name") == name:
-            # The approval is what stops it firing, so revoke that first and
-            # unconditionally — file deletion can fail (the rules dir is
-            # container-owned) and must not leave the rule live.
-            entries = _rule_approvals()
-            if entries.pop(name, None) is not None:
-                _write_rule_approvals(entries)
-            try:
-                Path(record["_path"]).unlink()
-                report(OK, f"removed rule '{name}'")
-            except OSError:
-                report(OK, f"revoked approval for '{name}'; it cannot fire")
-                report(WARN, f"the proposal file remains at "
-                             f"{record['_path']} (owned by the gateway) — "
-                             f"harmless, and listed as inactive")
-            return 0
-    report(FAIL, f"no rule named '{name}'")
-    return 1
+    return _rules_mod().rules_remove(
+        name,
+        rules_dir=RULES_DIR,
+        rules_approved_path=RULES_APPROVED_PATH,
+        report_fn=report,
+    )
 
 
 def portal_email_delivery() -> int:
@@ -1280,152 +1255,16 @@ def update(service: str) -> int:
 
 def backup(keep: int = 14) -> int:
     """Archive the stateful services. Verifies the archive before pruning."""
-    state_dir = Path(os.environ.get(
-        "AGENT_CONTROL_PLANE_STATE_DIR",
-        str(Path("~/.local/state/agent-control-plane").expanduser())))
-    stamp = subprocess.run(["date", "-u", "+%Y%m%dT%H%M%SZ"],
-                           capture_output=True, text=True).stdout.strip()
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    archive = BACKUP_DIR / f"agentbox-{stamp}.tar.gz"
-    staging = BACKUP_DIR / f".staging-{stamp}"
-    staging.mkdir(parents=True, exist_ok=True)
-    staging.chmod(0o700)
-    (staging / "vikunja").mkdir(parents=True, exist_ok=True)
-    (staging / "memory").mkdir(parents=True, exist_ok=True)
-
-    vikunja_src = state_dir / "vikunja"
-    if vikunja_src.is_dir():
-        subprocess.run(["cp", "-a", f"{vikunja_src}/.", str(staging / "vikunja")], check=False)
-    else:
-        report(WARN, f"vikunja state not found at {vikunja_src}")
-
-    # The memory store lives in a docker volume, so it is read out through a
-    # throwaway container rather than from the host filesystem.
-    #
-    # The container chowns what it copied back to this user before exiting.
-    # Without that the files land owned by the container's uid, this process
-    # cannot delete them, and the cleanup below fails — which is exactly what
-    # happened for thirteen consecutive runs: thirteen archives, thirteen
-    # orphaned staging directories, the oldest owned by root, each holding a
-    # readable copy of every private household memory.
-    volume = os.environ.get("AGENTBOX_MEMORY_VOLUME", "memory-bridge_memory_data")
-    proc = subprocess.run(
-        ["docker", "run", "--rm", "-v", f"{volume}:/src:ro",
-         "-v", f"{staging / 'memory'}:/dst", "alpine", "sh", "-c",
-         f"cp -a /src/. /dst/ && chown -R {os.getuid()}:{os.getgid()} /dst"],
-        capture_output=True, text=True)
-    if proc.returncode != 0:
-        report(WARN, f"memory volume not archived: {proc.stderr.strip()[:120]}")
-
-    subprocess.run(["tar", "-czf", str(archive), "-C", str(staging), "."], check=False)
-    # Private memories, so not group- or world-readable. The staging tree was
-    # mode 644 and the archives 664 until 2026-08-14.
-    archive.chmod(0o600)
-
-    # Not ignore_errors: a cleanup that cannot run is the whole defect above,
-    # and it hid for thirteen runs precisely because nothing reported it.
-    try:
-        shutil.rmtree(staging)
-    except OSError as exc:
-        report(FAIL, f"could not remove {staging}: {exc}. It holds an "
-                     f"unencrypted copy of the memory store — remove it by hand.")
-
-    # An archive nobody has opened is not a backup. Verify before pruning, so a
-    # broken run cannot delete the last good copy.
-    verify = subprocess.run(["tar", "-tzf", str(archive)], capture_output=True, text=True)
-    entries = [ln for ln in verify.stdout.splitlines() if ln.strip() not in ("./", ".")]
-    if verify.returncode != 0 or not entries:
-        report(FAIL, f"archive failed verification, keeping everything: {archive.name}")
-        return 1
-    size = archive.stat().st_size
-    report(OK, f"backup {archive.name} — {len(entries)} entries, {size // 1024} KB")
-
-    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"))
-    for old in archives[:-keep] if len(archives) > keep else []:
-        old.unlink()
-        report(OK, f"pruned {old.name}")
-    return 0
+    return _backup().backup(keep, report=report)
 
 
 def restore_check(archive_name: str = "") -> int:
-    """Rehearse a restore: unpack an archive and prove it could rebuild state.
-
-    Untested restore is the standard way people find out they have no backups.
-    `tar -tzf` proved only that the file was readable — not that the memory
-    store parses, not that it holds anything, not that Vikunja's data came
-    along. Nothing verified any of that, and no restore had ever been run.
-
-    Deliberately a drill, not a live restore. Putting data back means stopping
-    services and overwriting a volume, which is the operator's decision to make
-    deliberately; this answers the question that has to be answered *before*
-    that, which is whether the archive is worth restoring at all.
-    """
-    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"), reverse=True)
-    if archive_name:
-        archives = [a for a in archives if a.name == archive_name]
-    if not archives:
-        report(FAIL, f"no archive found in {BACKUP_DIR}")
-        return 1
-    archive = archives[0]
-
-    with tempfile.TemporaryDirectory(prefix="agentbox-restore-check-") as tmp:
-        target = Path(tmp)
-        proc = subprocess.run(["tar", "-xzf", str(archive), "-C", str(target)],
-                              capture_output=True, text=True)
-        if proc.returncode != 0:
-            report(FAIL, f"{archive.name} would not extract: "
-                         f"{proc.stderr.strip()[:200]}")
-            return 1
-
-        problems = []
-        memory = target / "memory" / "memory.json"
-        if not memory.is_file():
-            problems.append("no memory/memory.json in the archive")
-        else:
-            try:
-                store = json.loads(memory.read_text(encoding="utf-8"))
-            except ValueError as exc:
-                problems.append(f"memory store does not parse: {exc}")
-            else:
-                # Shape, not just parseability: an empty dict is valid JSON and
-                # would restore a household that remembers nothing.
-                for key in ("memories", "proposals"):
-                    if not isinstance(store.get(key), list):
-                        problems.append(f"memory store has no '{key}' list")
-                counts = {k: len(v) for k, v in store.items()
-                          if isinstance(v, list)}
-                report(OK, f"memory store restores: {counts}")
-
-        vikunja = target / "vikunja"
-        files = list(vikunja.rglob("*")) if vikunja.is_dir() else []
-        if not any(f.is_file() for f in files):
-            problems.append("vikunja directory is empty — tasks would not "
-                            "come back")
-        else:
-            report(OK, f"vikunja restores: {sum(1 for f in files if f.is_file())} file(s)")
-
-        if problems:
-            for problem in problems:
-                report(FAIL, problem)
-            report(FAIL, f"{archive.name} would NOT fully restore")
-            return 1
-
-    report(OK, f"{archive.name} verified — extracts, parses, and holds state")
-    print("\nTo restore for real: stop the services, replace the memory volume "
-          "and the vikunja state dir from this archive, then redeploy.\n"
-          "See docs/runbook.md — do it deliberately, not from this command.")
-    return 0
+    """Rehearse a restore: unpack an archive and prove it could rebuild state."""
+    return _backup().restore_check(archive_name, report=report)
 
 
 def backup_list() -> int:
-    archives = sorted(BACKUP_DIR.glob("agentbox-*.tar.gz"), reverse=True)
-    if not archives:
-        print(f"no backups in {BACKUP_DIR}")
-        return 0
-    for a in archives:
-        print(f"{a.name}  {a.stat().st_size // 1024:6d} KB")
-    print(f"\nrestore with: tar -xzf {archives[0]} -C <target>")
-    return 0
+    return _backup().backup_list()
 
 
 # --- reviewing the assistant's proposals -------------------------------------
@@ -1549,139 +1388,13 @@ def proposals_merge(name: str) -> int:
 # regression test — is present before a human reads it, so review is about
 # whether the service should exist, not whether it forgot a guardrail.
 
-SCAFFOLD_PORT_RANGE = range(3480, 3500)
-
-
-def used_ports() -> set[int]:
-    ports = set()
-    for compose in (REPO / "services").rglob("compose.y*ml"):
-        for match in re.finditer(r":(\d{4}):8080", compose.read_text(encoding="utf-8")):
-            ports.add(int(match.group(1)))
-    return ports
-
-
 def scaffold(name: str, port: int | None, upstream_env: str | None) -> int:
-    if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", name):
-        report(FAIL, "name must be lowercase letters, digits and hyphens (e.g. todoist)")
-        return 1
-    service = f"{name}-bridge"
-    target = REPO / "services" / "compose" / service
-    if target.exists():
-        report(FAIL, f"{service} already exists at {target.relative_to(REPO)}")
-        return 1
-
-    taken = used_ports()
-    if port is None:
-        port = next((p for p in SCAFFOLD_PORT_RANGE if p not in taken), None)
-        if port is None:
-            report(FAIL, f"no free port in {SCAFFOLD_PORT_RANGE.start}-{SCAFFOLD_PORT_RANGE.stop - 1}")
-            return 1
-    elif port in taken:
-        report(FAIL, f"port {port} is already mapped by another service")
-        return 1
-
-    upper = name.upper().replace("-", "_")
-    upstream_env = upstream_env or f"{upper}_API_TOKEN"
-    bridge_env = f"{upper}_BRIDGE_TOKEN"
-
-    template = REPO / "services" / "templates" / "bridge"
-    target.mkdir(parents=True)
-    (target / "app").mkdir()
-
-    # No vendoring: the Dockerfile copies the shared base from the repo root at
-    # build time, so there is never a second copy to drift.
-    (target / "Dockerfile").write_text(
-        "FROM python:3.13-alpine\n\n"
-        "ENV PYTHONDONTWRITEBYTECODE=1\n"
-        "ENV PYTHONUNBUFFERED=1\n\n"
-        "WORKDIR /app\n"
-        f"COPY services/compose/{service}/app/bridge.py /app/bridge.py\n"
-        "COPY services/templates/bridge/app/bridge_base.py /app/bridge_base.py\n\n"
-        "USER 65532:65532\n\n"
-        "EXPOSE 8080\n"
-        'CMD ["python", "/app/bridge.py"]\n', encoding="utf-8")
-
-    def rewrite(text: str) -> str:
-        return (text.replace("EXAMPLE_UPSTREAM_TOKEN", upstream_env)
-                    .replace("EXAMPLE_BRIDGE_TOKEN", bridge_env)
-                    .replace("example-bridge", service)
-                    .replace("ExampleBridge", f"{name.replace('-', ' ').title().replace(' ', '')}Bridge")
-                    .replace("agentbox-bridge-example", service)
-                    .replace(":3480:8080", f":{port}:8080"))
-
-    (target / "app" / "bridge.py").write_text(
-        rewrite((template / "app" / "bridge.py").read_text(encoding="utf-8")), encoding="utf-8")
-    compose = rewrite((template / "compose.yaml").read_text(encoding="utf-8"))
-    compose = compose.replace("    build:\n      context: .\n",
-                              f"    build:\n      context: ../../..\n"
-                              f"      dockerfile: services/compose/{service}/Dockerfile\n")
-    compose = compose.replace("    build: .\n",
-                              f"    build:\n      context: ../../..\n"
-                              f"      dockerfile: services/compose/{service}/Dockerfile\n")
-    (target / "compose.yaml").write_text(compose, encoding="utf-8")
-    (target / f"{service}.op.env.example").write_text(
-        f"{upstream_env}=op://Agentbox/{service}/api_token\n"
-        f"{bridge_env}=op://Agentbox/{service}/bridge_token\n"
-        "LAN_BIND_IP=127.0.0.1\n", encoding="utf-8")
-    (target / "README.md").write_text(
-        f"# {service}\n\n"
-        f"Scaffolded by `agentbox scaffold`. Not deployed, not merged.\n\n"
-        f"- Host port: `127.0.0.1:{port}`\n"
-        f"- Upstream credential: `{upstream_env}` (never seen by the assistant)\n"
-        f"- Bridge token: `{bridge_env}`\n\n"
-        f"## Before this is worth merging\n\n"
-        f"1. Replace the echo route in `app/bridge.py` with real calls.\n"
-        f"2. Implement `upstream_status()` if this fronts a service you run.\n"
-        f"3. Follow `skills/adding-a-bridge/SKILL.md` — bounded lists, idempotent\n"
-        f"   creates, symmetric write constraints, no policy stated only in prose.\n"
-        f"4. Map any new MCP tools to a capability in `policies/approval-policy.yaml`;\n"
-        f"   unmapped tools fail closed and `validate` will flag them.\n"
-        f"5. Create the 1Password item, then `cli/agentbox deploy {service}`.\n",
-        encoding="utf-8")
-
-    test_path = REPO / "tests" / f"test_{service.replace('-', '_')}.py"
-    test_path.write_text(
-        f'"""Scaffolded checks for {service}. Extend as routes are added."""\n'
-        "from __future__ import annotations\n\n"
-        "import importlib.util\nimport sys\nfrom pathlib import Path\n\n"
-        "REPO = Path(__file__).resolve().parent.parent\n"
-        f'BRIDGE = REPO / "services" / "compose" / "{service}" / "app" / "bridge.py"\n'
-        'sys.path.insert(0, str(REPO / "services" / "templates" / "bridge" / "app"))\n'
-        f'spec = importlib.util.spec_from_file_location("{service.replace("-", "_")}", BRIDGE)\n'
-        "mod = importlib.util.module_from_spec(spec)\n"
-        "spec.loader.exec_module(mod)\n\n\n"
-        "def test_bridge_token_is_read_from_env_not_hardcoded():\n"
-        '    """Fail-closed auth depends on this being empty when unset."""\n'
-        f'    assert mod.BRIDGE_TOKEN == ""\n\n\n'
-        "def test_upstream_credential_is_separate_from_the_bridge_token():\n"
-        '    """One credential guards the door; the other is what the door protects."""\n'
-        "    assert mod.UPSTREAM_TOKEN is not mod.BRIDGE_TOKEN or mod.UPSTREAM_TOKEN == \"\"\n",
-        encoding="utf-8")
-
-    report(OK, f"scaffolded {service} on 127.0.0.1:{port}")
-    if validate() != 0:
-        report(FAIL, "generated service does not pass validate; leaving it in place to inspect")
-        return 1
-
-    branch = f"scaffold/{service}"
-    proc = subprocess.run(["git", "checkout", "-b", branch], cwd=REPO,
-                          capture_output=True, text=True)
-    if proc.returncode != 0:
-        report(WARN, f"could not create branch {branch}: {proc.stderr.strip()}")
-        report(WARN, "files are written; commit them yourself")
-        return 0
-    subprocess.run(["git", "add", str(target), str(test_path)], cwd=REPO, check=False)
-    subprocess.run(["git", "commit", "-q", "-m",
-                    f"scaffold: {service} bridge skeleton\n\n"
-                    f"Generated by `agentbox scaffold {name}`. Echo route is a placeholder.\n"
-                    f"Not deployed and not merged: review against\n"
-                    f"skills/adding-a-bridge/SKILL.md before either."],
-                   cwd=REPO, check=False)
-    report(OK, f"committed on branch {branch} — not merged, not deployed")
-    print(f"\nNext: edit services/compose/{service}/app/bridge.py, then open a PR.\n"
-          f"Nothing runs this service until someone reviews it and runs "
-          f"`cli/agentbox deploy {service}`.")
-    return 0
+    return _scaffold().scaffold(
+        name, port, upstream_env,
+        repo_path=REPO,
+        validate_fn=validate,
+        report_fn=report,
+    )
 
 
 # --- runtime policy grants --------------------------------------------------
@@ -1912,187 +1625,42 @@ IDENTITY_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
 
 
 def identity_env_path() -> Path:
-    return Path(env_dir()) / "agentbox-mcp.env"
+    return _identity().identity_env_path(env_dir)
 
 
 def read_env_file(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                key, _, value = line.partition("=")
-                values[key.strip()] = value.strip()
-    return values
+    return _identity().read_env_file(path)
 
 
 def write_env_value(path: Path, key: str, value: str) -> None:
-    """Rewrite one key in place, preserving order and comments."""
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    out, replaced = [], False
-    for line in lines:
-        if line.split("=", 1)[0].strip() == key and not line.lstrip().startswith("#"):
-            out.append(f"{key}={value}")
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.append(f"{key}={value}")
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
-    path.chmod(0o600)
+    return _identity().write_env_value(path, key, value)
 
 
 def parse_identities(raw: str) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for entry in raw.split(","):
-        entry = entry.strip()
-        if entry and ":" in entry:
-            name, _, token = entry.partition(":")
-            if name.strip() and token.strip():
-                out[name.strip()] = token.strip()
-    return out
-
-
-def identity_list() -> int:
-    values = read_env_file(identity_env_path())
-    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
-    if not identities:
-        report(WARN, "no identities configured — running single-operator")
-        print("\nAdd one with: cli/agentbox identity add <name>")
-        return 0
-    # A household is not just a list of names: it is who may do what, and
-    # whether each person can actually get in. Those four facts live in four
-    # environment variables across two systemd units, so until this read them
-    # together the only way to answer "can Sam sign in?" was to go and look in
-    # four places and reason about it.
-    portal = unit_environment("agentbox-portal")
-    approvals = unit_environment("agentbox-approvals")
-    admins = {n.strip() for n in portal.get("AGENTBOX_ADMINS", "").split(",")
-              if n.strip()}
-    emails = dict(pair.split(":", 1) for pair in
-                  portal.get("AGENTBOX_IDENTITY_EMAILS", "").split(",")
-                  if ":" in pair)
-    chat = dict(pair.split(":", 1) for pair in
-                (approvals.get("AGENTBOX_DISCORD_IDENTITIES", "")
-                 or portal.get("AGENTBOX_DISCORD_IDENTITIES", "")
-                 ).replace(" ", ",").split(",") if ":" in pair)
-    smtp = bool(portal.get("AGENTBOX_SMTP_HOST"))
-
-    print(f"{len(identities)} identit"
-          f"{'y' if len(identities) == 1 else 'ies'}:\n")
-    print(f"  {'name':<10} {'role':<7} {'sign in by':<22} own bridges")
-    for name in sorted(identities):
-        suffix = name.upper().replace("-", "_")
-        # Which services this person reaches through their own bridge rather
-        # than the shared one — the difference between "her mail" and "our
-        # tasks", and the thing that is easy to get wrong silently.
-        own = [prefix.lower() for prefix in ("GOOGLE", "VIKUNJA", "MEMORY", "HA")
-               if values.get(f"{prefix}_BRIDGE_TOKEN_{suffix}")]
-        ways = []
-        if smtp and name in emails:
-            ways.append("email")
-        if name in chat:
-            ways.append("Discord DM")
-        role = "admin" if name in admins else "member"
-        print(f"  {name:<10} {role:<7} "
-              f"{', '.join(ways) if ways else 'operator link only':<22} "
-              f"{', '.join(own) if own else 'none (all shared)'}")
-
-    unreachable = [n for n in sorted(identities)
-                   if n not in chat and not (smtp and n in emails)]
-    print("\nMemory: each identity sees their own scope plus 'household'.")
-    if unreachable:
-        # Not an error: handing someone a link is a legitimate way to run a
-        # household. It is only worth saying because the sign-in page cannot —
-        # it must answer identically for a registered and an unregistered
-        # address, or it becomes a way to enumerate who lives here.
-        print(f"\n{', '.join(unreachable)} cannot request a link "
-              f"themselves. Give them one with: "
-              f"cli/agentbox-portal link <name>")
-        print("To let them self-serve, set AGENTBOX_DISCORD_IDENTITIES "
-              "(no SMTP needed) or AGENTBOX_SMTP_HOST.")
-    return 0
+    return _identity().parse_identities(raw)
 
 
 def unit_environment(unit: str) -> dict:
-    """Environment of a user unit, as systemd actually has it.
+    return _identity().unit_environment(unit)
 
-    Read from systemd rather than the repo copy: what is installed and what is
-    checked in drift, and the question being answered here is about the running
-    household, not the intended one.
-    """
-    out = {}
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "show", unit, "-p", "Environment"],
-            capture_output=True, text=True, timeout=20, check=False)
-    except Exception:  # noqa: BLE001 — a listing must not fail on this
-        return out
-    for chunk in (result.stdout or "").replace("Environment=", "").split():
-        key, _, value = chunk.partition("=")
-        if key:
-            out[key] = value
-    return out
+
+def identity_list() -> int:
+    return _identity().identity_list(
+        env_dir, report_fn=report,
+        read_env_fn=read_env_file, unit_env_fn=unit_environment)
 
 
 def identity_add(name: str) -> int:
-    if not IDENTITY_NAME.match(name):
-        report(FAIL, "identity must be lowercase letters, digits, dash or "
-                     "underscore, starting with a letter")
-        return 2
-    path = identity_env_path()
-    if not path.exists():
-        report(FAIL, f"no gateway env at {path}; deploy agentbox-mcp first")
-        return 1
-    values = read_env_file(path)
-    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
-    if name in identities:
-        report(FAIL, f"identity '{name}' already exists")
-        return 1
-
-    import secrets
-    token = secrets.token_hex(32)
-    identities[name] = token
-    write_env_value(path, "AGENTBOX_IDENTITIES",
-                    ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
-    report(OK, f"added identity '{name}'")
-
-    first_identity = len(identities) == 1
-    print(f"\n  token: {token}\n")
-    print("Next:")
-    print(f"  1. Store it:  op item edit Agentbox/agentbox --token_{name}='{token}'")
-    print("  2. Redeploy:  cli/agentbox deploy agentbox-mcp")
-    if first_identity:
-        print("\n  NOTE: this is the first identity, so AGENTBOX_MCP_SHARED_TOKEN")
-        print("  stops working. Point the Hermes gateway config at this token")
-        print("  instead, or it will get 401 on every call.")
-    print(f"\n  Optional — give {name} their own Google account rather than "
-          f"sharing yours:")
-    suffix = name.upper().replace("-", "_")
-    print(f"    GOOGLE_BRIDGE_URL_{suffix}=http://{name}-google-bridge:8080")
-    print(f"    GOOGLE_BRIDGE_TOKEN_{suffix}=<that bridge's token>")
-    print(f"  Without those, {name} shares the existing Google bridge — which "
-          f"is\n  correct for shared services and wrong for personal mail.")
-    return 0
+    return _identity().identity_add(
+        name, env_dir, report_fn=report,
+        read_env_fn=read_env_file, write_env_fn=write_env_value)
 
 
 def identity_remove(name: str) -> int:
-    path = identity_env_path()
-    values = read_env_file(path)
-    identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
-    if name not in identities:
-        report(FAIL, f"no identity '{name}'")
-        return 1
-    del identities[name]
-    write_env_value(path, "AGENTBOX_IDENTITIES",
-                    ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
-    report(OK, f"removed identity '{name}'; redeploy agentbox-mcp to apply")
-    if not identities:
-        report(WARN, "no identities remain — the gateway falls back to "
-                     "AGENTBOX_MCP_SHARED_TOKEN")
-    print(f"\nTheir memories are NOT deleted. They are still scoped to "
-          f"'{name}'\nand simply unreachable. Remove them deliberately if "
-          f"that is what you want.")
-    return 0
+    return _identity().identity_remove(
+        name, env_dir, report_fn=report,
+        read_env_fn=read_env_file, write_env_fn=write_env_value)
+
 
 
 # --- completing an invite -------------------------------------------------------
@@ -2590,8 +2158,8 @@ LARGE_FILE_LIMIT = 400
 #
 # Raising an entry is allowed and is meant to be a visible line in a diff.
 LARGE_FILES = {
-    "cli/agentbox": 3478,
-    "cli/agentbox-portal": 3289,
+    "cli/agentbox": 2909,
+    "cli/agentbox-portal": 2443,
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,
     "cli/agentbox-approvals": 788,
@@ -2699,216 +2267,79 @@ def service_env_values(service: str, keys: tuple[str, ...]) -> dict[str, str]:
 
 
 def memory_request(method: str, path: str, payload: dict | None = None) -> Any:
-    tokens = service_env_values("memory-bridge", ("MEMORY_BRIDGE_TOKEN", "MEMORY_REVIEW_TOKEN"))
-    bridge_token = tokens.get("MEMORY_BRIDGE_TOKEN", "")
-    if not bridge_token:
-        report(FAIL, "MEMORY_BRIDGE_TOKEN not found; is memory-bridge.env configured?")
-        return None
-    headers = {"Authorization": f"Bearer {bridge_token}", "Accept": "application/json"}
-    if tokens.get("MEMORY_REVIEW_TOKEN"):
-        headers["X-Memory-Review-Token"] = tokens["MEMORY_REVIEW_TOKEN"]
-    data = json.dumps(payload).encode() if payload is not None else None
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(MEMORY_BRIDGE_URL + path, data=data,
-                                     method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode()[:300]
-        report(FAIL, f"memory-bridge returned {exc.code}: {detail}")
-        return None
-    except Exception as exc:  # noqa: BLE001
-        report(FAIL, f"memory-bridge unreachable: {type(exc).__name__}")
-        return None
+    return _memory().memory_request(
+        method, path, payload=payload,
+        service_env_fn=service_env_values,
+        report_fn=report,
+    )
 
 
 def memory_list(identity: str = "") -> int:
-    """What the assistant has proposed, across every identity.
-
-    Scope is shown on each line rather than filtered out. A proposal the
-    operator cannot see is one nobody can approve — private memory was
-    write-only until this was fixed, and silently so, because an empty queue
-    and an unreachable one look identical.
-    """
-    payload = memory_request("GET", "/v1/proposals?limit=200")
-    if payload is None:
-        return 1
-    proposals = payload.get("proposals", [])
-    if identity:
-        proposals = [p for p in proposals
-                     if p.get("scope", "household") == identity]
-    if not proposals:
-        print(f"no pending proposals{f' for {identity}' if identity else ''}")
-        return 0
-    for item in proposals:
-        scope = item.get("scope", "household")
-        print(f"{item['id']}  [{scope}]  {item.get('statement', '')}")
-    print(f"\n{len(proposals)} pending — approve with: "
-          f"cli/agentbox memory approve <id>")
-    if not payload.get("as_operator"):
-        report(WARN, "listed without the operator review token, so private "
-                     "proposals are hidden — check MEMORY_REVIEW_TOKEN")
-    return 0
+    return _memory().memory_list(
+        identity=identity,
+        service_env_fn=service_env_values,
+        report_fn=report,
+    )
 
 
 def memory_add(statement: str, scope: str = "", memory_type: str = "",
                supersedes: str = "") -> int:
-    """Record something the operator states directly, with no review step.
-
-    Reviewing your own statement is theatre: the review gate exists so the
-    assistant cannot write its own durable memory, and a person typing a fact
-    at a terminal is the evidence that gate is protecting. The bridge has had
-    an operator-only write path since it was built and nothing ever called it
-    — so the only way a fact could enter memory was for the assistant to guess
-    it first and a human to agree. "Bin day is Wednesday" had no route in at
-    all unless the assistant happened to propose it, and when it did guess, it
-    guessed Tuesday.
-
-    Household by default, because a fact worth typing by hand is usually one
-    the whole house shares. Pass --scope <name> to keep it to one person.
-    """
-    statement = statement.strip()
-    if not statement:
-        report(FAIL, "a statement is required")
-        return 1
-    payload: dict = {"statement": statement, "source": "stated by the operator"}
-    if supersedes:
-        payload["supersedes"] = supersedes
-    if scope:
-        payload["scope"] = scope
-    if memory_type:
-        payload["type"] = memory_type
-    result = memory_request("POST", "/v1/memories", payload)
-    if result is None:
-        return 1
-    report(OK, f"remembered [{result.get('scope', 'household')}]: "
-               f"{result.get('statement', statement)}")
-    if result.get("replaced"):
-        report(OK, f"superseded: {result['replaced'].get('statement','')}")
-    for candidate in result.get("possibly_supersedes", []):
-        # Offered, never applied: an automatic supersession that is wrong
-        # hides a true memory behind a false one and says nothing.
-        report(WARN, f"this may replace an existing memory — if so: "
-                     f"cli/agentbox memory forget {candidate['id']}  "
-                     f"(or re-add with --supersedes {candidate['id']})\n"
-                     f"         existing: {candidate['statement'][:70]}")
-    # The heuristic runs on the way in. If it disagrees, say so once rather
-    # than overruling — the operator asked for a memory and gets one, but a
-    # behaviour complaint stored as a fact is the thing worth a second look.
-    if result.get("kind") == "feedback":
-        report(WARN, "that reads as feedback about behaviour rather than a "
-                     "fact. It is stored as a memory because you asked for "
-                     "one; `agentbox feedback` is the other list.")
-    return 0
+    return _memory().memory_add(
+        statement, scope=scope, memory_type=memory_type, supersedes=supersedes,
+        service_env_fn=service_env_values,
+        report_fn=report,
+    )
 
 
 def memory_show(limit: int = 50) -> int:
-    """What is actually stored, as opposed to what is waiting for review."""
-    payload = memory_request("GET", f"/v1/memories?limit={int(limit)}")
-    if payload is None:
-        return 1
-    items = payload.get("memories", [])
-    if not items:
-        print("nothing remembered yet")
-        return 0
-    for item in items:
-        print(f"{item['id']}  [{item.get('scope','household')}]  "
-              f"{item.get('statement','')}")
-        if item.get("edited_by_reviewer"):
-            print(f"{'':38}(edited; originally: "
-                  f"{item.get('original_statement','')[:60]})")
-    print(f"\n{len(items)} remembered — remove one with: "
-          f"cli/agentbox memory forget <id>")
-    return 0
+    return _memory().memory_show(
+        limit=limit,
+        service_env_fn=service_env_values,
+        report_fn=report,
+    )
 
 
 def memory_history(memory_id: str) -> int:
-    """How a fact changed over time, oldest first.
-
-    Reachable from any link in the chain, because the id somebody has is
-    usually the one they saw in an old answer rather than the current one.
-    """
-    payload = memory_request(
-        "GET", f"/v1/memories/{urllib.parse.quote(memory_id)}/history")
-    if payload is None:
-        return 1
-    for item in payload.get("history", []):
-        marker = {"approved": "now  ", "superseded": "was  ",
-                  "forgotten": "wrong"}.get(item.get("status"), "?    ")
-        print(f"{marker} {item.get('created_at','')[:10]}  "
-              f"{item.get('statement','')}")
-    print(f"\n{payload.get('length', 0)} version(s)")
-    return 0
+    return _memory().memory_history(
+        memory_id,
+        service_env_fn=service_env_values,
+        report_fn=report,
+    )
 
 
 def memory_forget(memory_id: str, reason: str = "") -> int:
-    """Remove something already durable.
-
-    Memory was append-only until this existed: a wrong fact stayed wrong
-    forever, and these statements are read back as true, so a stale one does
-    not sit inertly — it misinforms every answer that touches it.
-    """
-    payload = memory_request(
-        "POST", f"/v1/memories/{urllib.parse.quote(memory_id)}/forget",
-        {"reason": reason})
-    if payload is None:
-        return 1
-    record_decision("operator", "forget", "memory", reason)
-    report(OK, f"forgotten: {payload.get('statement', memory_id)}")
-    return 0
+    return _memory().memory_forget(
+        memory_id, reason=reason,
+        service_env_fn=service_env_values,
+        record_decision_fn=record_decision,
+        report_fn=report,
+    )
 
 
 def feedback_list(status: str = "open") -> int:
-    """The improvement backlog: things to fix properly rather than remember.
-
-    Deliberately an operator surface only. If the assistant could read this it
-    would start explaining the behaviour instead of the behaviour changing,
-    which is exactly the patch-around this split exists to prevent.
-    """
-    payload = memory_request("GET", f"/v1/feedback?status={urllib.parse.quote(status)}")
-    if payload is None:
-        return 1
-    items = payload.get("feedback", [])
-    if not items:
-        print(f"no {status} feedback")
-        return 0
-    for item in items:
-        print(f"{item['id']}  [{item.get('status', 'open')}]  "
-              f"{item.get('statement', '')}")
-        if item.get("resolution"):
-            print(f"            fixed by: {item['resolution']}")
-    print(f"\n{len(items)} item(s). When you have actually changed a skill, "
-          f"prompt or tool description:\n"
-          f"  cli/agentbox feedback fold <id> --note 'what you changed'")
-    return 0
+    return _memory().feedback_list(
+        status=status,
+        service_env_fn=service_env_values,
+        report_fn=report,
+    )
 
 
 def feedback_decide(action: str, feedback_id: str, note: str = "") -> int:
-    payload = memory_request(
-        "POST", f"/v1/feedback/{urllib.parse.quote(feedback_id)}/{action}",
-        {"note": note})
-    if payload is None:
-        return 1
-    # The highest-value record in the journal: a human said the behaviour was
-    # wrong, and then said what they changed about it.
-    record_decision("operator", f"feedback_{action}", "assistant_behaviour", note)
-    report(OK, f"{payload.get('status', action)}: "
-               f"{payload.get('statement', feedback_id)}")
-    return 0
+    return _memory().feedback_decide(
+        action, feedback_id, note=note,
+        service_env_fn=service_env_values,
+        record_decision_fn=record_decision,
+        report_fn=report,
+    )
 
 
 def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
-    body = {"reason": reason} if action == "reject" else None
-    payload = memory_request("POST", f"/v1/proposals/{urllib.parse.quote(proposal_id)}/{action}", body)
-    if payload is None:
-        return 1
-    # A rejected memory proposal is a correction — the clearest "no, not that"
-    # the system ever gets, and worth strictly more than an approval.
-    record_decision("operator", action, "memory_proposal", reason)
-    report(OK, f"{payload.get('status', action)}: {payload.get('statement', proposal_id)}")
-    return 0
+    return _memory().memory_decide(
+        action, proposal_id, reason=reason,
+        service_env_fn=service_env_values,
+        record_decision_fn=record_decision,
+        report_fn=report,
+    )
 
 
 # --- smoke: end-to-end workflows against the running system -----------------
@@ -3096,14 +2527,14 @@ def smoke() -> int:
         check("lean is smaller than full", False, "could not fetch both views")
 
     print("\n-- policy gate --")
-    # Gated by capability email_state_change. Refusal is the pass condition;
+    # Gated by capability home_control_climate. Refusal is the pass condition;
     # this is the one place a *successful* call is the bug.
-    ok, message = tool_call("agentbox-mcp", "archive_gmail",
-                            {"message_id": "agentbox-smoke-nonexistent"},
+    ok, message = tool_call("agentbox-mcp", "set_home_climate",
+                            {"entity_id": "climate.smoke", "temperature": 20},
                             tokens["agentbox-mcp"])
     check("gated tool is refused without a grant", not ok,
-          "ARCHIVED WITHOUT APPROVAL" if ok else "recorded for approval")
-    pending = Path(policy_state_dir()) / "pending" / "archive_gmail.json"
+          "MODIFIED WITHOUT APPROVAL" if ok else "recorded for approval")
+    pending = Path(policy_state_dir()) / "pending" / "set_home_climate.json"
     check("refusal is recorded for the operator", pending.exists())
     if pending.exists():
         try:
