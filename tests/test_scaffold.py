@@ -37,6 +37,8 @@ def sandbox(tmp_path):
     shutil.copytree(REPO / "policies", root / "policies")
     (root / "cli").mkdir()
     shutil.copy2(CLI, root / "cli" / "agentbox")
+    for helper in (REPO / "cli").glob("agentbox_*.py"):
+        shutil.copy2(helper, root / "cli" / helper.name)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
