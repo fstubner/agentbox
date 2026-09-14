@@ -2158,8 +2158,8 @@ LARGE_FILE_LIMIT = 400
 #
 # Raising an entry is allowed and is meant to be a visible line in a diff.
 LARGE_FILES = {
-    "cli/agentbox": 3478,
-    "cli/agentbox-portal": 3289,
+    "cli/agentbox": 2909,
+    "cli/agentbox-portal": 2443,
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,
     "cli/agentbox-approvals": 788,
