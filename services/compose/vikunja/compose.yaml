@@ -24,3 +24,7 @@ services:
       agentbox.service: vikunja
       agentbox.exposure: private
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
+
+networks:
+  default:
+    name: vikunja_default

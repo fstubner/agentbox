@@ -3096,14 +3096,14 @@ def smoke() -> int:
         check("lean is smaller than full", False, "could not fetch both views")
 
     print("\n-- policy gate --")
-    # Gated by capability email_state_change. Refusal is the pass condition;
+    # Gated by capability home_control_climate. Refusal is the pass condition;
     # this is the one place a *successful* call is the bug.
-    ok, message = tool_call("agentbox-mcp", "archive_gmail",
-                            {"message_id": "agentbox-smoke-nonexistent"},
+    ok, message = tool_call("agentbox-mcp", "set_home_climate",
+                            {"entity_id": "climate.smoke", "temperature": 20},
                             tokens["agentbox-mcp"])
     check("gated tool is refused without a grant", not ok,
-          "ARCHIVED WITHOUT APPROVAL" if ok else "recorded for approval")
-    pending = Path(policy_state_dir()) / "pending" / "archive_gmail.json"
+          "MODIFIED WITHOUT APPROVAL" if ok else "recorded for approval")
+    pending = Path(policy_state_dir()) / "pending" / "set_home_climate.json"
     check("refusal is recorded for the operator", pending.exists())
     if pending.exists():
         try:
