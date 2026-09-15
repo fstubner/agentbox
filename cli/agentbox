@@ -37,6 +37,7 @@ _identity_module = None
 _memory_module = None
 _rules_module = None
 _scaffold_module = None
+_setup_module = None
 
 
 def _scaffold():
@@ -163,6 +164,25 @@ def _onboarding():
         spec.loader.exec_module(module)
         _onboarding_module = module
     return _onboarding_module
+
+
+def _setup():
+    """Load cli/agentbox_setup.py, once. See _status for why it is lazy."""
+    global _setup_module
+    if _setup_module is None:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "agentbox_setup",
+            Path(__file__).resolve().parent / "agentbox_setup.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules["agentbox_setup"] = module
+        spec.loader.exec_module(module)
+        _setup_module = module
+    return _setup_module
+
+
+def setup() -> int:
+    return _setup().setup(REPO, report=report)
 
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
@@ -526,7 +546,15 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
 
     if env_file.exists():
         text = env_file.read_text(encoding="utf-8")
-        if "op://" in text:
+        custom_wrapper = os.environ.get("AGENTBOX_SECRET_WRAPPER") or (
+            str(Path(env_dir) / "secret-wrapper")
+            if (Path(env_dir) / "secret-wrapper").is_file()
+            and os.access(Path(env_dir) / "secret-wrapper", os.X_OK)
+            else None
+        )
+        if custom_wrapper:
+            compose_cmd = [custom_wrapper, str(env_file)] + compose_cmd
+        elif "op://" in text:
             if not shutil.which("op"):
                 report(FAIL, "env file uses op:// references but 1Password CLI is missing")
                 return 1
@@ -537,6 +565,21 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
                         key, _, value = line.partition("=")
                         env.setdefault(key.strip(), value.strip())
             compose_cmd = ["op", "run", "--env-file", str(env_file), "--"] + compose_cmd
+        elif "infisical://" in text:
+            if not shutil.which("infisical"):
+                report(FAIL, "env file uses infisical:// references but infisical CLI is missing")
+                return 1
+            compose_cmd = ["infisical", "run", f"--env-file={env_file}", "--"] + compose_cmd
+        elif "bws://" in text:
+            if not shutil.which("bws"):
+                report(FAIL, "env file uses bws:// references but bws CLI is missing")
+                return 1
+            compose_cmd = ["bws", "run", "--"] + compose_cmd
+        elif "doppler://" in text:
+            if not shutil.which("doppler"):
+                report(FAIL, "env file uses doppler:// references but doppler CLI is missing")
+                return 1
+            compose_cmd = ["doppler", "run", "--"] + compose_cmd
         else:
             for line in text.splitlines():
                 if "=" in line and not line.lstrip().startswith("#"):
@@ -2164,7 +2207,7 @@ LARGE_FILE_LIMIT = 400
 #
 # Raising an entry is allowed and is meant to be a visible line in a diff.
 LARGE_FILES = {
-    "cli/agentbox": 2915,
+    "cli/agentbox": 2962,
     "cli/agentbox-portal": 2443,
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,
@@ -2696,6 +2739,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="agentbox")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("validate")
+    sub.add_parser("setup", help="prepare this machine (directories, permissions, sandboxing, secret templates)")
     dep = sub.add_parser("deploy")
     dep.add_argument("service")
     dep.add_argument("--dry-run", action="store_true")
@@ -2861,6 +2905,8 @@ def main() -> None:
         sys.exit(rules_remove(args.name))
     if args.cmd == "connectors":
         sys.exit(connectors_sync(args.quiet))
+    if args.cmd == "setup":
+        sys.exit(setup())
     if args.cmd == "keepalive":
         sys.exit(_keepalive().main(["--quiet"] if args.quiet else []))
     if args.cmd == "proposals":

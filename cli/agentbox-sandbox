@@ -1,0 +1,18 @@
+#!/bin/sh
+# Run an agent process sandboxed with Bubblewrap (bwrap) so it cannot read ~/.config
+if ! command -v bwrap >/dev/null 2>&1; then
+    echo "[warn] bwrap not found in PATH; running without bubblewrap sandbox" >&2
+    exec "$@"
+fi
+
+STATE_DIR="${AGENT_CONTROL_PLANE_STATE_DIR:-$HOME/.local/state/agentbox}"
+
+exec bwrap \
+    --ro-bind / / \
+    --dev /dev \
+    --proc /proc \
+    --tmpfs /tmp \
+    --tmpfs "$HOME/.config" \
+    --bind "$STATE_DIR" "$STATE_DIR" \
+    --chdir "$PWD" \
+    -- "$@"

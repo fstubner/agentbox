@@ -270,3 +270,66 @@ def test_identity_list_does_not_invent_a_route(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "operator link only" in out
     assert "sam cannot request a link themselves" in out
+
+
+def test_setup_command_registered_in_cli():
+    """`agentbox setup` must be exposed as a top-level subcommand."""
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    assert 'sub.add_parser("setup"' in source
+    assert 'args.cmd == "setup"' in source
+    assert "def setup() -> int:" in source
+
+
+def test_setup_creates_secured_directories_and_templates(tmp_path):
+    """Setup creates 0700 config dir, 0750 state dirs, templates, and sandbox launcher."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    loader = importlib.machinery.SourceFileLoader("abx_setup", str(repo / "cli" / "agentbox_setup.py"))
+    spec = importlib.util.spec_from_loader("abx_setup", loader)
+    setup_mod = importlib.util.module_from_spec(spec)
+    sys.modules["abx_setup"] = setup_mod
+    spec.loader.exec_module(setup_mod)
+
+    test_repo = tmp_path / "repo"
+    test_repo.mkdir()
+    (test_repo / "cli").mkdir()
+    config_dir = tmp_path / "config"
+    state_dir = tmp_path / "state"
+
+    reports = []
+    code = setup_mod.setup(
+        repo=test_repo,
+        config_dir=config_dir,
+        state_dir=state_dir,
+        report=lambda lvl, msg: reports.append((lvl, msg)),
+    )
+    assert code == 0
+    assert config_dir.is_dir()
+    assert (state_dir / "backups").is_dir()
+    assert (state_dir / "logs").is_dir()
+    assert (config_dir / "secret-wrapper.example").is_file()
+    assert (config_dir / ".env.example").is_file()
+    wrapper_text = (config_dir / "secret-wrapper.example").read_text(encoding="utf-8")
+    assert "infisical" in wrapper_text
+    assert "bws" in wrapper_text
+    assert "op run" in wrapper_text
+    launcher = test_repo / "cli" / "agentbox-sandbox"
+    assert launcher.is_file()
+    assert "bwrap" in launcher.read_text(encoding="utf-8")
+
+
+def test_deploy_supports_custom_secret_wrapper_and_providers():
+    """`agentbox deploy` delegates through custom secret wrapper or native providers."""
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    deploy_code = source.split("def deploy(service:")[1].split("\ndef ")[0]
+    assert "AGENTBOX_SECRET_WRAPPER" in deploy_code
+    assert 'Path(env_dir) / "secret-wrapper"' in deploy_code
+    assert "infisical://" in deploy_code
+    assert "bws://" in deploy_code
+    assert "doppler://" in deploy_code
+
