@@ -194,6 +194,25 @@ def test_pull_reuses_deploys_secret_resolution():
     assert "docker" not in update
 
 
+def test_update_resolves_service_aliases():
+    """`cli/agentbox update home-assistant` must resolve to the real service
+    directory `services/compose/homeassistant` rather than failing."""
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    assert "SERVICE_ALIASES" in source
+    assert '"home-assistant": "homeassistant"' in source
+    assert "SERVICE_ALIASES.get(service, service)" in source
+
+
+def test_third_party_images_reports_compose_service_name():
+    """Doctor's update hint must name the actual compose service directory,
+    not guess from the image tag where hyphens differ."""
+    from conftest import code_of
+    source = code_of("cli/agentbox")
+    doctor = source.split("def doctor(")[1].split("\ndef ")[0]
+    assert "Update: cli/agentbox update {service}" in doctor
+
+
 def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
     """A household is not a list of names: it is who may do what, and whether
     each person can actually get in. Those four facts lived in four
