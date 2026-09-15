@@ -476,6 +476,10 @@ def validate() -> int:
 
 # --- deploy -----------------------------------------------------------------
 
+SERVICE_ALIASES = {
+    "home-assistant": "homeassistant",
+}
+
 
 def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     """Validate, then bring up services/compose/<service> with its env file.
@@ -485,6 +489,7 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     op:// references are resolved through the 1Password CLI without printing
     secret values. Compose project name is the service name.
     """
+    service = SERVICE_ALIASES.get(service, service)
     compose_dir = REPO / "services" / "compose" / service
     if not (compose_dir / "compose.yaml").exists():
         report(FAIL, f"no compose file for service: {service}")
@@ -568,8 +573,8 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
 ENDPOINT_UNITS = {"router": "agentbox-router", "portal": "agentbox-portal"}
 
 
-def third_party_images() -> list[tuple[str, str, int]]:
-    """(image, local build date, age in days) for images this repo does not build.
+def third_party_images() -> list[tuple[str, str, str, int]]:
+    """(service, image, local build date, age in days) for images this repo does not build.
 
     Every one of these is pinned to a floating tag — `stable`, `latest`, or no
     tag at all — and `deploy` runs `docker compose up -d --build`, which
@@ -585,6 +590,7 @@ def third_party_images() -> list[tuple[str, str, int]]:
     import datetime
     out = []
     for compose in sorted((REPO / "services" / "compose").glob("*/compose.yaml")):
+        service = compose.parent.name
         for line in compose.read_text(encoding="utf-8").splitlines():
             line = line.split("#", 1)[0].strip()
             if not line.startswith("image:"):
@@ -602,7 +608,7 @@ def third_party_images() -> list[tuple[str, str, int]]:
             except ValueError:
                 continue
             age = (datetime.datetime.now() - when).days
-            out.append((image, when.date().isoformat(), age))
+            out.append((service, image, when.date().isoformat(), age))
     return out
 
 
@@ -1191,11 +1197,10 @@ def doctor() -> int:
             report(severity, f"{name} not responding: {url}{stopped_hint(name)}")
             if severity is FAIL:
                 bad += 1
-    for image, when, age in third_party_images():
+    for service, image, when, age in third_party_images():
         if age > IMAGE_STALE_DAYS:
             report(WARN, f"{image} is {age} days old (pulled {when}); floating "
-                         f"tags never re-pull. Update: cli/agentbox update "
-                         f"{image.split('/')[-1].split(':')[0]}")
+                         f"tags never re-pull. Update: cli/agentbox update {service}")
         else:
             report(OK, f"{image} is {age} days old")
 
@@ -1247,6 +1252,7 @@ def update(service: str) -> int:
     cached image forever. Home Assistant sat three weeks behind and Vikunja
     four months, with nothing reporting either.
     """
+    service = SERVICE_ALIASES.get(service, service)
     if not (REPO / "services" / "compose" / service / "compose.yaml").is_file():
         report(FAIL, f"no compose file for '{service}'")
         return 1
@@ -2158,7 +2164,7 @@ LARGE_FILE_LIMIT = 400
 #
 # Raising an entry is allowed and is meant to be a visible line in a diff.
 LARGE_FILES = {
-    "cli/agentbox": 2909,
+    "cli/agentbox": 2915,
     "cli/agentbox-portal": 2443,
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,
