@@ -11,14 +11,12 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -445,7 +443,7 @@ def validate() -> int:
         # Globbed rather than listed so a new entry point is covered by
         # existing, not by somebody remembering to add it here.
         scripts = [str(p) for p in (REPO / "cli").glob("agentbox*")
-                   if p.is_file() and p.suffix == ""]
+                   if p.is_file() and p.suffix == "" and b"python" in p.read_bytes()[:100]]
         lint = subprocess.run(["ruff", "check", "--quiet", ".", *scripts],
                               cwd=str(REPO), capture_output=True, text=True,
                               timeout=120)
@@ -2207,7 +2205,7 @@ LARGE_FILE_LIMIT = 400
 #
 # Raising an entry is allowed and is meant to be a visible line in a diff.
 LARGE_FILES = {
-    "cli/agentbox": 2962,
+    "cli/agentbox": 2960,
     "cli/agentbox-portal": 2443,
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,

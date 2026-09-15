@@ -11,7 +11,8 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 OK = "OK"
 WARN = "WARN"

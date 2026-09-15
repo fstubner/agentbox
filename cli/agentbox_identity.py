@@ -6,12 +6,11 @@ Follows the established agentbox modular CLI pattern:
 """
 from __future__ import annotations
 
-import os
 import re
 import secrets
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 IDENTITY_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
 

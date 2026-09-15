@@ -41,10 +41,10 @@ import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PIPER = os.environ.get(
-    "AGENTBOX_PIPER", "/home/agentbox/hermes-agent-test/.venv/bin/piper")
+    "AGENTBOX_PIPER", "piper")
 VOICE = os.environ.get(
     "AGENTBOX_PIPER_VOICE",
-    "/home/agentbox/agentbox/cache/piper-voices/en_US-lessac-medium.onnx")
+    "")
 TOKEN = os.environ.get("AGENTBOX_SPEAKER_TOKEN", "")
 # name:MAC pairs. Named rather than addressed, so the assistant asks for "the
 # kitchen" and never learns a MAC it could use to reach something else.

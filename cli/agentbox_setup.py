@@ -8,10 +8,9 @@ Follows the established agentbox modular CLI pattern:
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 BUILDER_GID = 65532  # Non-root group that the builder container writes as
 
@@ -196,8 +195,10 @@ def setup(
         def report(level: str, msg: str) -> None:
             print(f"[{level.lower()}] {msg}")
 
-    config_dir = config_dir or Path(os.environ.get("AGENTBOX_ENV_DIR") or "~/.config/agentbox").expanduser()
-    state_dir = state_dir or Path(os.environ.get("AGENT_CONTROL_PLANE_STATE_DIR") or "~/.local/state/agentbox").expanduser()
+    env_cfg = os.environ.get("AGENTBOX_ENV_DIR") or "~/.config/agentbox"
+    config_dir = config_dir or Path(env_cfg).expanduser()
+    env_st = os.environ.get("AGENT_CONTROL_PLANE_STATE_DIR") or "~/.local/state/agentbox"
+    state_dir = state_dir or Path(env_st).expanduser()
 
     failures = 0
     failures += setup_config_dir(config_dir, report)

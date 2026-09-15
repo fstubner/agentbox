@@ -78,7 +78,7 @@ Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 # account password, and that needs 2FA switched on. Put it in the env file
 # below rather than here:
 #   AGENTBOX_SMTP_HOST=smtp.gmail.com
-#   AGENTBOX_SMTP_USER=you@gmail.com
+#   AGENTBOX_SMTP_USER=you@example.com
 #   AGENTBOX_SMTP_PASSWORD=<app password>
 EnvironmentFile=-%h/.config/agent-control-plane/portal-smtp.env
 # The token the assistant presents to /agent/link. Without it the

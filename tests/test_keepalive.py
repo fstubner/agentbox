@@ -190,7 +190,7 @@ def test_naming_the_evaluator_is_not_being_it(ka):
     wrappers = [
         "sudo -n systemd-inhibit --what=sleep:idle --why=agentbox-eval "
         "rescreen post-clean sleep 604800".split(),
-        "bash /home/alex/.local/state/agentbox-evals/thermal-sampler.sh".split(),
+        "bash /home/operator/.local/state/agentbox-evals/thermal-sampler.sh".split(),
         ["/bin/bash", "-c", "nohup .venv/bin/agentbox-eval certify &"],
         ["python3", "-c", "import agentbox_evals"],
         ["pgrep", "-af", "agentbox-eval"],

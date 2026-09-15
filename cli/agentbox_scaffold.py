@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 OK = "OK"
 WARN = "WARN"
