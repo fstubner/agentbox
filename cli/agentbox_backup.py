@@ -39,6 +39,8 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
     staging.chmod(0o700)
     (staging / "vikunja").mkdir(parents=True, exist_ok=True)
     (staging / "memory").mkdir(parents=True, exist_ok=True)
+    (staging / "hermes").mkdir(parents=True, exist_ok=True)
+    (staging / "config").mkdir(parents=True, exist_ok=True)
 
     vikunja_src = state_dir / "vikunja"
     if vikunja_src.is_dir():
@@ -63,6 +65,38 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
         capture_output=True, text=True)
     if proc.returncode != 0:
         _rep("WARN", f"memory volume not archived: {proc.stderr.strip()[:120]}")
+
+    hermes_db = Path(os.environ.get(
+        "AGENTBOX_HERMES_DB", "/home/agentbox/agentbox/state.db"))
+    hermes_dst = staging / "hermes" / "state.db"
+    can_read = False
+    try:
+        can_read = hermes_db.is_file()
+    except (PermissionError, OSError):
+        pass
+    if not can_read:
+        can_read = (subprocess.run(
+            ["sudo", "-n", "-u", "agentbox", "test", "-f", str(hermes_db)],
+            capture_output=True).returncode == 0)
+    if can_read:
+        proc_h = subprocess.run(
+            ["sudo", "-n", "python3", "-c",
+             f"import sqlite3; s=sqlite3.connect('{hermes_db}'); d=sqlite3.connect('{hermes_dst}'); "
+             f"s.backup(d); s.close(); d.close()"],
+            capture_output=True, text=True)
+        if proc_h.returncode == 0:
+            subprocess.run(["sudo", "-n", "chown", f"{os.getuid()}:{os.getgid()}", str(hermes_dst)], check=False)
+        else:
+            _rep("WARN", f"hermes state.db backup failed: {proc_h.stderr.strip()[:120]}")
+    else:
+        _rep("WARN", f"hermes state.db not found at {hermes_db}")
+
+    config_src = Path(os.environ.get(
+        "AGENTBOX_ENV_DIR", str(Path("~/.config/agentbox").expanduser())))
+    if config_src.is_dir():
+        subprocess.run(["cp", "-a", f"{config_src}/.", str(staging / "config")], check=False)
+    else:
+        _rep("WARN", f"config directory not found at {config_src}")
 
     subprocess.run(["tar", "-czf", str(archive), "-C", str(staging), "."], check=False)
     # Private memories, so not group- or world-readable. The staging tree was
@@ -159,6 +193,23 @@ def restore_check(archive_name: str = "", report: Callable[[str, str], None] | N
                             "come back")
         else:
             _rep("OK", f"vikunja restores: {sum(1 for f in files if f.is_file())} file(s)")
+
+        hermes_file = target / "hermes" / "state.db"
+        if hermes_file.is_file():
+            try:
+                import sqlite3
+                con = sqlite3.connect(str(hermes_file))
+                msg_count = con.cursor().execute("SELECT count(*) FROM messages").fetchone()[0]
+                con.close()
+                _rep("OK", f"hermes restores: {msg_count} message(s)")
+            except Exception as exc:
+                problems.append(f"hermes state.db corrupt: {exc}")
+
+        config_dir = target / "config"
+        if config_dir.is_dir():
+            env_files = list(config_dir.glob("*.env"))
+            if env_files:
+                _rep("OK", f"config restores: {len(env_files)} env file(s)")
 
         if problems:
             for problem in problems:

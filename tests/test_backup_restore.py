@@ -130,3 +130,28 @@ def test_archives_and_staging_are_not_world_readable():
     block = source.split("def backup(")[1].split("\ndef ")[0]
     assert "archive.chmod(0o600)" in block
     assert "staging.chmod(0o700)" in block
+
+
+def test_an_archive_with_hermes_and_config_restores(cli, capsys):
+    import sqlite3
+    cli.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    staging = cli.BACKUP_DIR / "build"
+    (staging / "memory").mkdir(parents=True)
+    (staging / "vikunja").mkdir(parents=True)
+    (staging / "hermes").mkdir(parents=True)
+    (staging / "config").mkdir(parents=True)
+    (staging / "memory" / "memory.json").write_text(json.dumps({"memories": [], "proposals": []}))
+    (staging / "vikunja" / "db").write_text("tasks")
+    (staging / "config" / "test.env").write_text("FOO=bar\n")
+    con = sqlite3.connect(str(staging / "hermes" / "state.db"))
+    con.cursor().execute("CREATE TABLE messages (id TEXT);")
+    con.cursor().execute("INSERT INTO messages VALUES ('m1');")
+    con.commit()
+    con.close()
+    path = cli.BACKUP_DIR / "agentbox-20260814T000000Z.tar.gz"
+    with tarfile.open(path, "w:gz") as tar:
+        tar.add(staging, arcname=".")
+    assert cli.restore_check() == 0
+    out = capsys.readouterr().out
+    assert "hermes restores: 1 message(s)" in out
+    assert "config restores: 1 env file(s)" in out
