@@ -73,7 +73,7 @@ if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
     GOOGLE_SCOPES += " https://www.googleapis.com/auth/drive.readonly"
 
 PUBLIC_ORIGIN = os.environ.get("AGENTBOX_INVITE_ORIGIN", "").rstrip("/")
-BIND_HOST = os.environ.get("AGENTBOX_INVITE_HOST", "0.0.0.0")
+BIND_HOST = os.environ.get("AGENTBOX_BIND_HOST", "127.0.0.1")
 BIND_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))
 
 # What a person can be given their own account for, and what they cannot.

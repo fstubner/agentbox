@@ -181,7 +181,7 @@ def main() -> int:
     s.add_argument("text")
     s.add_argument("--to", default="")
     serve = sub.add_parser("serve")
-    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--host", default=os.environ.get("AGENTBOX_BIND_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=8772)
     args = parser.parse_args()
 

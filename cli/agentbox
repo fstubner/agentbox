@@ -503,7 +503,7 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     """Validate, then bring up services/compose/<service> with its env file.
 
     Env file: $AGENTBOX_ENV_DIR/<service>.env (default ~/.config/agentbox,
-    falling back to ~/.config/agent-control-plane for older installs).
+    default ~/.config/agentbox).
     op:// references are resolved through the 1Password CLI without printing
     secret values. Compose project name is the service name.
     """
@@ -520,19 +520,12 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     # container against a policy older than the one committed.
     policy_sync(quiet=True)
 
-    env_dir = os.environ.get("AGENTBOX_ENV_DIR")
-    if not env_dir:
-        for candidate in ("~/.config/agentbox", "~/.config/agent-control-plane"):
-            expanded = Path(candidate).expanduser()
-            if expanded.is_dir():
-                env_dir = str(expanded)
-                break
-        env_dir = env_dir or str(Path("~/.config/agentbox").expanduser())
+    env_dir = os.environ.get("AGENTBOX_ENV_DIR", str(Path("~/.config/agentbox").expanduser()))
     env_file = Path(env_dir) / f"{service}.env"
 
     env = dict(os.environ)
     env.setdefault("AGENT_CONTROL_PLANE_STATE_DIR",
-                   str(Path("~/.local/state/agent-control-plane").expanduser()))
+                   str(Path("~/.local/state/agentbox").expanduser()))
     env["AGENTBOX_SOURCE_SHA"] = source_sha(service)
     project = service
 
@@ -1011,7 +1004,8 @@ def assistant_containment() -> int:
     checks = [
         ("modify_production_gateway_config", GATEWAY_HOME / "agentbox/config.yaml"),
         ("enable_skill_bundle_production",
-         GATEWAY_HOME / "agent-control-plane/hermes/skills"),
+         (GATEWAY_HOME / "agentbox/skills" if (GATEWAY_HOME / "agentbox/skills").exists()
+          else GATEWAY_HOME / "skills")),
         ("modify_upstream_agent_source", GATEWAY_HOME / "hermes-agent-test"),
     ]
     bad = 0
@@ -2205,7 +2199,7 @@ LARGE_FILE_LIMIT = 400
 #
 # Raising an entry is allowed and is meant to be a visible line in a diff.
 LARGE_FILES = {
-    "cli/agentbox": 2960,
+    "cli/agentbox": 2946,
     "cli/agentbox-portal": 2443,
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,
@@ -2268,14 +2262,7 @@ def file_size_drift() -> tuple[list, list]:
 
 
 def env_dir() -> str:
-    configured = os.environ.get("AGENTBOX_ENV_DIR")
-    if configured:
-        return configured
-    for candidate in ("~/.config/agentbox", "~/.config/agent-control-plane"):
-        expanded = Path(candidate).expanduser()
-        if expanded.is_dir():
-            return str(expanded)
-    return str(Path("~/.config/agentbox").expanduser())
+    return os.environ.get("AGENTBOX_ENV_DIR", str(Path("~/.config/agentbox").expanduser()))
 
 
 def service_env_values(service: str, keys: tuple[str, ...]) -> dict[str, str]:

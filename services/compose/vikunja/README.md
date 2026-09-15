@@ -24,7 +24,7 @@ VIKUNJA_SERVICE_PUBLICURL=http://agentbox.local:3456/
 Set these in the host-private file:
 
 ```text
-~/.config/agent-control-plane/vikunja.env
+~/.config/agentbox/vikunja.env
 ```
 
 Do not commit that file.
@@ -32,7 +32,7 @@ Do not commit that file.
 The deploy script defaults `AGENT_CONTROL_PLANE_STATE_DIR` to:
 
 ```text
-~/.local/state/agent-control-plane
+~/.local/state/agentbox
 ```
 
 ## Required Secret
@@ -43,7 +43,7 @@ Generate a service secret on the AMD box:
 openssl rand -hex 32
 ```
 
-Then add it to `~/.config/agent-control-plane/vikunja.env`:
+Then add it to `~/.config/agentbox/vikunja.env`:
 
 ```bash
 VIKUNJA_SERVICE_SECRET=<generated value>
@@ -63,8 +63,8 @@ Then redeploy.
 
 Back up:
 
-- `~/.local/state/agent-control-plane/vikunja/db`
-- `~/.local/state/agent-control-plane/vikunja/files`
+- `~/.local/state/agentbox/vikunja/db`
+- `~/.local/state/agentbox/vikunja/files`
 
 ## Sources
 

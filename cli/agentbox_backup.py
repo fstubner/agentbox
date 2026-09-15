@@ -29,7 +29,7 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
 
     state_dir = Path(os.environ.get(
         "AGENT_CONTROL_PLANE_STATE_DIR",
-        str(Path("~/.local/state/agent-control-plane").expanduser())))
+        str(Path("~/.local/state/agentbox").expanduser())))
     stamp = subprocess.run(["date", "-u", "+%Y%m%dT%H%M%SZ"],
                            capture_output=True, text=True).stdout.strip()
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)

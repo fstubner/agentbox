@@ -46,7 +46,7 @@ Type=simple
 # 1password.env, sourced below; a leading dash means a box without 1Password
 # still starts (with unresolved refs, which then fail loudly rather than
 # silently — that is the bug this replaced).
-EnvironmentFile=-%h/.config/agent-control-plane/1password.env
+EnvironmentFile=-%h/.config/agentbox/1password.env
 
 # Broad Drive read, opted into by the operator on 2026-08-13. Without this the
 # assistant sees only files it created, which made "find that lease in my
@@ -80,13 +80,13 @@ Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 #   AGENTBOX_SMTP_HOST=smtp.gmail.com
 #   AGENTBOX_SMTP_USER=you@example.com
 #   AGENTBOX_SMTP_PASSWORD=<app password>
-EnvironmentFile=-%h/.config/agent-control-plane/portal-smtp.env
+EnvironmentFile=-%h/.config/agentbox/portal-smtp.env
 # The token the assistant presents to /agent/link. Without it the
 # endpoint 403s with or without a header, which is the correct
 # direction to be off but means the ORIGIN_AGENT downgrade is only
 # ever exercised by tests. A leading dash so a box without the file
 # still starts, with the endpoint simply inert.
-EnvironmentFile=-%h/.config/agent-control-plane/portal-agent.env
+EnvironmentFile=-%h/.config/agentbox/portal-agent.env
 
 # The address links point at, and the base of the Google redirect URI.
 # Loopback by default because Google refuses .local and bare LAN hostnames
@@ -114,8 +114,8 @@ Environment=AGENTBOX_OAUTH_REDIRECT_BASE=http://127.0.0.1:8771
 # and are inherited through op run untouched; op run only overlays the two
 # files named here.
 ExecStart=/usr/bin/op run \
-    --env-file=%h/.config/agent-control-plane/memory-bridge.env \
-    --env-file=%h/.config/agent-control-plane/google-workspace-bridge.env \
+    --env-file=%h/.config/agentbox/memory-bridge.env \
+    --env-file=%h/.config/agentbox/google-workspace-bridge.env \
     -- %h/oss/agentbox/cli/agentbox-portal serve --host 0.0.0.0 --port 8771
 Restart=always
 RestartSec=10

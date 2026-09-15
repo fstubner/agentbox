@@ -777,7 +777,7 @@ AGENTBOX_APPROVAL_CHANNEL_ID=<channel> cli/agentbox-approvals
 ```
 
 It reads the bot token and the operator allowlist from
-`op://Agentbox/discord`, and needs `~/.config/agent-control-plane/1password.env`
+`op://Agentbox/discord`, and needs `~/.config/agentbox/1password.env`
 sourced or `OP_SERVICE_ACCOUNT_TOKEN` set.
 
 **Why a separate process rather than the assistant asking.** The assistant is in
@@ -977,7 +977,7 @@ Returns the action's tier (`allowed` / `approval_required` / `always_denied`) as
 cli/agentbox deploy <service>
 ```
 `deploy` validates the repo, loads `$AGENTBOX_ENV_DIR/<service>.env`
-(default `~/.config/agentbox`, falling back to `~/.config/agent-control-plane`),
+(default `~/.config/agentbox`, falling back to `~/.config/agentbox`),
 resolves `op://` secrets through the 1Password CLI when present, and runs
 `docker compose -p <service> up -d`. The compose project name is the service
 name, so a service's default network is `<service>_default` — that is the name

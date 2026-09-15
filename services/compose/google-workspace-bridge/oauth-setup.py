@@ -95,7 +95,7 @@ if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip() in ("1", "true", "
 
 AUTH_FILES = (
     "~/.config/agentbox/1password.env",
-    "~/.config/agent-control-plane/1password.env",
+    "~/.config/agentbox/1password.env",
 )
 
 
@@ -129,7 +129,7 @@ def from_1password(field: str) -> str:
     if not env.get("OP_SERVICE_ACCOUNT_TOKEN"):
         sys.exit("OP_SERVICE_ACCOUNT_TOKEN is not set and no 1password.env was found.\n"
                  "Source it first:\n"
-                 "  set -a; . ~/.config/agent-control-plane/1password.env; set +a\n"
+                 "  set -a; . ~/.config/agentbox/1password.env; set +a\n"
                  "or pass --client-id/--client-secret directly.")
     try:
         out = subprocess.run(["op", "read", ref], capture_output=True, text=True,

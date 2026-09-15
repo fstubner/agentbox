@@ -1035,7 +1035,7 @@ def connector_status(identity: str) -> list[dict]:
     """
     env_dir = Path(os.environ.get(
         "AGENTBOX_ENV_DIR",
-        os.path.expanduser("~/.config/agent-control-plane")))
+        os.path.expanduser("~/.config/agentbox")))
     google_env = env_dir / f"{identity}-google-bridge.env"
     shared = env_dir / "google-workspace-bridge.env"
     connected = google_env.exists() or (
@@ -2431,7 +2431,7 @@ def main() -> int:
     link.set_defaults(func=cmd_link)
 
     serve = sub.add_parser("serve", help="run the portal")
-    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--host", default=os.environ.get("AGENTBOX_BIND_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=8771)
     serve.set_defaults(func=cmd_serve)
 

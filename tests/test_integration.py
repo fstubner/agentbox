@@ -38,7 +38,7 @@ REPO = Path(__file__).resolve().parents[1]
 GATEWAY = os.environ.get("AGENTBOX_GATEWAY_URL", "http://127.0.0.1:3465")
 MEMORY = os.environ.get("AGENTBOX_MEMORY_BRIDGE", "http://127.0.0.1:3471")
 ENV_DIR = Path(os.environ.get(
-    "AGENTBOX_ENV_DIR", os.path.expanduser("~/.config/agent-control-plane")))
+    "AGENTBOX_ENV_DIR", os.path.expanduser("~/.config/agentbox")))
 
 
 def env_value(service: str, key: str) -> str:

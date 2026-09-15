@@ -51,7 +51,7 @@ def op_read(reference: str) -> str:
     env = dict(os.environ)
     if not env.get("OP_SERVICE_ACCOUNT_TOKEN"):
         for candidate in ("~/.config/agentbox/1password.env",
-                          "~/.config/agent-control-plane/1password.env"):
+                          "~/.config/agentbox/1password.env"):
             path = Path(candidate).expanduser()
             if path.is_file():
                 for line in path.read_text(encoding="utf-8").splitlines():

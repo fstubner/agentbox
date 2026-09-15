@@ -16,7 +16,7 @@ Hermes should call this bridge instead of receiving a raw Vikunja API token. The
 Create this host-private file:
 
 ```text
-~/.config/agent-control-plane/vikunja-bridge.env
+~/.config/agentbox/vikunja-bridge.env
 ```
 
 Required values:

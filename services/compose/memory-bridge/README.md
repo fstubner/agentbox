@@ -32,7 +32,7 @@ promotion to durable memory.
 Create:
 
 ```text
-~/.config/agent-control-plane/memory-bridge.env
+~/.config/agentbox/memory-bridge.env
 ```
 
 Recommended values:

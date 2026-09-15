@@ -3,7 +3,7 @@ services:
     image: vikunja/vikunja
     environment:
       VIKUNJA_SERVICE_PUBLICURL: "${VIKUNJA_SERVICE_PUBLICURL:-http://127.0.0.1:3456/}"
-      VIKUNJA_SERVICE_SECRET: "${VIKUNJA_SERVICE_SECRET:?set VIKUNJA_SERVICE_SECRET in ~/.config/agent-control-plane/vikunja.env}"
+      VIKUNJA_SERVICE_SECRET: "${VIKUNJA_SERVICE_SECRET:?set VIKUNJA_SERVICE_SECRET in ~/.config/agentbox/vikunja.env}"
       VIKUNJA_SERVICE_ENABLEREGISTRATION: "${VIKUNJA_SERVICE_ENABLEREGISTRATION:-true}"
       VIKUNJA_DATABASE_TYPE: sqlite
       VIKUNJA_DATABASE_PATH: /db/vikunja.db

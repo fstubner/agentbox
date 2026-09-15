@@ -42,7 +42,7 @@ an event cannot notify anyone.
 Create this host-private file:
 
 ```text
-~/.config/agent-control-plane/google-workspace-bridge.env
+~/.config/agentbox/google-workspace-bridge.env
 ```
 
 Required values:
