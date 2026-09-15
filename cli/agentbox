@@ -1004,7 +1004,7 @@ def assistant_containment() -> int:
     checks = [
         ("modify_production_gateway_config", GATEWAY_HOME / "agentbox/config.yaml"),
         ("enable_skill_bundle_production",
-         (GATEWAY_HOME / "agentbox/skills" if (GATEWAY_HOME / "agentbox/skills").exists()
+         (GATEWAY_HOME / "agentbox/skills" if _agent_can("-e", str(GATEWAY_HOME / "agentbox/skills"))
           else GATEWAY_HOME / "skills")),
         ("modify_upstream_agent_source", GATEWAY_HOME / "hermes-agent-test"),
     ]
