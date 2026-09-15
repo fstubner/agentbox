@@ -1,40 +1,116 @@
 # Agentbox
 
-A self-hosted AI assistant for one household on local hardware. Runs a local
-LLM behind a gateway with narrow, policy-gated levers: task management,
-email/calendar bridges, and role-routed local worker models.
+A self-hosted, privacy-first AI assistant for a household running on local hardware. Agentbox runs a local LLM behind a gateway with narrow, policy-gated levers: task management, calendar/email bridges, and role-routed worker models.
 
-Two people share it, with a household plane and private planes: tasks,
-shopping and joint scheduling are shared; each person's mail, calendar detail
-and personal memory are not. Identity is bound to the session that
-authenticated, never passed as a tool argument — see `PRODUCT.md`.
+Two people share it, with a shared household plane (joint tasks, shopping, shared scheduling) and isolated private planes (private mail, personal calendar, personal memory). Identity is bound to the authenticated session, never passed as an LLM tool argument.
 
-A box with no identities configured still runs as a single operator; that is a
-supported deployment, not the shape this is designed around.
+A single-operator deployment is fully supported without configuring multiple identities.
 
-Design principles:
+---
 
-- **Levers, not shell.** The assistant gets MCP tools with explicit contracts,
-  never raw terminal access.
-- **Bridges hold credentials.** OAuth tokens live in bridge containers; the
-  assistant never sees raw secrets (1Password `op://` references resolve at
-  deploy time).
-- **Deterministic routing.** Worker-role routing is code, not model judgment.
-- **Approval gates.** Mutating and personal-data actions require approval per
-  `policies/`.
+## Core Security & Architectural Principles
 
-## Layout
+- **Levers, not shell:** The assistant interacts exclusively through Model Context Protocol (MCP) tools with explicit schemas and contracts — never raw terminal access.
+- **Process Sandboxing (`agentbox-sandbox`):** Agent processes run inside a Bubblewrap container that mounts `/` read-only, hides operator credentials by mounting an empty tmpfs over `~/.config`, and confines write access to `~/.local/state/agentbox`.
+- **Credential Containment:** OAuth tokens and API credentials live in isolated bridge containers. The assistant never inspects raw secrets.
+- **Pluggable Secret Management:** Deploy-time secret resolution is delegated ephemerally in RAM. Out of the box, Agentbox supports Infisical (`infisical://`), Bitwarden Secrets Manager (`bws://`), Doppler (`doppler://`), 1Password (`op://`), or custom secret managers via `~/.config/agentbox/secret-wrapper`. Plain `.env` files are supported for fully-contained environments.
+- **Non-Root Proposal Sandbox:** Code modifications proposed by the assistant write to an isolated setgid repository (`builder-repo`, GID 65532) preventing direct modifications to host code.
+- **Deterministic Approval Gates:** Mutating and private-data actions require explicit operator approval defined in `policies/approval-policy.yaml`.
 
-| Dir | Contents |
-|---|---|
-| `router/` | Role router exposing `/context/extract`, `/reason/check`, `/decide/orchestrate` over local llama.cpp workers |
-| `gateway/` | Hermes gateway config examples |
-| `policies/` | Approval / network / secrets policies |
-| `services/` | Docker Compose stacks: task backend (Vikunja) + bridge/MCP pairs for memory and Google Workspace |
-| `cli/` | Operator CLI (deploy / validate / doctor / status) |
-| `docs/` | Architecture and runbook |
+---
 
-Reference deployment: AMD Strix Halo (Ryzen AI Max+ 395, 128GB unified
-memory) running llama.cpp with a ~35B MoE model at 200K context.
+## Directory Layout
 
-License: Apache-2.0
+| Directory | Purpose |
+| :--- | :--- |
+| `cli/` | Operator CLI (`agentbox`) and sandbox launcher (`agentbox-sandbox`) |
+| `services/` | Docker Compose service stacks (Vikunja, bridges, MCP servers) |
+| `policies/` | Declarative approval, network, and tool capability policies |
+| `router/` | Role router dispatching over local llama.cpp worker endpoints |
+| `gateway/` | Gateway configuration and integration definitions |
+| `docs/` | Architecture records, runbooks, and baseline evaluations |
+
+---
+
+## Quickstart
+
+### 1. Prerequisites
+
+- Linux host (Ubuntu 24.04+ or modern systemd distribution)
+- Docker & Docker Compose v2
+- Python 3.12+
+- Bubblewrap (`sudo apt install bubblewrap`)
+- Git
+
+### 2. Automated Machine Setup
+
+Run `agentbox setup` to configure directories, file permissions, and templates idempotently:
+
+```bash
+./cli/agentbox setup
+```
+
+This automatically:
+- Creates and locks `~/.config/agentbox` to mode `0700`.
+- Initialises state directories (`backups`, `logs`, `invites`, `portal`) to mode `0750`.
+- Clones and hardens the proposal sandbox repository with group setgid.
+- Installs default templates (`.env.example` and `secret-wrapper.example`).
+- Installs the Bubblewrap sandboxing wrapper at `cli/agentbox-sandbox`.
+
+### 3. Configure Secrets
+
+Place service environment files in `~/.config/agentbox/<service>.env`. You can use secret reference URIs or standard environment variables.
+
+To connect your secret manager:
+- **Infisical, Bitwarden, Doppler, or 1Password:** Use URIs such as `op://vault/service/key`, `infisical://service/key`, `bws://secret-id`, or `doppler://token`.
+- **Custom Secret Managers (Vault, SOPS, CyberArk):** Copy `~/.config/agentbox/secret-wrapper.example` to `~/.config/agentbox/secret-wrapper`, make it executable (`chmod +x`), and define your resolution command.
+
+### 4. Verification & Diagnostics
+
+Validate repository contracts, tool schema budgets, and policy consistency:
+
+```bash
+./cli/agentbox validate
+```
+
+Audit runtime daemon health, container bridge endpoints, and containment boundaries:
+
+```bash
+./cli/agentbox doctor
+```
+
+### 5. Deploying Services
+
+Deploy any service stack with ephemeral secret injection:
+
+```bash
+./cli/agentbox deploy <service>
+```
+
+---
+
+## Everyday Operator Commands
+
+```bash
+# View system status, bridge connections, and pending approvals
+./cli/agentbox status
+
+# Pull updated container images and redeploy
+./cli/agentbox update <service>
+
+# Review proposed changes submitted by the assistant
+./cli/agentbox proposals list
+./cli/agentbox proposals show <name>
+
+# Create an encrypted archive of state and memory stores
+./cli/agentbox backup
+
+# Run integration workflows end-to-end
+./cli/agentbox smoke
+```
+
+---
+
+## License
+
+Apache-2.0
