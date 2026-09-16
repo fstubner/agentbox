@@ -343,20 +343,18 @@ def render_tasks(identity: str, role: str, flash: str = "",
                  origin: str = "email") -> bytes:
     """Projects & Tasks view powered by Vikunja."""
     projects, tasks = load_vikunja_tasks()
-    parts = [
-        "<h1>Projects & Tasks</h1>",
-        "<p class=sub>Household task lists, active projects, and todo tracking via Vikunja.</p>",
-    ]
+    parts = []
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
 
     parts.append(
-        "<div style='display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;flex-wrap:wrap'>"
+        "<div style='display:flex;align-items:center;justify-content:space-between;"
+        "margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem'>"
+        "<div><h1 style='margin:0 0 .25rem'>Projects & Tasks</h1>"
+        "<p class=sub style='margin:0'>Household task lists, active projects, and todo tracking via Vikunja.</p></div>"
         "<a href='http://agentbox.local:3456' target=_blank class='button yes' "
-        "style='text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:.4rem'>"
-        "Open Vikunja Workspace &rarr;</a>"
-        "<span class=sub style='margin:0'>Full Kanban boards, task detail editing, and list management.</span>"
-        "</div>"
+        "style='margin:0;font-weight:600;display:inline-flex;align-items:center;gap:.4rem'>"
+        "Open Vikunja Workspace &rarr;</a></div>"
     )
 
     pending = [t for t in tasks if not t[3]]
@@ -375,8 +373,8 @@ def render_tasks(identity: str, role: str, flash: str = "",
             badge_str = f"<span class=badge style='font-size:.65rem'>{html.escape(proj or 'General')}</span>"
             parts.append(
                 f"<div class=card style='margin-bottom:.55rem;padding:.85rem 1.15rem'>"
-                f"<div style='display:flex;align-items:center;gap:.6rem'>"
-                f"<span class='dot warn'></span>"
+                f"<div style='display:flex;align-items:flex-start;gap:.75rem'>"
+                f"<span class='dot warn' style='margin-top:.35rem'></span>"
                 f"<div style='flex:1;min-width:0'><b style='font-size:.92rem'>{html.escape(title)}</b>{desc_str}</div>"
                 f"{badge_str}{due_str}</div></div>"
             )

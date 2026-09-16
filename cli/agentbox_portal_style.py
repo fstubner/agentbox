@@ -29,6 +29,12 @@ STYLE = """
     margin: 0; color: var(--text); background: var(--bg);
     -webkit-font-smoothing: antialiased;
   }
+  a {
+    color: var(--accent); text-decoration: none; transition: color 0.12s ease;
+  }
+  a:hover {
+    text-decoration: underline; color: #7088ff;
+  }
   .app-layout {
     display: flex; min-height: 100vh;
   }
@@ -208,27 +214,28 @@ STYLE = """
   textarea.statement-box:focus {
     outline: none; border-color: var(--accent);
   }
-  button {
+  button, .button, a.button {
     display: inline-flex; align-items: center; justify-content: center; font: inherit;
     font-size: 0.82rem; font-weight: 500; padding: 0.42rem 0.85rem; border-radius: 6px;
     cursor: pointer; border: 1px solid var(--card-border); background: var(--card-bg);
-    color: var(--text); margin-right: 0.45rem; margin-bottom: 0.35rem;
-    transition: all 0.12s ease;
+    color: var(--text) !important; margin-right: 0.45rem; margin-bottom: 0.35rem;
+    text-decoration: none !important; transition: all 0.12s ease; line-height: 1.4;
   }
-  button:hover {
+  button:hover, .button:hover, a.button:hover {
     background: var(--sidebar-hover); border-color: var(--input-border);
+    color: var(--text) !important; text-decoration: none !important;
   }
-  button.yes {
-    background: #2563eb; border-color: #3b82f6; color: #ffffff;
+  button.yes, .button.yes, a.button.yes {
+    background: #2563eb !important; border-color: #3b82f6 !important; color: #ffffff !important;
   }
-  button.yes:hover {
-    background: #1d4ed8; border-color: #2563eb;
+  button.yes:hover, .button.yes:hover, a.button.yes:hover {
+    background: #1d4ed8 !important; border-color: #2563eb !important; color: #ffffff !important;
   }
-  button.danger {
-    color: #f87171; border-color: rgba(239,68,68,0.25); background: transparent;
+  button.danger, .button.danger, a.button.danger {
+    color: #f87171 !important; border-color: rgba(239,68,68,0.25) !important; background: transparent !important;
   }
-  button.danger:hover {
-    background: rgba(239,68,68,0.1); border-color: #ef4444; color: #fca5a5;
+  button.danger:hover, .button.danger:hover, a.button.danger:hover {
+    background: rgba(239,68,68,0.1) !important; border-color: #ef4444 !important; color: #fca5a5 !important;
   }
   .flash {
     background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.25);
