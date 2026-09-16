@@ -77,16 +77,6 @@ def chrome(identity: str, role: str, origin: str, active: str,
     if origin == _portal.ORIGIN_AGENT:
         badge = "<span class=badge>assistant</span>"
 
-    app_nav = (
-        "<div class=app-switch-box>"
-        "<div class=app-switch-label>Other Interfaces</div>"
-        "<div class=app-switch-row>"
-        "<a href='http://127.0.0.1:4321' target=_blank title='Control Plane Lab'>Control Plane</a>"
-        "<a href='http://192.0.2.10:3456' target=_blank title='Tasks (Vikunja)'>Tasks</a>"
-        "<a href='http://192.0.2.10:8123' target=_blank title='Home Assistant'>Home</a>"
-        "</div></div>"
-    )
-
     initial = (identity[:1] or "U").upper()
     user_footer = (
         f"<div class=user-profile-row><div class=avatar-circle>{html.escape(initial)}</div>"
@@ -102,7 +92,7 @@ def chrome(identity: str, role: str, origin: str, active: str,
         f"<span class=env-badge>Workspace</span></div>"
         f"<div class=sidebar-section><div class=section-label>Workspace</div>"
         f"<nav class=nav-menu>{rendered_nav}</nav></div>"
-        f"<div class=sidebar-footer>{app_nav}{user_footer}</div></aside>"
+        f"<div class=sidebar-footer>{user_footer}</div></aside>"
         f"<main class=main-content>{body}</main></div>"
     )
 
@@ -344,8 +334,7 @@ def render_knowledge(identity: str, role: str, flash: str,
                 f"<form method=post action=/memory/forget>"
                 f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
             "<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
-            "Forget this</button></form></div>"
-                f"Forget this</button></form></div>")
+            "Forget this</button></form></div>")
 
     parts.append("<footer><a href='/logout'>Sign out</a></footer>")
     return page("Knowledge Base — Agentbox",
@@ -356,8 +345,8 @@ SIGNIN = """<h1>Agentbox</h1>
 {flash}
 <form method=post action=/request>
   <p><input type=email name=email required placeholder="you@example.com"
-     style="width:100%;padding:.6rem;font-size:1rem;border:1px solid #bbb;
-            border-radius:.35rem"></p>
+     style="width:100%;padding:.6rem;font-size:1rem;border:1px solid var(--input-border);
+            border-radius:.35rem;background:var(--input-bg);color:var(--text)"></p>
   <button class=yes type=submit>Email me a link</button>
 </form>
 <footer>The link works once and expires in {minutes} minutes. Opened in this

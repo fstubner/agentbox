@@ -59,7 +59,7 @@ def render_people_card(flash_error: str = "") -> str:
         f"<div class=card><b>Who lives here</b>"
         f"<div style='margin:.5rem 0 .2rem'>{''.join(rows)}</div>"
         f"<div style='margin:.8rem 0 0;padding-top:.7rem;"
-        f"border-top:1px solid #eee'>"
+        f"border-top:1px solid var(--card-border)'>"
         f"<b style='font-size:.95rem'>Invite someone</b>"
         f"<p class=sub style='margin:.3rem 0 .5rem'>Adds them and sends a "
         f"sign-in link. If there is no way to deliver it, the link is shown "

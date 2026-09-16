@@ -71,7 +71,7 @@ def render_status_card() -> str:
                 f"<span class=name>{html.escape(service.label)}</span>"
                 f"<span class=when>{html.escape(note)}</span></div>")
         body += ("<div style='margin:.7rem 0 0;padding-top:.5rem;"
-                 "border-top:1px solid #eee'>" + "".join(lines) + "</div>")
+                 "border-top:1px solid var(--card-border)'>" + "".join(lines) + "</div>")
 
     return f"<div class=card><b>How things are</b><div style='margin:.5rem 0 0'>{body}</div></div>"
 

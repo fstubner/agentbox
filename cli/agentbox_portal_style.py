@@ -91,24 +91,23 @@ STYLE = """
     margin-top: auto; padding-top: 0.85rem; border-top: 1px solid var(--sidebar-border);
     display: flex; flex-direction: column; gap: 0.85rem;
   }
-  .app-switch-box {
-    display: flex; flex-direction: column; gap: 0.35rem;
+  input[type="text"], input[type="email"], input[type="password"],
+  input[type="search"], input[type="number"], select, textarea {
+    background: var(--input-bg) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--input-border) !important;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.88rem;
   }
-  .app-switch-label {
-    font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--muted); padding: 0 0.2rem; opacity: 0.8;
+  input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus,
+  input[type="search"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px var(--accent-soft);
   }
-  .app-switch-row {
-    display: flex; gap: 0.35rem; flex-wrap: wrap;
-  }
-  .app-switch-row a {
-    font-size: 0.72rem; font-weight: 500; color: var(--muted); text-decoration: none;
-    padding: 0.2rem 0.45rem; border-radius: 4px; background: var(--card-bg);
-    border: 1px solid var(--card-border); transition: all 0.12s ease;
-  }
-  .app-switch-row a:hover {
-    background: var(--sidebar-hover); color: var(--text);
-    border-color: var(--input-border);
+  input[type="checkbox"] {
+    accent-color: var(--accent);
   }
   .user-profile-row {
     display: flex; align-items: center; gap: 0.55rem; padding: 0.35rem 0.2rem 0;
