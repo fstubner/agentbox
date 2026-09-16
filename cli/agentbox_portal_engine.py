@@ -7,9 +7,11 @@ Follows the established agentbox modular CLI pattern:
 """
 from __future__ import annotations
 
+import datetime
 import html
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -25,63 +27,39 @@ def _parse_skill(skill_dir: Path, origin: str) -> dict[str, Any] | None:
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.is_file():
         return None
-    name = skill_dir.name
-    desc = ""
-    tags = []
+    name, desc, tags = skill_dir.name, "", []
     try:
         content = skill_md.read_text(encoding="utf-8", errors="replace")
-        if content.startswith("---"):
-            parts = content.split("---", 2)
-            if len(parts) >= 3:
-                for line in parts[1].splitlines():
-                    line = line.strip()
-                    if line.startswith("name:"):
-                        name = line.split("name:", 1)[1].strip().strip('"\'')
-                    elif line.startswith("description:"):
-                        desc = line.split("description:", 1)[1].strip().strip('"\'')
-                    elif line.startswith("tags:"):
-                        raw_tags = line.split("tags:", 1)[1].strip().strip("[]")
-                        tags = [t.strip().strip('"\'') for t in raw_tags.split(",") if t.strip()]
+        if content.startswith("---") and len(parts := content.split("---", 2)) >= 3:
+            for line in parts[1].splitlines():
+                k, _, v = line.partition(":")
+                k, v = k.strip(), v.strip().strip("'\"")
+                if k == "name":
+                    name = v
+                elif k == "description":
+                    desc = v
+                elif k == "tags":
+                    tags = [t.strip().strip("'\"") for t in v.strip("[]").split(",") if t.strip()]
         if not desc:
             for line in content.splitlines():
-                line = line.strip()
-                if line and not line.startswith(("#", "---")):
-                    desc = line
+                s = line.strip()
+                if s and not s.startswith(("#", "---")):
+                    desc = s
                     break
     except Exception:
         desc = "Error loading skill metadata"
-
     return {
-        "name": name,
-        "desc": desc or "No description provided.",
-        "tags": tags,
-        "origin": origin,
-        "path": str(skill_dir),
+        "name": name, "desc": desc or "No description provided.",
+        "tags": tags, "origin": origin, "path": str(skill_dir),
     }
 
 
 def load_all_skills() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Scans for both personal and platform skills."""
-    platform_dir = Path("/home/alex/oss/agentbox/skills")
-    personal_dir = Path("/home/alex/oss/agentbox-personal/skills")
-
-    platform_skills = []
-    if platform_dir.is_dir():
-        for d in sorted(platform_dir.iterdir()):
-            if d.is_dir():
-                s = _parse_skill(d, "platform")
-                if s:
-                    platform_skills.append(s)
-
-    personal_skills = []
-    if personal_dir.is_dir():
-        for d in sorted(personal_dir.iterdir()):
-            if d.is_dir():
-                s = _parse_skill(d, "personal")
-                if s:
-                    personal_skills.append(s)
-
-    return personal_skills, platform_skills
+    def _scan(p: Path, o: str) -> list[dict[str, Any]]:
+        return [s for d in sorted(p.iterdir()) if d.is_dir() and (s := _parse_skill(d, o))] if p.is_dir() else []
+    personal = _scan(Path("/home/alex/oss/agentbox-personal/skills"), "personal")
+    platform = _scan(Path("/home/alex/oss/agentbox/skills"), "platform")
+    return personal, platform
 
 
 def _latest_backup() -> tuple[str, str]:
@@ -108,8 +86,8 @@ def render_capabilities(identity: str, role: str, flash: str = "",
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
 
     # 1. Accounts & Communication
-    parts.append("<h2>Connected Accounts</h2>")
-    parts.append("<p class=sub>What Agentbox can reach on your behalf.</p>")
+    parts.append("<h2>Connected Accounts</h2>"
+                 "<p class=sub>What Agentbox can reach on your behalf.</p>")
 
     for connector in _portal.connector_status(identity):
         if not connector.get("configured", True):
@@ -180,31 +158,18 @@ def render_capabilities(identity: str, role: str, flash: str = "",
     parts.append("<h2>Reasoning Skills & Tools</h2>")
     parts.append("<p class=sub>Capabilities and specialized workflows loaded into the assistant.</p>")
 
-    for s in personal:
-        tag_badges = "".join(f"<span class=badge style='font-size:.65rem'>{html.escape(t)}</span>"
-                             for t in s["tags"])
+    for s in personal + platform:
+        tag_badges = ''.join(f'<span class=badge style="font-size:.65rem">{html.escape(t)}</span>'
+                             for t in s['tags'])
+        scope_cls = 'scope' if s.get('origin') == 'personal' else 'badge'
         parts.append(
-            f"<div class=card style='margin-bottom:.75rem'>"
-            f"<div style='display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem'>"
-            f"<b>{html.escape(s['name'])}</b><span class=scope style='margin:0'>personal</span>"
-            f"{tag_badges}</div>"
-            f"<p class=sub style='margin:0 0 .4rem'>{html.escape(s['desc'])}</p>"
-            f"<div class=when>Path: <code>{html.escape(s['path'])}</code></div>"
-            f"</div>"
-        )
-
-    for s in platform:
-        tag_badges = "".join(f"<span class=badge style='font-size:.65rem'>{html.escape(t)}</span>"
-                             for t in s["tags"])
-        parts.append(
-            f"<div class=card style='margin-bottom:.75rem'>"
-            f"<div style='display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem'>"
-            f"<b>{html.escape(s['name'])}</b>"
-            f"<span class=badge style='margin:0'>platform</span>"
-            f"{tag_badges}</div>"
-            f"<p class=sub style='margin:0 0 .4rem'>{html.escape(s['desc'])}</p>"
-            f"<div class=when>Path: <code>{html.escape(s['path'])}</code></div>"
-            f"</div>"
+            f'<div class=card style="margin-bottom:.75rem">'
+            f'<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem">'
+            f'<b>{html.escape(s["name"])}</b><span class={scope_cls} style="margin:0">{s.get("origin")}</span>'
+            f'{tag_badges}</div>'
+            f'<p class=sub style="margin:0 0 .4rem">{html.escape(s["desc"])}</p>'
+            f'<div class=when>Path: <code>{html.escape(s["path"])}</code></div>'
+            f'</div>'
         )
 
 
@@ -293,6 +258,13 @@ def dispatch_get(handler: Any, session: dict, path: str, flash: str) -> None:
 
 
 def dispatch_post(handler: Any, session: dict, path: str, form: dict) -> None:
+    if path == "/tasks/toggle":
+        tid = (form.get("id") or [""])[0]
+        done = (form.get("done") or ["1"])[0] == "1"
+        ok = toggle_vikunja_task(int(tid), done) if tid.isdigit() else False
+        handler._redirect("/tasks?m=" + (("task_completed" if done else "task_reopened") if ok else "task_error"))
+        return
+
     why = _portal.refusal(session["role"], "ops:write_settings",
                           session.get("origin", _portal.ORIGIN_AGENT))
     if why:
@@ -319,12 +291,30 @@ def dispatch_post(handler: Any, session: dict, path: str, form: dict) -> None:
         return
 
 
+def toggle_vikunja_task(task_id: int, done: bool) -> bool:
+    p = Path.home() / ".local/state/agentbox/vikunja/db/vikunja.db"
+    if not p.exists():
+        return False
+    try:
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(str(p), timeout=5.0) as con:
+            cur = con.cursor()
+            if done:
+                cur.execute("UPDATE tasks SET done = 1, done_at = ?, updated = ? WHERE id = ?",
+                            (now_str, now_str, task_id))
+            else:
+                cur.execute("UPDATE tasks SET done = 0, done_at = NULL, updated = ? WHERE id = ?",
+                            (now_str, task_id))
+        return True
+    except Exception:
+        return False
+
+
 def load_vikunja_tasks() -> tuple[list[tuple], list[tuple]]:
     p = Path.home() / ".local/state/agentbox/vikunja/db/vikunja.db"
     if not p.exists():
         return [], []
     try:
-        import sqlite3
         con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
         cur = con.cursor()
         projects = cur.execute("SELECT id, title FROM projects WHERE is_archived = 0 ORDER BY id").fetchall()
@@ -371,10 +361,12 @@ def render_tasks(identity: str, role: str, flash: str = "",
             due_str = f" &middot; due {html.escape(str(due)[:10])}" if due else ""
             desc_str = f"<div class=sub style='margin:.2rem 0 0'>{html.escape(desc)}</div>" if desc else ""
             badge_str = f"<span class=badge style='font-size:.65rem'>{html.escape(proj or 'General')}</span>"
+            btn = (f"<form method=post action=/tasks/toggle style='margin:0'>"
+                   f"<input type=hidden name=id value='{tid}'><input type=hidden name=done value='1'>"
+                   f"<button class=task-check title='Mark completed' style='margin-top:.15rem'></button></form>")
             parts.append(
                 f"<div class=card style='margin-bottom:.55rem;padding:.85rem 1.15rem'>"
-                f"<div style='display:flex;align-items:flex-start;gap:.75rem'>"
-                f"<span class='dot warn' style='margin-top:.35rem'></span>"
+                f"<div style='display:flex;align-items:flex-start;gap:.75rem'>{btn}"
                 f"<div style='flex:1;min-width:0'><b style='font-size:.92rem'>{html.escape(title)}</b>{desc_str}</div>"
                 f"{badge_str}{due_str}</div></div>"
             )
@@ -383,10 +375,12 @@ def render_tasks(identity: str, role: str, flash: str = "",
         parts.append(f"<h2 style='margin-top:1.5rem'>Recently Completed ({len(completed)})</h2>")
         for t in completed[:5]:
             tid, title, desc, done, due, proj = t
+            btn = (f"<form method=post action=/tasks/toggle style='margin:0'>"
+                   f"<input type=hidden name=id value='{tid}'><input type=hidden name=done value='0'>"
+                   f"<button class='task-check done' title='Reopen task'>✓</button></form>")
             parts.append(
                 f"<div class=card style='margin-bottom:.45rem;padding:.75rem 1.15rem;opacity:0.75'>"
-                f"<div style='display:flex;align-items:center;gap:.6rem'>"
-                f"<span class='dot ok'></span>"
+                f"<div style='display:flex;align-items:center;gap:.6rem'>{btn}"
                 f"<span style='flex:1;text-decoration:line-through;color:var(--muted);font-size:.88rem'>"
                 f"{html.escape(title)}</span>"
                 f"<span class=badge style='font-size:.65rem'>{html.escape(proj or 'General')}</span>"

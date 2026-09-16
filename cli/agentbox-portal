@@ -2233,6 +2233,10 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._save_settings(session, form)
             return
 
+        if path.startswith("/tasks/"):
+            agentbox_portal_engine.dispatch_post(self, session, path, form)
+            return
+
         if path.startswith("/engine/"):
             agentbox_portal_engine.dispatch_post(self, session, path, form)
             return

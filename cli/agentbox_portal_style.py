@@ -281,6 +281,23 @@ STYLE = """
   .sidebar-footer { display: none; }
   .main-content { padding: 1.25rem 1rem 3rem; }
   }
+  .task-check {
+    width: 19px; height: 19px; border-radius: 4px;
+    border: 1.5px solid var(--border); background: var(--input-bg);
+    cursor: pointer; display: inline-flex; align-items: center;
+    justify-content: center; padding: 0; font-size: 0.72rem;
+    color: transparent; transition: all 0.15s ease;
+  }
+  .task-check:hover {
+    border-color: var(--accent); background: rgba(99, 102, 241, 0.15);
+    color: var(--accent);
+  }
+  .task-check.done {
+    background: var(--accent); border-color: var(--accent); color: white;
+  }
+  .form-group { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.85rem; }
+  .field-input { width: 100%; padding: 0.6rem 0.8rem; font-size: 0.92rem; border-radius: 6px; }
+  .item-row { display: flex; align-items: center; gap: 0.6rem; }
 """
 
 ICON_BRAND = (
