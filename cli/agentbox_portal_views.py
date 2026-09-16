@@ -208,10 +208,10 @@ def _render_memories_list(current: list[dict], history: dict, identity: str) -> 
         chain = ""
         if past:
             rows = "".join(
-                f"<div style='color:#5b6470;font-size:.85rem;padding:.2rem 0'>"
+                f"<div style='color:var(--muted);font-size:.85rem;padding:.2rem 0'>"
                 f"was: {html.escape(str(p.get('statement','')))}</div>" for p in past)
             chain = (f"<details style='margin:.4rem 0 0'>"
-                     f"<summary style='cursor:pointer;color:#5b6470;font-size:.85rem'>"
+                     f"<summary style='cursor:pointer;color:var(--muted);font-size:.85rem'>"
                      f"{len(past)} earlier version{'s' if len(past) > 1 else ''}</summary>"
                      f"{rows}</details>")
         parts.append(
@@ -321,10 +321,10 @@ def render_knowledge(identity: str, role: str, flash: str,
             chain = ""
             if past:
                 rows = "".join(
-                    f"<div style='color:#5b6470;font-size:.85rem;padding:.2rem 0'>"
+                    f"<div style='color:var(--muted);font-size:.85rem;padding:.2rem 0'>"
                     f"was: {html.escape(str(p.get('statement','')))}</div>" for p in past)
                 chain = (f"<details style='margin:.4rem 0 0'>"
-                         f"<summary style='cursor:pointer;color:#5b6470;font-size:.85rem'>"
+                         f"<summary style='cursor:pointer;color:var(--muted);font-size:.85rem'>"
                          f"{len(past)} earlier version{'s' if len(past) > 1 else ''}</summary>"
                          f"{rows}</details>")
             parts.append(
@@ -340,18 +340,18 @@ def render_knowledge(identity: str, role: str, flash: str,
     return page("Knowledge Base — Agentbox",
                 chrome(identity, role, origin, "/knowledge", "".join(parts)))
 
-SIGNIN = """<h1>Agentbox</h1>
+SIGNIN = """<div class=card style="max-width:28rem;margin:3.5rem auto 0;padding:2rem 2.25rem">
+<h1>Agentbox</h1>
 <p class=sub>Sign in with your email address.</p>
 {flash}
 <form method=post action=/request>
   <p><input type=email name=email required placeholder="you@example.com"
-     style="width:100%;padding:.6rem;font-size:1rem;border:1px solid var(--input-border);
-            border-radius:.35rem;background:var(--input-bg);color:var(--text)"></p>
-  <button class=yes type=submit>Email me a link</button>
+     style="width:100%;padding:.65rem .75rem;font-size:1rem;margin-bottom:.6rem"></p>
+  <button class=yes type=submit style="width:100%;padding:.6rem">Email me a link</button>
 </form>
-<footer>The link works once and expires in {minutes} minutes. Opened in this
+<footer style="margin-top:1.5rem">The link works once and expires in {minutes} minutes. Opened in this
 browser it gives you full access; opened anywhere else you can read but not
-change anything.</footer>"""
+change anything.</footer></div>"""
 
 def render_signin(sent: bool = False) -> bytes:
     told = ("If that address belongs to someone here, a sign-in link is on "

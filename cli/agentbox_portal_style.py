@@ -91,8 +91,8 @@ STYLE = """
     margin-top: auto; padding-top: 0.85rem; border-top: 1px solid var(--sidebar-border);
     display: flex; flex-direction: column; gap: 0.85rem;
   }
-  input[type="text"], input[type="email"], input[type="password"],
-  input[type="search"], input[type="number"], select, textarea {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]),
+  select, textarea {
     background: var(--input-bg) !important;
     color: var(--text) !important;
     border: 1px solid var(--input-border) !important;
@@ -100,11 +100,16 @@ STYLE = """
     font-family: inherit;
     font-size: 0.88rem;
   }
-  input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus,
-  input[type="search"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]):focus,
+  select:focus, textarea:focus {
     outline: none;
     border-color: var(--accent) !important;
     box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.85em; background: var(--input-bg); color: var(--text);
+    padding: 0.15rem 0.35rem; border-radius: 4px; border: 1px solid var(--card-border);
   }
   input[type="checkbox"] {
     accent-color: var(--accent);

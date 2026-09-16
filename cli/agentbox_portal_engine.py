@@ -200,7 +200,7 @@ def render_capabilities(identity: str, role: str, flash: str = "",
             f"<div class=card style='margin-bottom:.75rem'>"
             f"<div style='display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem'>"
             f"<b>{html.escape(s['name'])}</b>"
-            f"<span class=badge style='margin:0;background:#f0f2f5'>platform</span>"
+            f"<span class=badge style='margin:0'>platform</span>"
             f"{tag_badges}</div>"
             f"<p class=sub style='margin:0 0 .4rem'>{html.escape(s['desc'])}</p>"
             f"<div class=when>Path: <code>{html.escape(s['path'])}</code></div>"
@@ -233,7 +233,7 @@ def render_engine(identity: str, role: str, flash: str = "",
         f"<span class=name>Physical NVMe Disk: {free_gb} GB free ({used_pct}% used of {total_gb} GB)</span></div>"
         f"<div class=row><span class='dot ok'></span>"
         f"<span class=name>Local Inference Endpoint: <code>http://127.0.0.1:1234/v1</code></span>"
-        f"<span class=when><a href='http://127.0.0.1:4321' target=_blank>eval workbench</a></span></div>"
+        f"<span class=when style='color:var(--muted)'>port 1234</span></div>"
         "</div>"
     )
 
@@ -282,7 +282,10 @@ def dispatch_get(handler: Any, session: dict, path: str, flash: str) -> None:
             session["identity"], session["role"], flash,
             session.get("origin", _portal.ORIGIN_AGENT)))
         return
-    if path == "/admin":
+    if path in ("/admin", "/settings"):
+        if path == "/settings":
+            handler._redirect("/admin")
+            return
         handler._send(200, _portal.render_admin(
             session["identity"], flash,
             session.get("origin", _portal.ORIGIN_AGENT)))
