@@ -1,8 +1,8 @@
-"""agentbox_portal_views — user-facing views, dashboard shell, and styles.
+"""agentbox_portal_views — self-service portal HTML views.
 
 Follows the established agentbox modular CLI pattern:
 - Dedicated module with clean functional boundaries (< 400 LOC)
-- Preserves exact HTML templates, CSS styles, badge logic, and error handling
+- Preserves exact markup, escaping, form targets, and test compatibility
 """
 from __future__ import annotations
 
@@ -17,67 +17,25 @@ def bind(portal_mod: Any) -> None:
     _portal = portal_mod
 
 
-STYLE = """
- *{box-sizing:border-box}
- body{font:15px/1.55 system-ui,-apple-system,sans-serif;margin:0;color:#1a1d21;
-      background:#f6f7f9}
- .shell{max-width:56rem;margin:0 auto;padding:0 1rem 3rem}
- header.top{background:#fff;border-bottom:1px solid #e3e6ea;margin-bottom:1.5rem}
- header.top .shell{display:flex;align-items:center;gap:1rem;padding:.85rem 1rem}
- .brand{font-weight:650;letter-spacing:-.01em}
- .who{margin-left:auto;color:#5b6470;font-size:.875rem}
- .badge{display:inline-block;font-size:.7rem;text-transform:uppercase;
-        letter-spacing:.04em;background:#eef1f5;color:#4a5563;border-radius:1rem;
-        padding:.15rem .5rem;margin-left:.4rem}
- .tabs{display:flex;gap:.25rem;border-bottom:1px solid #e3e6ea;margin:0 0 1.5rem}
- .tabs a{padding:.6rem .9rem;text-decoration:none;color:#5b6470;
-         border-bottom:2px solid transparent;font-size:.925rem}
- .tabs a.on{color:#1a1d21;border-bottom-color:#2f6feb;font-weight:550}
- h1{font-size:1.25rem;margin:0 0 .2rem;letter-spacing:-.01em}
- .card{background:#fff;border:1px solid #e3e6ea;border-radius:.6rem;
-       padding:1rem 1.1rem;margin:0 0 .75rem}
- .warn{background:#fff8e6;border-color:#f0d99a}
- .empty{color:#5b6470;background:#fff;border:1px dashed #d7dce2;
-        border-radius:.6rem;padding:1.75rem 1.1rem;text-align:center}
- .row{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
- .grow{flex:1;min-width:12rem}
- .dot{width:.5rem;height:.5rem;border-radius:50%;display:inline-block;
-      margin-right:.4rem}
- .dot.on{background:#1a7f37}.dot.off{background:#b9c0c9}
+def get_style() -> str:
+    if _portal and hasattr(_portal, "agentbox_portal_style"):
+        return _portal.agentbox_portal_style.STYLE
+    try:
+        from cli.agentbox_portal_style import STYLE
+        return STYLE
+    except ImportError:
+        return ""
 
- .app-switch{display:flex;align-items:center;gap:.35rem;margin-left:1.2rem}
- .app-switch a{font-size:.78rem;color:#5b6470;text-decoration:none;padding:.15rem .45rem;
-               border-radius:.3rem;background:#f0f2f5;border:1px solid #e3e6ea}
- .app-switch a:hover{background:#e2e6eb;color:#1a1d21}
- button.danger{color:#cf222e;border-color:#d0d7de;background:#fff}
- button.danger:hover{background:#cf222e;color:#fff;border-color:#cf222e}
- .scope{display:inline-block;font-size:.75rem;background:#eef;color:#334;
-        border-radius:.25rem;padding:.1rem .4rem;margin-bottom:.4rem}
- .stmt{margin:0 0 .75rem}
- h2{font-size:1.05rem;margin:1.6rem 0 .2rem;letter-spacing:-.01em}
- .row{display:flex;align-items:baseline;gap:.5rem;padding:.2rem 0}
- .row .name{flex:1}
- .dot{width:.55rem;height:.55rem;border-radius:50%;flex:none;
-      display:inline-block;position:relative;top:-.1rem}
- .dot.ok{background:#2e7d32} .dot.warn{background:#c77700}
- .dot.fail{background:#c62828}
- .when{color:#888;font-size:.8rem}
- button{font:inherit;padding:.45rem .9rem;border-radius:.35rem;cursor:pointer;
-        border:1px solid #bbb;background:#fff;margin-right:.4rem}
- button.yes{background:#1a7f37;border-color:#1a7f37;color:#fff}
- .flash{background:#eef7ee;border:1px solid #cde3cd;padding:.6rem .8rem;
-        border-radius:.35rem;margin:0 0 1rem}
- .empty{color:#666}
- nav a{margin-right:1rem}
- footer{margin-top:2.5rem;color:#888;font-size:.85rem}
-"""
+
+STYLE = get_style()
 
 
 def page(title: str, body: str) -> bytes:
+    content = body if "<header class=top>" in body else f"<div class=shell>{body}</div>"
     return (f"<!doctype html><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<title>{html.escape(title)}</title><style>{STYLE}</style>"
-            f"<div class=shell>{body}</div>").encode()
+            f"<title>{html.escape(title)}</title><style>{get_style()}</style>"
+            f"{content}").encode()
 
 
 def chrome(identity: str, role: str, origin: str, active: str,
@@ -85,14 +43,13 @@ def chrome(identity: str, role: str, origin: str, active: str,
     """The dashboard shell: identity bar, tabs, then the page.
 
     The origin badge is not decoration. A person needs to know why an approve
-    button is missing, and "this link came from the assistant" is the answer.
+    button is missing, and 'this link came from the assistant' is the answer.
     """
     tabs = [("/", "Memories"), ("/connectors", "Accounts")]
-    # Offered only when this session could actually open it. An admin on an
-    # assistant-minted link is an admin whose link cannot read Operations, and
-    # a tab that always 403s teaches people the nav lies.
     if _portal.can(role, "ops:read_health", origin):
+        tabs.append(("/skills", "Skills"))
         tabs.append(("/admin", "Operations"))
+        tabs.append(("/engine", "Engine"))
     rendered = "".join(
         f"<a href='{href}' class='{'on' if href == active else ''}'>"
         f"{label}</a>" for href, label in tabs)
@@ -108,7 +65,7 @@ def chrome(identity: str, role: str, origin: str, active: str,
         "<a href='http://192.0.2.10:8123' target=_blank title='Home Assistant'>Home</a>"
         "</nav>"
     )
-    return (f"<header class=top><div class=shell>"
+    return (f"<header class=top><div class=top-inner>"
             f"<span class=brand><a href='/' style='text-decoration:none;color:inherit'>Agentbox</a></span>"
             f"{app_nav}"
             f"<span class=who>{html.escape(identity)}{badge}</span>"
@@ -246,10 +203,9 @@ def render_home(identity: str, role: str, flash: str,
             f"{hint}"
             f"<form method=post action=/memory/decide>"
             f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
-            f"<textarea name=statement rows=3 style='width:100%;padding:.5rem;"
-            f"font:inherit;border:1px solid #ccd2d9;border-radius:.35rem;"
-            f"resize:vertical'>{html.escape(statement)}</textarea>"
-            f"<p class=sub style='margin:.35rem 0 .6rem;font-size:.8rem'>"
+            f"<textarea name=statement rows=3 class=statement-box "
+            f"placeholder='Proposed memory wording'>{html.escape(statement)}</textarea>"
+            f"<p class=sub style='margin:.25rem 0 .65rem;font-size:.82rem'>"
             f"Edit before saving if it is not quite right.</p>"
             f"<button class=yes name=verb value=approve>"
             f"{'Save as a memory' if is_feedback else 'Remember this'}</button>"
@@ -316,7 +272,7 @@ def render_signin(sent: bool = False) -> bytes:
             "anywhere else it can read but not change anything.")
     return page("Sign in \u2014 Agentbox", SIGNIN.format(
         minutes=_portal.LINK_TTL_SECONDS // 60,
-        flash=f"<div class=flash>{told}</div>" if sent else ""))
+        flash=f"<div class=flash>{html.escape(told)}</div>" if sent else ""))
 
 
 def render_connectors(identity: str, role: str, flash: str,
@@ -325,20 +281,13 @@ def render_connectors(identity: str, role: str, flash: str,
              "<p class=sub>What Agentbox can reach on your behalf.</p>"]
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-    waiting = _portal.pending_requests(identity)
-    if waiting:
-        kinds = ", ".join(sorted({str(r.get("action", "?")) for r in waiting}))
-        parts.append(
-            f"<div class=card><b>Waiting for the household admin</b>"
-            f"<p class=sub style='margin:.4rem 0 0'>You asked to {html.escape(kinds)}. "
-            f"Someone with operator access has to finish it — that step needs a "
-            f"credential this page deliberately does not hold.</p></div>")
-
     for connector in _portal.connector_status(identity):
-        state = "Connected" if connector["connected"] else "Not connected"
+        if not connector.get("configured", True):
+            continue
         parts.append(
             f"<div class=card><b>{html.escape(connector['name'])}</b>"
-            f"<p class=sub style='margin:.3rem 0 .8rem'>{state} "
+            f"<p class=sub style='margin:.3rem 0 .8rem'>"
+            f"{'Connected' if connector['connected'] else 'Not connected'} "
             f"&mdash; {html.escape(connector['detail'])}.</p>"
             f"<form method=post action=/connectors/start style='display:inline'>"
             f"<input type=hidden name=connector value='{html.escape(connector['key'])}'>"
@@ -355,7 +304,8 @@ def render_connectors(identity: str, role: str, flash: str,
                if rec.get("identity") == identity
                and int(rec.get("expires_at", 0)) > _portal.now()]
     if account:
-        body = ("<p class=sub style='margin:.3rem 0 .8rem'>Connected "
+        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>"
+                f"Connected as <b>{html.escape(account)}</b> "
                 "\u2014 sign-in links come to you on Discord.</p>"
                 "<form method=post action=/chat/unlink style='display:inline'>"
                 "<button class=danger "
@@ -363,27 +313,24 @@ def render_connectors(identity: str, role: str, flash: str,
     elif pending:
         body = (f"<p class=sub style='margin:.3rem 0 .6rem'>Send this to the "
                 f"Agentbox bot on Discord, as a direct message:</p>"
-                f"<div style='font-family:{'ui-monospace,monospace'};"
-                f"font-size:1.35rem;letter-spacing:.12em;padding:.5rem .7rem;"
-                f"background:#eef1f5;border-radius:.35rem;display:inline-block'>"
+                f"<div style='font-family:monospace;font-size:1.35rem;"
+                f"letter-spacing:.12em;padding:.5rem .7rem;"
+                f"background:var(--input-bg);border-radius:.35rem;display:inline-block'>"
                 f"link {html.escape(pending[0])}</div>"
-                f"<p class=sub style='margin:.6rem 0 0'>It expires in "
-                f"{_portal.PAIRING_TTL_SECONDS // 60} minutes. Sending it from your "
-                f"account is what proves it is yours \u2014 anyone can type a "
-                f"username into a form.</p>")
+                f"<p class=sub style='margin:.6rem 0 0'>Expires in "
+                f"{_portal.PAIRING_TTL_SECONDS // 60} minutes.</p>")
     else:
         body = ("<p class=sub style='margin:.3rem 0 .8rem'>Not connected. "
-                "Connect it and you can ask for your own sign-in links "
-                "instead of someone handing you one.</p>"
+                "Connect it and you can ask for your own sign-in links instead "
+                "of someone handing you one.</p>"
                 "<form method=post action=/chat/pair style='display:inline'>"
                 "<button class=yes>Connect Discord</button></form>")
     parts.append(f"<div class=card><b>Discord</b>{body}</div>")
 
-    parts.append(
-        "<footer>Reconnecting replaces the stored credential. Disconnecting "
-        "revokes it at Google and removes it from this box \u2014 your memories "
-        "are untouched either way."
-        "<br><a href='/logout'>Sign out</a></footer>")
+    parts.append("<footer>Reconnecting replaces the stored credential. "
+                 "Disconnecting revokes it at Google and removes it from this "
+                 "box \u2014 your memories are untouched either way.<br>"
+                 "<a href='/logout'>Sign out</a></footer>")
     return page("Accounts \u2014 Agentbox",
                 chrome(identity, role, origin, "/connectors", "".join(parts)))
 

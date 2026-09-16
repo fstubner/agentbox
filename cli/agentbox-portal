@@ -326,6 +326,10 @@ FLASHES = {
     "google_did_not_complete": ("Google did not complete the connection. "
                                 "Try again, or ask the operator to check the "
                                 "portal log."),
+    "backup_ok": "Backup snapshot created and verified.",
+    "backup_failed": "Backup failed — inspect system journal.",
+    "restore_ok": "Restore rehearsal verified: all 4 tiers extracted cleanly.",
+    "restore_failed": "Restore rehearsal failed.",
 }
 
 
@@ -1396,13 +1400,14 @@ def submitted_invites() -> list[dict]:
         })
     return out
 
-
-
 # --- pages & views -------------------------------------------------------------
+agentbox_portal_style = _sibling("agentbox_portal_style")
+agentbox_portal_engine = _sibling("agentbox_portal_engine")
 agentbox_portal_views = _sibling("agentbox_portal_views")
 agentbox_portal_cards = _sibling("agentbox_portal_cards")
 agentbox_portal_admin = _sibling("agentbox_portal_admin")
 
+agentbox_portal_engine.bind(sys.modules[__name__])
 agentbox_portal_views.bind(sys.modules[__name__])
 agentbox_portal_cards.bind(sys.modules[__name__])
 agentbox_portal_admin.bind(sys.modules[__name__])
@@ -1427,7 +1432,6 @@ _field = agentbox_portal_admin._field
 render_settings_card = agentbox_portal_admin.render_settings_card
 render_household_card = agentbox_portal_admin.render_household_card
 render_admin = agentbox_portal_admin.render_admin
-
 
 # --- server --------------------------------------------------------------------
 
@@ -1641,6 +1645,10 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._send(200, render_admin(
                 session["identity"], flash,
                 session.get("origin", ORIGIN_AGENT)))
+            return
+
+        if parsed.path in ("/skills", "/engine"):
+            agentbox_portal_engine.dispatch_get(self, session, parsed.path, flash)
             return
 
         if parsed.path == "/":
@@ -2275,6 +2283,10 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if path == "/admin/settings":
             self._save_settings(session, form)
+            return
+
+        if path.startswith("/engine/"):
+            agentbox_portal_engine.dispatch_post(self, session, path, form)
             return
 
         if path == "/admin/household":
