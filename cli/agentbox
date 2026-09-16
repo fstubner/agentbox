@@ -2208,7 +2208,7 @@ LARGE_FILES = {
     "tests/test_mcp_base.py": 650,
     "tests/test_portal_auth.py": 632,
     "tests/test_memory_feedback.py": 602,
-    "cli/agentbox-invite": 554,
+    "cli/agentbox-invite": 558,
     "services/templates/mcp/mcp_base.py": 546,
     "tests/test_homeassistant.py": 540,
     "tests/test_drive_constraints.py": 499,

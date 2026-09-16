@@ -1493,7 +1493,8 @@ class PortalHandler(BaseHTTPRequestHandler):
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _session(self) -> dict | None:
         return load_session(cookie_value(self.headers.get("Cookie", ""), "sid"))
@@ -1504,6 +1505,9 @@ class PortalHandler(BaseHTTPRequestHandler):
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self.do_GET()
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
