@@ -58,10 +58,6 @@ from pathlib import Path
 # not there yet — the same ordering the evaluator's own restore uses.
 PRODUCTION_UNITS = (
     "agentbox-production-model.service",
-    "fastcontext-worker.service",
-    "vibethinker-worker.service",
-    "llama-vision.service",
-    "agentbox-router.service",
     "nemohermes-docker-bridge.service",
 )
 
