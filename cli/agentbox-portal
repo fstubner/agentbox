@@ -114,7 +114,6 @@ def _sibling(name: str):
     spec.loader.exec_module(module)
     return module
 
-
 agentbox_settings = _sibling("agentbox_settings")
 agentbox_household = _sibling("agentbox_household")
 agentbox_status = _sibling("agentbox_status")
@@ -176,7 +175,6 @@ GOOGLE_SCOPES = os.environ.get(
     "https://www.googleapis.com/auth/drive.activity.readonly "
     "https://www.googleapis.com/auth/contacts.readonly")
 
-
 # Broad Drive read is opt-in, by the same flag and for the same reason as
 # services/compose/google-workspace-bridge/oauth-setup.py — which had the
 # mechanism while these two consent paths did not, so the safer default was
@@ -219,7 +217,6 @@ PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
 OAUTH_REDIRECT_BASE = os.environ.get("AGENTBOX_OAUTH_REDIRECT_BASE",
                                      "http://127.0.0.1:8771")
 
-
 def oauth_redirect_uri() -> str:
     """The redirect URI, derived once.
 
@@ -230,7 +227,6 @@ def oauth_redirect_uri() -> str:
     return f"{OAUTH_REDIRECT_BASE.rstrip('/')}/google/callback"
 MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
                                    "http://127.0.0.1:3471")
-
 
 # Messages the portal shows after an action, keyed rather than spelled out in
 # the URL.
@@ -332,7 +328,6 @@ FLASHES = {
     "restore_failed": "Restore rehearsal failed.",
 }
 
-
 def origin_refusal(origin: str, action: str) -> str:
     """Which flash explains an action refused for how this session signed in.
 
@@ -346,11 +341,9 @@ def origin_refusal(origin: str, action: str) -> str:
     prefix = "chat_link" if origin == ORIGIN_CHAT else "agent_link"
     return f"{prefix}_cannot_{action}"
 
-
 def flash_text(key: str) -> str:
     """Look up a message. An unknown key renders nothing rather than itself."""
     return FLASHES.get(key, "")
-
 
 SETTINGS = agentbox_settings.SettingsStore(directory=STATE)
 # Device permissions go on the policy mount, not in the portal's private
@@ -478,13 +471,10 @@ ROLE_CAPABILITIES = {
     }),
 }
 
-
 def now() -> int:
     return int(time.time())
 
-
 # --- identities and roles ------------------------------------------------------
-
 
 def known_identities(also: dict[str, str] | None = None) -> set[str]:
     """Every name this box recognises as a person.
@@ -509,7 +499,6 @@ def known_identities(also: dict[str, str] | None = None) -> set[str]:
         "AGENTBOX_IDENTITY_NAMES", "").replace(" ", ",").split(",") if n.strip()}
     return names
 
-
 def admin_names() -> set[str]:
     """Identities with the admin role.
 
@@ -517,7 +506,6 @@ def admin_names() -> set[str]:
     misread setting should remove privilege, never hand it out.
     """
     return {n.strip() for n in SETTINGS.value("admins").split(",") if n.strip()}
-
 
 def email_map() -> dict[str, str]:
     """Lowercased email -> identity."""
@@ -528,14 +516,11 @@ def email_map() -> dict[str, str]:
             mapping[address.strip().lower()] = name.strip()
     return mapping
 
-
 def identity_for_email(address: str) -> str:
     return email_map().get(address.strip().lower(), "")
 
-
 def role_of(identity: str) -> str:
     return ADMIN if identity in admin_names() else MEMBER
-
 
 def can(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> bool:
     """Whether this session may exercise `capability`.
@@ -554,7 +539,6 @@ def can(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> bool:
     # Anything not explicitly a chat origin is treated as agent-minted, which
     # is the safe direction for a value that arrived from disk.
     return origin == ORIGIN_CHAT or capability not in AGENT_ONLY_WITHHELD
-
 
 def refusal(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> str:
     """Which gate refused, as a flash key. Empty when nothing refused.
@@ -576,14 +560,11 @@ def refusal(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> str:
         return "agent_link_cannot_read_ops"
     return ""
 
-
 def require(role: str, capability: str, origin: str = ORIGIN_EMAIL) -> None:
     if not can(role, capability, origin):
         raise PermissionError(capability)
 
-
 # --- magic links ---------------------------------------------------------------
-
 
 def _hash(secret: str) -> str:
     """Links are stored hashed, so reading this directory yields nothing usable.
@@ -594,9 +575,7 @@ def _hash(secret: str) -> str:
     """
     return hashlib.sha256(secret.encode()).hexdigest()
 
-
 LINK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
 
 def link_path(link_id: str) -> Path:
     """Where a link record lives. Rejects anything that is not an id.
@@ -611,7 +590,6 @@ def link_path(link_id: str) -> Path:
     if not LINK_ID.match(link_id or ""):
         raise ValueError("not a link id")
     return STATE / "links" / f"{link_id}.json"
-
 
 def _recent_link_count(identity: str) -> int:
     directory = STATE / "links"
@@ -628,7 +606,6 @@ def _recent_link_count(identity: str) -> int:
                 int(record.get("created_at", 0)) > cutoff:
             count += 1
     return count
-
 
 def mint_link(identity: str, base_url: str, request_nonce: str = "",
               origin: str = ORIGIN_OPERATOR) -> tuple[str, str]:
@@ -669,7 +646,6 @@ def mint_link(identity: str, base_url: str, request_nonce: str = "",
     path.chmod(0o600)
     query = urllib.parse.urlencode({"id": link_id, "k": secret})
     return f"{base_url.rstrip('/')}/login?{query}", link_id
-
 
 def redeem_link(link_id: str, secret: str,
                 request_nonce: str = "") -> tuple[str, str, str]:
@@ -725,13 +701,10 @@ def redeem_link(link_id: str, secret: str,
         return "", "", generic
     return str(record.get("identity", "")), origin, ""
 
-
 # --- sessions ------------------------------------------------------------------
-
 
 def session_path(sid: str) -> Path:
     return STATE / "sessions" / f"{sid}.json"
-
 
 def new_session(identity: str, origin: str = ORIGIN_EMAIL) -> str:
     sid = secrets.token_urlsafe(24)
@@ -742,7 +715,6 @@ def new_session(identity: str, origin: str = ORIGIN_EMAIL) -> str:
     path.write_text(json.dumps(record), encoding="utf-8")
     path.chmod(0o600)
     return sid
-
 
 def load_session(sid: str) -> dict | None:
     """Resolve a cookie to (identity, role), or None.
@@ -769,16 +741,13 @@ def load_session(sid: str) -> dict | None:
     return {"identity": identity, "role": role_of(identity),
             "origin": str(record.get("origin", ORIGIN_AGENT))}
 
-
 def end_session(sid: str) -> None:
     try:
         session_path(_hash(sid)).unlink()
     except OSError:
         pass
 
-
 # --- memory bridge -------------------------------------------------------------
-
 
 def memory_call(method: str, path: str, payload: dict | None = None) -> dict | None:
     """Talk to memory-bridge with the review credential.
@@ -806,7 +775,6 @@ def memory_call(method: str, path: str, payload: dict | None = None) -> dict | N
     except (urllib.error.URLError, OSError, ValueError):
         return None
 
-
 class BridgeUnreachable(Exception):
     """The memory service did not answer.
 
@@ -815,7 +783,6 @@ class BridgeUnreachable(Exception):
     reporting "nothing waiting" when the service is down reproduces exactly
     that failure one layer up.
     """
-
 
 def own_proposals(identity: str, role: str) -> list[dict]:
     """Proposals this session may act on.
@@ -832,7 +799,6 @@ def own_proposals(identity: str, role: str) -> list[dict]:
         allowed.add("household")
     return [p for p in payload.get("proposals", [])
             if p.get("scope", "household") in allowed]
-
 
 def stored_memories(identity: str, role: str) -> tuple[list[dict], dict]:
     """Current memories this session may see, and the history behind each.
@@ -861,7 +827,6 @@ def stored_memories(identity: str, role: str) -> tuple[list[dict], dict]:
         history[item["id"]] = chain
     return current, history
 
-
 def forget_memory(identity: str, role: str, memory_id: str,
                   origin: str = ORIGIN_EMAIL) -> tuple[bool, str]:
     """Retire a stored memory, refusing anything out of scope.
@@ -882,7 +847,6 @@ def forget_memory(identity: str, role: str, memory_id: str,
     if result is None:
         return False, "memory_service_down"
     return True, "memory_forgotten"
-
 
 def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
                   origin: str = ORIGIN_EMAIL,
@@ -932,7 +896,6 @@ def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
                       else "memory_saved")
     return True, "memory_rejected"
 
-
 # --- connectors ----------------------------------------------------------------
 #
 # Reconnecting is the same two-phase split as onboarding, for the same reason:
@@ -946,10 +909,8 @@ def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
 # Without a reconnect path the only fix is deleting an identity and starting
 # over, which also orphans their memories.
 
-
 def request_path(request_id: str) -> Path:
     return STATE / "requests" / f"{request_id}.json"
-
 
 def save_request(record: dict) -> None:
     path = request_path(record["id"])
@@ -957,7 +918,6 @@ def save_request(record: dict) -> None:
     path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     # Holds an authorisation code. Short-lived, but still a credential.
     path.chmod(0o600)
-
 
 def pending_requests(identity: str = "") -> list[dict]:
     directory = STATE / "requests"
@@ -975,7 +935,6 @@ def pending_requests(identity: str = "") -> list[dict]:
             continue
         out.append(record)
     return out
-
 
 def google_redirect_acceptable(url: str) -> tuple[bool, str]:
     """Whether Google will accept this as an authorised redirect URI.
@@ -1005,7 +964,6 @@ def google_redirect_acceptable(url: str) -> tuple[bool, str]:
                        f"name over https such as a Tailscale *.ts.net host")
     return True, ""
 
-
 def google_consent_url(state: str) -> str:
     """Start Google's consent flow.
 
@@ -1026,7 +984,6 @@ def google_consent_url(state: str) -> str:
         "state": state,
     })
     return f"https://accounts.google.com/o/oauth2/v2/auth?{query}"
-
 
 def connector_status(identity: str) -> list[dict]:
     """What this person has connected, from configuration on disk.
@@ -1052,7 +1009,6 @@ def connector_status(identity: str) -> list[dict]:
             "the household account" if connected else "not connected"),
     }]
 
-
 # --- pairing a chat account, from the page rather than a config file ----------
 #
 # Who receives a sign-in link by DM used to be an environment variable, which
@@ -1072,10 +1028,8 @@ def connector_status(identity: str) -> list[dict]:
 
 PAIRING_TTL_SECONDS = int(os.environ.get("AGENTBOX_PAIRING_TTL", "600"))
 
-
 def chat_links_path() -> Path:
     return STATE / "chat-links.json"
-
 
 def load_chat_links() -> dict:
     try:
@@ -1086,13 +1040,11 @@ def load_chat_links() -> dict:
     data.setdefault("pending", {})
     return data
 
-
 def save_chat_links(data: dict) -> None:
     path = chat_links_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     path.chmod(0o600)
-
 
 def start_pairing(identity: str) -> str:
     """Mint a short code for this person to send from their chat account."""
@@ -1109,7 +1061,6 @@ def start_pairing(identity: str) -> str:
     save_chat_links(data)
     return code
 
-
 def chat_account_for(identity: str) -> str:
     """The chat account this person receives links on, if any."""
     linked = load_chat_links()["linked"].get(identity)
@@ -1123,15 +1074,12 @@ def chat_account_for(identity: str) -> str:
             return user.strip()
     return ""
 
-
 def unlink_chat(identity: str) -> None:
     data = load_chat_links()
     data["linked"].pop(identity, None)
     save_chat_links(data)
 
-
 # --- delivery ------------------------------------------------------------------
-
 
 def send_link_email(address: str, url: str) -> tuple[bool, str]:
     """Email a login link. Returns (sent, detail).
@@ -1157,7 +1105,6 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
         f"link is not enough to sign in as you.\n")
     return _smtp_send(message)
 
-
 def _smtp_send(message) -> tuple[bool, str]:
     """Hand a composed message to the configured relay.
 
@@ -1182,7 +1129,6 @@ def _smtp_send(message) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}"
     return True, ""
 
-
 def send_invite_email(address: str, url: str, display_name: str = "") -> tuple[bool, str]:
     """Email an invitation to somebody who does not live here yet.
 
@@ -1205,7 +1151,6 @@ def send_invite_email(address: str, url: str, display_name: str = "") -> tuple[b
         f"expecting this, ignore it and tell the sender.\n")
     return _smtp_send(message)
 
-
 # --- delivery ------------------------------------------------------------------
 #
 # A sign-in link has to reach a person; how is a household preference, not a
@@ -1224,7 +1169,6 @@ def send_invite_email(address: str, url: str, display_name: str = "") -> tuple[b
 # sends the DM. Same two-phase split, same reason: a LAN-reachable page should
 # not hold a credential that can message the household.
 
-
 def delivery_channels(identity: str, address: str) -> list[str]:
     """Which channels could carry a link to this person, in order.
 
@@ -1242,7 +1186,6 @@ def delivery_channels(identity: str, address: str) -> list[str]:
         channels.append("discord")
     return channels
 
-
 def has_delivery_channel(identity: str, address: str) -> bool:
     """Whether an invite for this person would actually travel somewhere.
 
@@ -1257,7 +1200,6 @@ def has_delivery_channel(identity: str, address: str) -> bool:
     to be. The reverse would put an operator-privileged link in a mailbox.
     """
     return bool(delivery_channels(identity, address))
-
 
 def deliver_link(identity: str, address: str, url: str) -> bool:
     """Send a sign-in link by every channel configured. True if any worked.
@@ -1296,7 +1238,6 @@ def deliver_link(identity: str, address: str, url: str) -> bool:
 
     return delivered
 
-
 def discord_identities() -> set[str]:
     """Identities reachable by Discord DM — paired, or configured the old way."""
     out = set(load_chat_links()["linked"])
@@ -1307,15 +1248,12 @@ def discord_identities() -> set[str]:
             out.add(name.strip())
     return out
 
-
 INVITE_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))
-
 
 def invite_public_host() -> str:
     """Where the collecting page is reachable, derived from the portal's own
     public URL rather than configured twice."""
     return urllib.parse.urlparse(PUBLIC_URL).hostname or "agentbox.local"
-
 
 def deliver_invite(record: dict, url: str) -> list[str]:
     """Send an invitation. Returns the channels that accepted it.
@@ -1358,11 +1296,9 @@ def deliver_invite(record: dict, url: str) -> list[str]:
         channels.append("discord")
     return channels
 
-
 INVITE_DIR = Path(os.environ.get(
     "AGENTBOX_INVITE_DIR",
     str(Path("~/.local/state/agentbox/invites").expanduser())))
-
 
 def submitted_invites() -> list[dict]:
     """Invites somebody filled in that nobody has completed yet.
@@ -1421,6 +1357,7 @@ render_home = agentbox_portal_views.render_home
 SIGNIN = agentbox_portal_views.SIGNIN
 render_signin = agentbox_portal_views.render_signin
 render_connectors = agentbox_portal_views.render_connectors
+render_knowledge = agentbox_portal_views.render_knowledge
 
 render_status_card = agentbox_portal_cards.render_status_card
 render_onboarding_card = agentbox_portal_cards.render_onboarding_card
@@ -1434,7 +1371,6 @@ render_household_card = agentbox_portal_admin.render_household_card
 render_admin = agentbox_portal_admin.render_admin
 
 # --- server --------------------------------------------------------------------
-
 
 def _state_secret() -> str:
     """The key the consent state is derived from. Random, persisted, 0600.
@@ -1471,7 +1407,6 @@ def _state_secret() -> str:
         handle.write(minted)
     return minted
 
-
 def _consent_state(identity: str) -> str:
     """A state value bound to this identity and this box's own secret.
 
@@ -1481,7 +1416,6 @@ def _consent_state(identity: str) -> str:
     """
     return hmac.new(_state_secret().encode(), f"google:{identity}".encode(),
                     hashlib.sha256).hexdigest()
-
 
 def _wrong_origin_page(host: str) -> str:
     """Explain why connecting Google has to happen on the box itself.
@@ -1517,14 +1451,12 @@ def _wrong_origin_page(host: str) -> str:
         f"@{html.escape(host)}</pre></div>"
         "<p><a href='/connectors'>Back to accounts</a></p>")
 
-
 def cookie_value(header: str, name: str) -> str:
     for part in header.split(";"):
         key, _, value = part.strip().partition("=")
         if key == name:
             return value
     return ""
-
 
 class PortalHandler(BaseHTTPRequestHandler):
     server_version = "agentbox-portal"
@@ -1620,8 +1552,14 @@ class PortalHandler(BaseHTTPRequestHandler):
                                  "sid=; Max-Age=0; HttpOnly; SameSite=Lax; Path=/"})
             return
 
-        if parsed.path == "/connectors":
+        if parsed.path in ("/connectors", "/capabilities"):
             self._send(200, render_connectors(
+                session["identity"], session["role"], flash,
+                session.get("origin", ORIGIN_AGENT)))
+            return
+
+        if parsed.path == "/knowledge":
+            self._send(200, render_knowledge(
                 session["identity"], session["role"], flash,
                 session.get("origin", ORIGIN_AGENT)))
             return
@@ -1647,11 +1585,11 @@ class PortalHandler(BaseHTTPRequestHandler):
                 session.get("origin", ORIGIN_AGENT)))
             return
 
-        if parsed.path in ("/skills", "/engine"):
+        if parsed.path in ("/skills", "/engine", "/settings"):
             agentbox_portal_engine.dispatch_get(self, session, parsed.path, flash)
             return
 
-        if parsed.path == "/":
+        if parsed.path in ("/", "/inbox"):
             self._send(200, render_home(
                 session["identity"], session["role"], flash,
                 session.get("origin", ORIGIN_AGENT)))
@@ -2321,9 +2259,7 @@ class PortalHandler(BaseHTTPRequestHandler):
             return
         self._send(404, page("Not found", "<h1>Not found</h1>"))
 
-
 # --- commands ------------------------------------------------------------------
-
 
 def cmd_link(args) -> int:
     """Mint a login link and print it.
@@ -2343,7 +2279,6 @@ def cmd_link(args) -> int:
     print(f"\n[ok] link {link_id} for {args.identity} — single use, "
           f"expires in {minutes} minutes", file=sys.stderr)
     return 0
-
 
 def reap_expired() -> tuple[int, int]:
     """Delete session and link records that can no longer authenticate anyone.
@@ -2385,7 +2320,6 @@ def reap_expired() -> tuple[int, int]:
                 links += 1
     return sessions, links
 
-
 def cmd_serve(args) -> int:
     STATE.mkdir(parents=True, exist_ok=True)
     # Mint the consent-state secret now, not on the first reconnect click. If
@@ -2426,7 +2360,6 @@ def cmd_serve(args) -> int:
         pass
     return 0
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Agentbox self-service portal")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -2449,7 +2382,6 @@ def main() -> int:
 
     args = parser.parse_args()
     return args.func(args)
-
 
 if __name__ == "__main__":
     sys.exit(main())

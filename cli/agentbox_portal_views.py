@@ -31,7 +31,7 @@ STYLE = get_style()
 
 
 def page(title: str, body: str) -> bytes:
-    content = body if "<header class=top>" in body else f"<div class=shell>{body}</div>"
+    content = body if "<div class=app-layout>" in body else f"<div class=shell>{body}</div>"
     return (f"<!doctype html><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>{html.escape(title)}</title><style>{get_style()}</style>"
@@ -40,37 +40,73 @@ def page(title: str, body: str) -> bytes:
 
 def chrome(identity: str, role: str, origin: str, active: str,
            body: str) -> str:
-    """The dashboard shell: identity bar, tabs, then the page.
+    """Modern Left Sidebar Workspace shell."""
+    can_admin = _portal.can(role, "ops:read_health", origin) if _portal else False
 
-    The origin badge is not decoration. A person needs to know why an approve
-    button is missing, and 'this link came from the assistant' is the answer.
-    """
-    tabs = [("/", "Memories"), ("/connectors", "Accounts")]
-    if _portal.can(role, "ops:read_health", origin):
-        tabs.append(("/skills", "Skills"))
-        tabs.append(("/admin", "Operations"))
-        tabs.append(("/engine", "Engine"))
-    rendered = "".join(
-        f"<a href='{href}' class='{'on' if href == active else ''}'>"
-        f"{label}</a>" for href, label in tabs)
+    waiting = 0
+    try:
+        if _portal and hasattr(_portal, "own_proposals"):
+            waiting = len(_portal.own_proposals(identity, role))
+    except Exception:
+        pass
+
+    inbox_badge = f"<span class=nav-badge>{waiting}</span>" if waiting > 0 else ""
+
+    nav_items = [
+        ("/", "Inbox", "📥", inbox_badge, active in ("/", "/inbox")),
+        ("/knowledge", "Knowledge Base", "🧠", "", active == "/knowledge"),
+        ("/capabilities", "Capabilities", "🔌", "",
+         active in ("/capabilities", "/connectors", "/skills")),
+    ]
+    if can_admin:
+        nav_items.append(("/admin", "Operations", "⚙️", "",
+                          active in ("/admin", "/settings", "/engine")))
+
+    rendered_nav = "".join(
+        f"<a href='{href}' class='nav-item {'on' if is_on else ''}'>"
+        f"<span style='font-size:1.05rem'>{icon}</span>"
+        f"<span>{html.escape(label)}</span>{badge}</a>"
+        for href, label, icon, badge, is_on in nav_items
+    )
+
     badge = ""
     if origin == _portal.ORIGIN_AGENT:
         badge = "<span class=badge>assistant link</span>"
     elif role == _portal.ADMIN:
         badge = "<span class=badge>admin</span>"
+
     app_nav = (
-        "<nav class=app-switch aria-label='Other interfaces'>"
-        "<a href='http://127.0.0.1:4321' title='Control Plane Lab'>Control Plane</a>"
+        "<div class=app-switch-box>"
+        "<div class=app-switch-label>Other Interfaces</div>"
+        "<div class=app-switch-row>"
+        "<a href='http://127.0.0.1:4321' target=_blank title='Control Plane Lab'>Control Plane</a>"
         "<a href='http://192.0.2.10:3456' target=_blank title='Tasks (Vikunja)'>Tasks</a>"
         "<a href='http://192.0.2.10:8123' target=_blank title='Home Assistant'>Home</a>"
-        "</nav>"
+        "</div></div>"
     )
-    return (f"<header class=top><div class=top-inner>"
-            f"<span class=brand><a href='/' style='text-decoration:none;color:inherit'>Agentbox</a></span>"
-            f"{app_nav}"
-            f"<span class=who>{html.escape(identity)}{badge}</span>"
-            f"</div></header><div class=shell>"
-            f"<nav class=tabs>{rendered}</nav>{body}</div>")
+
+    initial = (identity[:1] or "U").upper()
+    user_footer = (
+        f"<div class=user-profile-row>"
+        f"<div class=avatar-circle>{html.escape(initial)}</div>"
+        f"<div class=user-details>"
+        f"<div class=user-name-text>{html.escape(identity)}</div>"
+        f"<div class=user-role-tag>{html.escape(role)}{badge}</div>"
+        f"</div>"
+        f"<a href='/logout' class=signout-link title='Sign out'>⎋</a>"
+        f"</div>"
+    )
+
+    return (
+        f"<div class=app-layout><aside class=sidebar>"
+        f"<div class=brand-row><span style='font-size:1.15rem'>⚡</span>"
+        f"<span class=brand-title><a href='/'>Agentbox</a></span>"
+        f"<span class=env-badge>Workspace</span></div>"
+        f"<div class=sidebar-section><div class=section-label>Workspace</div>"
+        f"<nav class=nav-menu>{rendered_nav}</nav></div>"
+        f"<div class=sidebar-footer>{app_nav}{user_footer}</div></aside>"
+        f"<main class=main-content>{body}</main></div>"
+    )
 
 
 def render_overview(identity: str, role: str, waiting: int,
@@ -91,8 +127,7 @@ def render_overview(identity: str, role: str, waiting: int,
     if waiting:
         lines.append(
             f"<div class=row><span class='dot warn'></span><span class=name>"
-            f"{waiting} memor{'ies' if waiting != 1 else 'y'} waiting for you"
-            f"</span></div>")
+            f"{waiting} memor{'ies' if waiting != 1 else 'y'} waiting for you</span></div>")
 
     connected = [c["name"] for c in _portal.connector_status(identity) if c["connected"]]
     chat = _portal.chat_account_for(identity)
@@ -112,8 +147,7 @@ def render_overview(identity: str, role: str, waiting: int,
     if requests:
         lines.append(
             f"<div class=row><span class='dot warn'></span><span class=name>"
-            f"{len(requests)} account change waiting on the household admin"
-            f"</span></div>")
+            f"{len(requests)} account change waiting on the household admin</span></div>")
 
     if role == _portal.ADMIN:
         snap = _portal.agentbox_status.cached()
@@ -134,56 +168,18 @@ def render_overview(identity: str, role: str, waiting: int,
     return "".join(parts)
 
 
-def render_home(identity: str, role: str, flash: str,
-                origin: str = "email") -> bytes:
-    try:
-        proposals, reachable = _portal.own_proposals(identity, role), True
-    except _portal.BridgeUnreachable:
-        proposals, reachable = [], False
-    try:
-        stored, _ = _portal.stored_memories(identity, role)
-    except _portal.BridgeUnreachable:
-        stored = []
-    parts = ["<h1>Agentbox</h1>",
-             f"<p class=sub>Hi {html.escape(identity)}.</p>",
-             render_overview(identity, role, len(proposals), bool(stored)),
-             "<h2>Memories</h2>",
-             "<p class=sub>What Agentbox would like to remember about you. "
-             "Nothing is saved until you say so.</p>"]
-    if origin == _portal.ORIGIN_AGENT:
-        parts.append(
-            "<div class='card warn'><b>Signed in from an assistant link</b>"
-            "<p class=sub style='margin:.35rem 0 0'>You can read everything "
-            "here, but approving a memory needs a link you requested yourself. "
-            "The assistant can see any link it sends you, so a link it made "
-            "cannot be used to approve its own memories.</p></div>")
-    elif origin == _portal.ORIGIN_CHAT:
-        parts.append(
-            "<div class='card warn'><b>Opened in a different browser</b>"
-            "<p class=sub style='margin:.35rem 0 .5rem'>You can read "
-            "everything here. Approving a memory or disconnecting an account "
-            "needs a link opened in the same browser that asked for it \u2014 "
-            "that is what proves the person opening it is the person who asked, "
-            "rather than anyone who saw the message.</p>"
-            "<p class=sub style='margin:0'>Phone apps usually open links in "
-            "their own browser, so this is normal. To get full access, request "
-            "a link below and open it without leaving this browser.</p>"
-            "<form method=post action=/request style='margin-top:.6rem'>"
-            "<input type=hidden name=email value=''>"
-            "<button class=yes>Send me a link for this browser</button>"
-            "</form></div>")
-    if flash:
-        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-
+def _render_proposals_list(proposals: list[dict], reachable: bool, identity: str) -> str:
     if not reachable:
-        parts.append("<p class=empty><b>The memory service is not "
-                     "responding.</b> This is not the same as having nothing "
-                     "waiting — there may be proposals here that cannot be "
-                     "shown. Tell whoever runs this box.</p>")
-    elif not proposals:
-        parts.append("<p class=empty>Nothing waiting. The assistant proposes a "
-                     "memory when it notices something worth keeping; it cannot "
-                     "save one until you say yes.</div>")
+        return ("<p class=empty><b>The memory service is not responding.</b> "
+                "This is not the same as having nothing waiting — there may be "
+                "proposals here that cannot be shown. Tell whoever runs this box.</p>")
+    if not proposals:
+        return ("<div class=empty><div style='font-size:1.4rem;margin-bottom:.3rem'>✓</div>"
+                "<b>All clear — Inbox Zero</b>"
+                "<p class=sub style='margin:.3rem 0 0'>The assistant proposes a memory "
+                "when it notices something worth keeping; it cannot save one until you say yes.</p></div>")
+
+    parts = []
     for item in proposals:
         scope = html.escape(str(item.get("scope", "household")))
         label = "private to you" if scope == identity else scope
@@ -196,11 +192,9 @@ def render_home(identity: str, role: str, flash: str,
                     "<b>feedback about how I behave</b>"
                     + (f" — {html.escape(reason)}" if reason else "")
                     + ". Filing it as feedback puts it on a list to fix "
-                    "properly, instead of storing a note that works around "
-                    "it.</p>")
+                    "properly, instead of storing a note that works around it.</p>")
         parts.append(
-            f"<div class=card><span class=scope>{html.escape(label)}</span>"
-            f"{hint}"
+            f"<div class=card><span class=scope>{html.escape(label)}</span>{hint}"
             f"<form method=post action=/memory/decide>"
             f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
             f"<textarea name=statement rows=3 class=statement-box "
@@ -209,47 +203,158 @@ def render_home(identity: str, role: str, flash: str,
             f"Edit before saving if it is not quite right.</p>"
             f"<button class=yes name=verb value=approve>"
             f"{'Save as a memory' if is_feedback else 'Remember this'}</button>"
-            f"<button name=verb value=feedback>"
-            f"{'Not a memory — file as feedback' if is_feedback else 'Not a memory — file as feedback'}"
-            f"</button>"
-            "<button class=danger name=verb value=reject "
-            "onclick=\"return confirm('Forget this memory proposal?');\">Forget it</button>"
+            f"<button name=verb value=feedback>Not a memory — file as feedback</button>"
+            f"<button class=danger name=verb value=reject "
+            f"onclick=\"return confirm('Forget this memory proposal?');\">Forget it</button>"
             f"</form></div>")
+    return "".join(parts)
+
+
+def _render_memories_list(current: list[dict], history: dict, identity: str) -> str:
+    if not current:
+        return ""
+    parts = ["<h1 style='margin-top:2rem'>What I remember</h1>"]
+    for item in current:
+        scope = html.escape(str(item.get("scope", "household")))
+        label = "private to you" if scope == identity else scope
+        scope_attr = "private" if scope == identity else "household"
+        past = history.get(item["id"], [])
+        chain = ""
+        if past:
+            rows = "".join(
+                f"<div style='color:#5b6470;font-size:.85rem;padding:.2rem 0'>"
+                f"was: {html.escape(str(p.get('statement','')))}</div>" for p in past)
+            chain = (f"<details style='margin:.4rem 0 0'>"
+                     f"<summary style='cursor:pointer;color:#5b6470;font-size:.85rem'>"
+                     f"{len(past)} earlier version{'s' if len(past) > 1 else ''}</summary>"
+                     f"{rows}</details>")
+        parts.append(
+            f"<div class=card data-scope='{scope_attr}'><span class=scope>{html.escape(label)}</span>"
+            f"<p class=stmt>{html.escape(str(item.get('statement','')))}</p>{chain}"
+            f"<form method=post action=/memory/forget>"
+            f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
+            f"<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
+            f"Forget this</button></form></div>")
+    return "".join(parts)
+
+
+def render_home(identity: str, role: str, flash: str,
+                origin: str = "email") -> bytes:
     try:
-        current, history = _portal.stored_memories(identity, role)
+        proposals, reachable = _portal.own_proposals(identity, role), True
     except _portal.BridgeUnreachable:
-        current, history = [], {}
-    if current:
-        parts.append("<h1 style='margin-top:2rem'>What I remember</h1>")
-        for item in current:
+        proposals, reachable = [], False
+    try:
+        stored, history = _portal.stored_memories(identity, role)
+    except _portal.BridgeUnreachable:
+        stored, history = [], {}
+
+    parts = ["<h1>Inbox</h1>",
+             "<p class=sub>Items and memory proposals waiting for your review.</p>",
+             render_overview(identity, role, len(proposals), bool(stored))]
+
+    if origin == _portal.ORIGIN_AGENT:
+        parts.append(
+            "<div class='card warn'><b>Signed in from an assistant link</b>"
+            "<p class=sub style='margin:.35rem 0 0'>You can read everything "
+            "here, but approving a memory needs a link you requested yourself. "
+            "The assistant can see any link it sends you, so a link it made "
+            "cannot be used to approve its own memories.</p></div>")
+    elif origin == _portal.ORIGIN_CHAT:
+        parts.append(
+            "<div class='card warn'><b>Opened in a different browser</b>"
+            "<p class=sub style='margin:.35rem 0 .5rem'>You can read "
+            "everything here. Approving a memory or disconnecting an account "
+            "needs a link opened in the same browser that asked for it — "
+            "that is what proves the person opening it is the person who asked, "
+            "rather than anyone who saw the message.</p>"
+            "<p class=sub style='margin:0'>Phone apps usually open links in "
+            "their own browser, so this is normal. To get full access, request "
+            "a link below and open it without leaving this browser.</p>"
+            "<form method=post action=/request style='margin-top:.6rem'>"
+            "<input type=hidden name=email value=''>"
+            "<button class=yes>Send me a link for this browser</button></form></div>")
+
+    if flash:
+        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
+
+    parts.append("<h2>Pending Review</h2>")
+    parts.append(_render_proposals_list(proposals, reachable, identity))
+    parts.append(_render_memories_list(stored, history, identity))
+
+    parts.append("<footer>Only you can approve a memory in your own private "
+                 "scope — not the assistant, and not the household admin."
+                 " &middot; <a href='/logout'>Sign out</a></footer>")
+    return page(f"{identity} — Agentbox",
+                chrome(identity, role, origin, "/", "".join(parts)))
+
+
+def render_knowledge(identity: str, role: str, flash: str,
+                     origin: str = "email") -> bytes:
+    """Dedicated Knowledge Base view with search and scope filters."""
+    try:
+        stored, history = _portal.stored_memories(identity, role)
+    except _portal.BridgeUnreachable:
+        stored, history = [], {}
+
+    parts = [
+        "<h1>Knowledge Base</h1>",
+        "<p class=sub>Searchable permanent facts, household preferences, and version history.</p>",
+    ]
+    if flash:
+        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
+
+    js_code = (
+        "function filterMem(q){var t=q.toLowerCase();document.querySelectorAll('.mem-card')"
+        ".forEach(function(c){var mt=c.textContent.toLowerCase().indexOf(t)!==-1;"
+        "var sc=c.getAttribute('data-scope');var ms=(window._sc||'all')==='all'||sc===window._sc;"
+        "c.style.display=(mt&&ms)?'':'none';});}"
+        "function filterSc(s){window._sc=s;document.querySelectorAll('.filter-btn')"
+        ".forEach(function(b){b.classList.remove('active');});"
+        "var b=document.getElementById('btn-'+s);if(b)b.classList.add('active');"
+        "var i=document.getElementById('filter-input');filterMem(i?i.value:'');}"
+    )
+    parts.append(
+        "<input type=search id=filter-input class=search-bar placeholder='Search memories...' "
+        "oninput='filterMem(this.value)'>"
+        "<div class=filter-group>"
+        "<button class='filter-btn active' id=btn-all onclick=\"filterSc('all')\">All</button>"
+        "<button class='filter-btn' id=btn-household onclick=\"filterSc('household')\">Household</button>"
+        "<button class='filter-btn' id=btn-private onclick=\"filterSc('private')\">Private</button>"
+        f"</div><script>{js_code}</script>"
+    )
+
+    if not stored:
+        parts.append("<div class=empty>No memories recorded yet. "
+                     "When you approve proposals in the Inbox, they are stored here.</div>")
+    else:
+        parts.append("<h1 style='margin-top:1.5rem'>What I remember</h1>")
+        for item in stored:
             scope = html.escape(str(item.get("scope", "household")))
             label = "private to you" if scope == identity else scope
+            scope_attr = "private" if scope == identity else "household"
             past = history.get(item["id"], [])
             chain = ""
             if past:
                 rows = "".join(
-                    f"<div style='color:#5b6470;font-size:.85rem;"
-                    f"padding:.2rem 0'>was: {html.escape(str(p.get('statement','')))}"
-                    f"</div>" for p in past)
+                    f"<div style='color:#5b6470;font-size:.85rem;padding:.2rem 0'>"
+                    f"was: {html.escape(str(p.get('statement','')))}</div>" for p in past)
                 chain = (f"<details style='margin:.4rem 0 0'>"
-                         f"<summary style='cursor:pointer;color:#5b6470;"
-                         f"font-size:.85rem'>{len(past)} earlier version"
-                         f"{'s' if len(past) > 1 else ''}</summary>{rows}"
-                         f"</details>")
+                         f"<summary style='cursor:pointer;color:#5b6470;font-size:.85rem'>"
+                         f"{len(past)} earlier version{'s' if len(past) > 1 else ''}</summary>"
+                         f"{rows}</details>")
             parts.append(
-                f"<div class=card><span class=scope>{html.escape(label)}</span>"
-                f"<p class=stmt>{html.escape(str(item.get('statement','')))}</p>"
-                f"{chain}"
+                f"<div class='card mem-card' data-scope='{scope_attr}'>"
+                f"<span class=scope>{html.escape(label)}</span>"
+                f"<p class=stmt>{html.escape(str(item.get('statement','')))}</p>{chain}"
                 f"<form method=post action=/memory/forget>"
                 f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
-                "<button class=danger "
-                "onclick=\"return confirm('Permanently forget this memory?');\">Forget this</button></form></div>")
+                f"<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
+                f"Forget this</button></form></div>")
 
-    parts.append("<footer>Only you can approve a memory in your own private "
-                 "scope \u2014 not the assistant, and not the household admin."
-                 " &middot; <a href='/logout'>Sign out</a></footer>")
-    return page(f"{identity} \u2014 Agentbox",
-                chrome(identity, role, origin, "/", "".join(parts)))
+    parts.append("<footer><a href='/logout'>Sign out</a></footer>")
+    return page("Knowledge Base — Agentbox",
+                chrome(identity, role, origin, "/knowledge", "".join(parts)))
 
 
 SIGNIN = """<h1>Agentbox</h1>
@@ -270,69 +375,19 @@ def render_signin(sent: bool = False) -> bytes:
     told = ("If that address belongs to someone here, a sign-in link is on "
             "its way. Open it in this browser for full access — opened "
             "anywhere else it can read but not change anything.")
-    return page("Sign in \u2014 Agentbox", SIGNIN.format(
+    return page("Sign in — Agentbox", SIGNIN.format(
         minutes=_portal.LINK_TTL_SECONDS // 60,
         flash=f"<div class=flash>{html.escape(told)}</div>" if sent else ""))
 
 
 def render_connectors(identity: str, role: str, flash: str,
                       origin: str = "email") -> bytes:
-    parts = ["<h1>Accounts</h1>",
-             "<p class=sub>What Agentbox can reach on your behalf.</p>"]
-    if flash:
-        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
-    for connector in _portal.connector_status(identity):
-        if not connector.get("configured", True):
-            continue
-        parts.append(
-            f"<div class=card><b>{html.escape(connector['name'])}</b>"
-            f"<p class=sub style='margin:.3rem 0 .8rem'>"
-            f"{'Connected' if connector['connected'] else 'Not connected'} "
-            f"&mdash; {html.escape(connector['detail'])}.</p>"
-            f"<form method=post action=/connectors/start style='display:inline'>"
-            f"<input type=hidden name=connector value='{html.escape(connector['key'])}'>"
-            f"<button class=yes name=action value=reconnect>"
-            f"{'Reconnect or switch account' if connector['connected'] else 'Connect'}"
-            f"</button>"
-            + ("<button class=danger name=action value=disconnect "
-               "onclick=\"return confirm('Disconnect this service?');\">Disconnect</button>"
-               if connector["connected"] else "")
-            + "</form></div>")
-
-    account = _portal.chat_account_for(identity)
-    pending = [code for code, rec in _portal.load_chat_links()["pending"].items()
-               if rec.get("identity") == identity
-               and int(rec.get("expires_at", 0)) > _portal.now()]
-    if account:
-        body = (f"<p class=sub style='margin:.3rem 0 .8rem'>"
-                f"Connected as <b>{html.escape(account)}</b> "
-                "\u2014 sign-in links come to you on Discord.</p>"
-                "<form method=post action=/chat/unlink style='display:inline'>"
-                "<button class=danger "
-                "onclick=\"return confirm('Disconnect Discord identity?');\">Disconnect Discord</button></form>")
-    elif pending:
-        body = (f"<p class=sub style='margin:.3rem 0 .6rem'>Send this to the "
-                f"Agentbox bot on Discord, as a direct message:</p>"
-                f"<div style='font-family:monospace;font-size:1.35rem;"
-                f"letter-spacing:.12em;padding:.5rem .7rem;"
-                f"background:var(--input-bg);border-radius:.35rem;display:inline-block'>"
-                f"link {html.escape(pending[0])}</div>"
-                f"<p class=sub style='margin:.6rem 0 0'>Expires in "
-                f"{_portal.PAIRING_TTL_SECONDS // 60} minutes.</p>")
-    else:
-        body = ("<p class=sub style='margin:.3rem 0 .8rem'>Not connected. "
-                "Connect it and you can ask for your own sign-in links instead "
-                "of someone handing you one.</p>"
-                "<form method=post action=/chat/pair style='display:inline'>"
-                "<button class=yes>Connect Discord</button></form>")
-    parts.append(f"<div class=card><b>Discord</b>{body}</div>")
-
-    parts.append("<footer>Reconnecting replaces the stored credential. "
-                 "Disconnecting revokes it at Google and removes it from this "
-                 "box \u2014 your memories are untouched either way.<br>"
-                 "<a href='/logout'>Sign out</a></footer>")
-    return page("Accounts \u2014 Agentbox",
-                chrome(identity, role, origin, "/connectors", "".join(parts)))
+    """Renders the Capabilities & Integrations surface."""
+    if _portal and hasattr(_portal, "agentbox_portal_engine"):
+        return _portal.agentbox_portal_engine.render_capabilities(
+            identity, role, flash, origin)
+    return page("Capabilities — Agentbox",
+                chrome(identity, role, origin, "/capabilities", "<h1>Capabilities</h1>"))
 
 
 def _ago(seconds: int) -> str:
