@@ -3,6 +3,7 @@
 Follows the established agentbox modular CLI pattern:
 - Dedicated module with clean functional boundaries (< 400 LOC)
 - Preserves exact markup, escaping, form targets, and test compatibility
+- Professional vector SVG icons instead of colored emojis
 """
 from __future__ import annotations
 
@@ -11,11 +12,9 @@ from typing import Any
 
 _portal: Any = None
 
-
 def bind(portal_mod: Any) -> None:
     global _portal
     _portal = portal_mod
-
 
 def get_style() -> str:
     if _portal and hasattr(_portal, "agentbox_portal_style"):
@@ -26,9 +25,16 @@ def get_style() -> str:
     except ImportError:
         return ""
 
-
 STYLE = get_style()
 
+def _icon(name: str) -> str:
+    if _portal and hasattr(_portal, "agentbox_portal_style"):
+        return getattr(_portal.agentbox_portal_style, name, "")
+    try:
+        import cli.agentbox_portal_style as s
+        return getattr(s, name, "")
+    except Exception:
+        return ""
 
 def page(title: str, body: str) -> bytes:
     content = body if "<div class=app-layout>" in body else f"<div class=shell>{body}</div>"
@@ -36,7 +42,6 @@ def page(title: str, body: str) -> bytes:
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>{html.escape(title)}</title><style>{get_style()}</style>"
             f"{content}").encode()
-
 
 def chrome(identity: str, role: str, origin: str, active: str,
            body: str) -> str:
@@ -53,27 +58,24 @@ def chrome(identity: str, role: str, origin: str, active: str,
     inbox_badge = f"<span class=nav-badge>{waiting}</span>" if waiting > 0 else ""
 
     nav_items = [
-        ("/", "Inbox", "📥", inbox_badge, active in ("/", "/inbox")),
-        ("/knowledge", "Knowledge Base", "🧠", "", active == "/knowledge"),
-        ("/capabilities", "Capabilities", "🔌", "",
+        ("/", "Inbox", _icon("ICON_INBOX"), inbox_badge, active in ("/", "/inbox")),
+        ("/knowledge", "Knowledge Base", _icon("ICON_KNOWLEDGE"), "", active == "/knowledge"),
+        ("/capabilities", "Capabilities", _icon("ICON_CAPABILITIES"), "",
          active in ("/capabilities", "/connectors", "/skills")),
     ]
     if can_admin:
-        nav_items.append(("/admin", "Operations", "⚙️", "",
+        nav_items.append(("/admin", "Operations", _icon("ICON_OPERATIONS"), "",
                           active in ("/admin", "/settings", "/engine")))
 
     rendered_nav = "".join(
         f"<a href='{href}' class='nav-item {'on' if is_on else ''}'>"
-        f"<span style='font-size:1.05rem'>{icon}</span>"
-        f"<span>{html.escape(label)}</span>{badge}</a>"
+        f"{icon}<span>{html.escape(label)}</span>{badge}</a>"
         for href, label, icon, badge, is_on in nav_items
     )
 
     badge = ""
     if origin == _portal.ORIGIN_AGENT:
-        badge = "<span class=badge>assistant link</span>"
-    elif role == _portal.ADMIN:
-        badge = "<span class=badge>admin</span>"
+        badge = "<span class=badge>assistant</span>"
 
     app_nav = (
         "<div class=app-switch-box>"
@@ -87,19 +89,15 @@ def chrome(identity: str, role: str, origin: str, active: str,
 
     initial = (identity[:1] or "U").upper()
     user_footer = (
-        f"<div class=user-profile-row>"
-        f"<div class=avatar-circle>{html.escape(initial)}</div>"
-        f"<div class=user-details>"
-        f"<div class=user-name-text>{html.escape(identity)}</div>"
-        f"<div class=user-role-tag>{html.escape(role)}{badge}</div>"
-        f"</div>"
-        f"<a href='/logout' class=signout-link title='Sign out'>⎋</a>"
-        f"</div>"
+        f"<div class=user-profile-row><div class=avatar-circle>{html.escape(initial)}</div>"
+        f"<div class=user-details><div class=user-name-text>{html.escape(identity)}</div>"
+        f"<div class=user-role-tag>{html.escape(role)}{badge}</div></div>"
+        f"<a href='/logout' class=signout-link title='Sign out'>{_icon('ICON_LOGOUT')}</a></div>"
     )
 
     return (
         f"<div class=app-layout><aside class=sidebar>"
-        f"<div class=brand-row><span style='font-size:1.15rem'>⚡</span>"
+        f"<div class=brand-row>{_icon('ICON_BRAND')}"
         f"<span class=brand-title><a href='/'>Agentbox</a></span>"
         f"<span class=env-badge>Workspace</span></div>"
         f"<div class=sidebar-section><div class=section-label>Workspace</div>"
@@ -107,7 +105,6 @@ def chrome(identity: str, role: str, origin: str, active: str,
         f"<div class=sidebar-footer>{app_nav}{user_footer}</div></aside>"
         f"<main class=main-content>{body}</main></div>"
     )
-
 
 def render_overview(identity: str, role: str, waiting: int,
                     has_memories: bool) -> str:
@@ -167,14 +164,14 @@ def render_overview(identity: str, role: str, waiting: int,
     parts.append(f"<div class=card>{''.join(lines)}</div>")
     return "".join(parts)
 
-
 def _render_proposals_list(proposals: list[dict], reachable: bool, identity: str) -> str:
     if not reachable:
         return ("<p class=empty><b>The memory service is not responding.</b> "
                 "This is not the same as having nothing waiting — there may be "
                 "proposals here that cannot be shown. Tell whoever runs this box.</p>")
     if not proposals:
-        return ("<div class=empty><div style='font-size:1.4rem;margin-bottom:.3rem'>✓</div>"
+        return ("<div class=empty>"
+                "<div style='font-size:1.2rem;margin-bottom:.3rem;color:#22c55e'>&#10003;</div>"
                 "<b>All clear — Inbox Zero</b>"
                 "<p class=sub style='margin:.3rem 0 0'>The assistant proposes a memory "
                 "when it notices something worth keeping; it cannot save one until you say yes.</p></div>")
@@ -209,7 +206,6 @@ def _render_proposals_list(proposals: list[dict], reachable: bool, identity: str
             f"</form></div>")
     return "".join(parts)
 
-
 def _render_memories_list(current: list[dict], history: dict, identity: str) -> str:
     if not current:
         return ""
@@ -233,10 +229,9 @@ def _render_memories_list(current: list[dict], history: dict, identity: str) -> 
             f"<p class=stmt>{html.escape(str(item.get('statement','')))}</p>{chain}"
             f"<form method=post action=/memory/forget>"
             f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
-            f"<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
-            f"Forget this</button></form></div>")
+            "<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
+            "Forget this</button></form></div>")
     return "".join(parts)
-
 
 def render_home(identity: str, role: str, flash: str,
                 origin: str = "email") -> bytes:
@@ -287,7 +282,6 @@ def render_home(identity: str, role: str, flash: str,
                  " &middot; <a href='/logout'>Sign out</a></footer>")
     return page(f"{identity} — Agentbox",
                 chrome(identity, role, origin, "/", "".join(parts)))
-
 
 def render_knowledge(identity: str, role: str, flash: str,
                      origin: str = "email") -> bytes:
@@ -349,13 +343,13 @@ def render_knowledge(identity: str, role: str, flash: str,
                 f"<p class=stmt>{html.escape(str(item.get('statement','')))}</p>{chain}"
                 f"<form method=post action=/memory/forget>"
                 f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
-                f"<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
+            "<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
+            "Forget this</button></form></div>"
                 f"Forget this</button></form></div>")
 
     parts.append("<footer><a href='/logout'>Sign out</a></footer>")
     return page("Knowledge Base — Agentbox",
                 chrome(identity, role, origin, "/knowledge", "".join(parts)))
-
 
 SIGNIN = """<h1>Agentbox</h1>
 <p class=sub>Sign in with your email address.</p>
@@ -370,7 +364,6 @@ SIGNIN = """<h1>Agentbox</h1>
 browser it gives you full access; opened anywhere else you can read but not
 change anything.</footer>"""
 
-
 def render_signin(sent: bool = False) -> bytes:
     told = ("If that address belongs to someone here, a sign-in link is on "
             "its way. Open it in this browser for full access — opened "
@@ -378,7 +371,6 @@ def render_signin(sent: bool = False) -> bytes:
     return page("Sign in — Agentbox", SIGNIN.format(
         minutes=_portal.LINK_TTL_SECONDS // 60,
         flash=f"<div class=flash>{html.escape(told)}</div>" if sent else ""))
-
 
 def render_connectors(identity: str, role: str, flash: str,
                       origin: str = "email") -> bytes:
@@ -388,7 +380,6 @@ def render_connectors(identity: str, role: str, flash: str,
             identity, role, flash, origin)
     return page("Capabilities — Agentbox",
                 chrome(identity, role, origin, "/capabilities", "<h1>Capabilities</h1>"))
-
 
 def _ago(seconds: int) -> str:
     if seconds < 60:
