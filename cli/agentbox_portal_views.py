@@ -200,7 +200,7 @@ def _render_proposals_list(proposals: list[dict], reachable: bool, identity: str
 def _render_memories_list(current: list[dict], history: dict, identity: str) -> str:
     if not current:
         return ""
-    parts = ["<h1 style='margin-top:2rem'>What I remember</h1>"]
+    parts = ["<h2 style='margin-top:2rem'>What I remember</h2>"]
     for item in current:
         scope = html.escape(str(item.get("scope", "household")))
         label = "private to you" if scope == identity else scope
@@ -313,7 +313,7 @@ def render_knowledge(identity: str, role: str, flash: str,
         parts.append("<div class=empty>No memories recorded yet. "
                      "When you approve proposals in the Inbox, they are stored here.</div>")
     else:
-        parts.append("<h1 style='margin-top:1.5rem'>What I remember</h1>")
+        parts.append("<h2 style='margin-top:1.5rem'>What I remember</h2>")
         for item in stored:
             scope = html.escape(str(item.get("scope", "household")))
             label = "private to you" if scope == identity else scope
