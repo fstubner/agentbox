@@ -207,7 +207,7 @@ def render_capabilities(identity: str, role: str, flash: str = "",
             f"</div>"
         )
 
-    parts.append("<footer><a href='/logout'>Sign out</a></footer>")
+
     return _portal.page("Capabilities — Agentbox",
                         _portal.chrome(identity, role, origin, "/capabilities", "".join(parts)))
 
@@ -258,7 +258,7 @@ def render_engine(identity: str, role: str, flash: str = "",
         "</div>"
     )
 
-    parts.append("<footer><a href='/logout'>Sign out</a></footer>")
+
     return _portal.page("Engine — Agentbox",
                         _portal.chrome(identity, role, origin, "/engine", "".join(parts)))
 
@@ -317,3 +317,83 @@ def dispatch_post(handler: Any, session: dict, path: str, form: dict) -> None:
         msg_key = "restore_ok" if code == 0 else "restore_failed"
         handler._redirect(f"/engine?m={msg_key}")
         return
+
+
+def load_vikunja_tasks() -> tuple[list[tuple], list[tuple]]:
+    p = Path.home() / ".local/state/agentbox/vikunja/db/vikunja.db"
+    if not p.exists():
+        return [], []
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        cur = con.cursor()
+        projects = cur.execute("SELECT id, title FROM projects WHERE is_archived = 0 ORDER BY id").fetchall()
+        tasks = cur.execute("""
+            SELECT t.id, t.title, t.description, t.done, t.due_date, p.title as project_title
+            FROM tasks t LEFT JOIN projects p ON t.project_id = p.id
+            WHERE t.deleted_at IS NULL ORDER BY t.done ASC, t.id DESC LIMIT 40
+        """).fetchall()
+        con.close()
+        return projects, tasks
+    except Exception:
+        return [], []
+
+
+def render_tasks(identity: str, role: str, flash: str = "",
+                 origin: str = "email") -> bytes:
+    """Projects & Tasks view powered by Vikunja."""
+    projects, tasks = load_vikunja_tasks()
+    parts = [
+        "<h1>Projects & Tasks</h1>",
+        "<p class=sub>Household task lists, active projects, and todo tracking via Vikunja.</p>",
+    ]
+    if flash:
+        parts.append(f"<div class=flash>{html.escape(flash)}</div>")
+
+    parts.append(
+        "<div style='display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;flex-wrap:wrap'>"
+        "<a href='http://agentbox.local:3456' target=_blank class='button yes' "
+        "style='text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:.4rem'>"
+        "Open Vikunja Workspace &rarr;</a>"
+        "<span class=sub style='margin:0'>Full Kanban boards, task detail editing, and list management.</span>"
+        "</div>"
+    )
+
+    pending = [t for t in tasks if not t[3]]
+    completed = [t for t in tasks if t[3]]
+
+    parts.append("<h2>Active Tasks</h2>")
+    if not pending:
+        parts.append(
+            "<div class=empty>No active tasks right now. "
+            "Create one in Vikunja or ask the assistant to add a task!</div>")
+    else:
+        for t in pending:
+            tid, title, desc, done, due, proj = t
+            due_str = f" &middot; due {html.escape(str(due)[:10])}" if due else ""
+            desc_str = f"<div class=sub style='margin:.2rem 0 0'>{html.escape(desc)}</div>" if desc else ""
+            badge_str = f"<span class=badge style='font-size:.65rem'>{html.escape(proj or 'General')}</span>"
+            parts.append(
+                f"<div class=card style='margin-bottom:.55rem;padding:.85rem 1.15rem'>"
+                f"<div style='display:flex;align-items:center;gap:.6rem'>"
+                f"<span class='dot warn'></span>"
+                f"<div style='flex:1;min-width:0'><b style='font-size:.92rem'>{html.escape(title)}</b>{desc_str}</div>"
+                f"{badge_str}{due_str}</div></div>"
+            )
+
+    if completed:
+        parts.append(f"<h2 style='margin-top:1.5rem'>Recently Completed ({len(completed)})</h2>")
+        for t in completed[:5]:
+            tid, title, desc, done, due, proj = t
+            parts.append(
+                f"<div class=card style='margin-bottom:.45rem;padding:.75rem 1.15rem;opacity:0.75'>"
+                f"<div style='display:flex;align-items:center;gap:.6rem'>"
+                f"<span class='dot ok'></span>"
+                f"<span style='flex:1;text-decoration:line-through;color:var(--muted);font-size:.88rem'>"
+                f"{html.escape(title)}</span>"
+                f"<span class=badge style='font-size:.65rem'>{html.escape(proj or 'General')}</span>"
+                f"</div></div>"
+            )
+
+    return _portal.page("Projects & Tasks — Agentbox",
+                        _portal.chrome(identity, role, origin, "/tasks", "".join(parts)))

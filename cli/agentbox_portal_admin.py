@@ -190,6 +190,6 @@ def render_admin(identity: str, flash: str,
                  f"{note}</div>")
     parts.append(_portal.render_settings_card(errors or {}, submitted or {}))
     parts.append(_portal.render_household_card(household_error, household_submitted))
-    parts.append("<footer><a href='/logout'>Sign out</a></footer>")
+
     return _portal.page("Operations \u2014 Agentbox",
                         _portal.chrome(identity, _portal.ADMIN, origin, "/admin", "".join(parts)))

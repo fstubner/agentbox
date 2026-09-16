@@ -1558,6 +1558,12 @@ class PortalHandler(BaseHTTPRequestHandler):
                 session.get("origin", ORIGIN_AGENT)))
             return
 
+        if parsed.path in ("/tasks", "/projects"):
+            self._send(200, agentbox_portal_engine.render_tasks(
+                session["identity"], session["role"], flash,
+                session.get("origin", ORIGIN_AGENT)))
+            return
+
         if parsed.path == "/knowledge":
             self._send(200, render_knowledge(
                 session["identity"], session["role"], flash,

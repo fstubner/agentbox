@@ -59,6 +59,7 @@ def chrome(identity: str, role: str, origin: str, active: str,
 
     nav_items = [
         ("/", "Inbox", _icon("ICON_INBOX"), inbox_badge, active in ("/", "/inbox")),
+        ("/tasks", "Tasks", _icon("ICON_TASKS"), "", active in ("/tasks", "/projects")),
         ("/knowledge", "Knowledge Base", _icon("ICON_KNOWLEDGE"), "", active == "/knowledge"),
         ("/capabilities", "Capabilities", _icon("ICON_CAPABILITIES"), "",
          active in ("/capabilities", "/connectors", "/skills")),
@@ -269,7 +270,7 @@ def render_home(identity: str, role: str, flash: str,
 
     parts.append("<footer>Only you can approve a memory in your own private "
                  "scope — not the assistant, and not the household admin."
-                 " &middot; <a href='/logout'>Sign out</a></footer>")
+                 "</footer>")
     return page(f"{identity} — Agentbox",
                 chrome(identity, role, origin, "/", "".join(parts)))
 
@@ -336,7 +337,7 @@ def render_knowledge(identity: str, role: str, flash: str,
             "<button class=danger onclick=\"return confirm('Permanently forget this memory?');\">"
             "Forget this</button></form></div>")
 
-    parts.append("<footer><a href='/logout'>Sign out</a></footer>")
+    # footer signout removed
     return page("Knowledge Base — Agentbox",
                 chrome(identity, role, origin, "/knowledge", "".join(parts)))
 
