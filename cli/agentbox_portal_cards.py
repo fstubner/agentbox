@@ -146,7 +146,8 @@ def render_proposals_card() -> str:
         buttons = (
             f"<form method=post action=/admin/proposal style='margin:0'>"
             f"<input type=hidden name=id value='{html.escape(str(draft['id']))}'>"
-            f"<button type=submit name=action value=discard>Discard</button>"
+            "<button type=submit class=danger name=action value=discard "
+            "onclick=\"return confirm('Discard this proposal branch?');\">Discard</button>"
             + ("" if (collides or not ways) else
                "<button type=submit name=action value=send>Send it</button>")
             + "</form>")

@@ -45,11 +45,12 @@ STYLE = """
       margin-right:.4rem}
  .dot.on{background:#1a7f37}.dot.off{background:#b9c0c9}
 
- body{font:16px/1.55 system-ui,sans-serif;max-width:38rem;margin:0 auto;
-      padding:2rem 1.25rem;color:#1a1a1a}
- h1{font-size:1.4rem;margin:0 0 .2rem}
- .sub{color:#666;margin:0 0 1.75rem}
- .card{border:1px solid #ddd;border-radius:.5rem;padding:1rem;margin:0 0 .75rem}
+ .app-switch{display:flex;align-items:center;gap:.35rem;margin-left:1.2rem}
+ .app-switch a{font-size:.78rem;color:#5b6470;text-decoration:none;padding:.15rem .45rem;
+               border-radius:.3rem;background:#f0f2f5;border:1px solid #e3e6ea}
+ .app-switch a:hover{background:#e2e6eb;color:#1a1d21}
+ button.danger{color:#cf222e;border-color:#d0d7de;background:#fff}
+ button.danger:hover{background:#cf222e;color:#fff;border-color:#cf222e}
  .scope{display:inline-block;font-size:.75rem;background:#eef;color:#334;
         border-radius:.25rem;padding:.1rem .4rem;margin-bottom:.4rem}
  .stmt{margin:0 0 .75rem}
@@ -100,8 +101,16 @@ def chrome(identity: str, role: str, origin: str, active: str,
         badge = "<span class=badge>assistant link</span>"
     elif role == _portal.ADMIN:
         badge = "<span class=badge>admin</span>"
+    app_nav = (
+        "<nav class=app-switch aria-label='Other interfaces'>"
+        "<a href='http://127.0.0.1:4321' title='Control Plane Lab'>Control Plane</a>"
+        "<a href='http://192.0.2.10:3456' target=_blank title='Tasks (Vikunja)'>Tasks</a>"
+        "<a href='http://192.0.2.10:8123' target=_blank title='Home Assistant'>Home</a>"
+        "</nav>"
+    )
     return (f"<header class=top><div class=shell>"
-            f"<span class=brand>Agentbox</span>"
+            f"<span class=brand><a href='/' style='text-decoration:none;color:inherit'>Agentbox</a></span>"
+            f"{app_nav}"
             f"<span class=who>{html.escape(identity)}{badge}</span>"
             f"</div></header><div class=shell>"
             f"<nav class=tabs>{rendered}</nav>{body}</div>")
@@ -247,7 +256,8 @@ def render_home(identity: str, role: str, flash: str,
             f"<button name=verb value=feedback>"
             f"{'Not a memory — file as feedback' if is_feedback else 'Not a memory — file as feedback'}"
             f"</button>"
-            f"<button name=verb value=reject>Forget it</button>"
+            "<button class=danger name=verb value=reject "
+            "onclick=\"return confirm('Forget this memory proposal?');\">Forget it</button>"
             f"</form></div>")
     try:
         current, history = _portal.stored_memories(identity, role)
@@ -276,7 +286,8 @@ def render_home(identity: str, role: str, flash: str,
                 f"{chain}"
                 f"<form method=post action=/memory/forget>"
                 f"<input type=hidden name=id value='{html.escape(str(item.get('id')))}'>"
-                f"<button>Forget this</button></form></div>")
+                "<button class=danger "
+                "onclick=\"return confirm('Permanently forget this memory?');\">Forget this</button></form></div>")
 
     parts.append("<footer>Only you can approve a memory in your own private "
                  "scope \u2014 not the assistant, and not the household admin."
@@ -334,7 +345,8 @@ def render_connectors(identity: str, role: str, flash: str,
             f"<button class=yes name=action value=reconnect>"
             f"{'Reconnect or switch account' if connector['connected'] else 'Connect'}"
             f"</button>"
-            + ("<button name=action value=disconnect>Disconnect</button>"
+            + ("<button class=danger name=action value=disconnect "
+               "onclick=\"return confirm('Disconnect this service?');\">Disconnect</button>"
                if connector["connected"] else "")
             + "</form></div>")
 
@@ -346,7 +358,8 @@ def render_connectors(identity: str, role: str, flash: str,
         body = ("<p class=sub style='margin:.3rem 0 .8rem'>Connected "
                 "\u2014 sign-in links come to you on Discord.</p>"
                 "<form method=post action=/chat/unlink style='display:inline'>"
-                "<button>Disconnect Discord</button></form>")
+                "<button class=danger "
+                "onclick=\"return confirm('Disconnect Discord identity?');\">Disconnect Discord</button></form>")
     elif pending:
         body = (f"<p class=sub style='margin:.3rem 0 .6rem'>Send this to the "
                 f"Agentbox bot on Discord, as a direct message:</p>"
