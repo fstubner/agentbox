@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -79,15 +80,26 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
             ["sudo", "-n", "-u", "agentbox", "test", "-f", str(hermes_db)],
             capture_output=True).returncode == 0)
     if can_read:
-        proc_h = subprocess.run(
-            ["sudo", "-n", "python3", "-c",
-             f"import sqlite3; s=sqlite3.connect('{hermes_db}'); d=sqlite3.connect('{hermes_dst}'); "
-             f"s.backup(d); s.close(); d.close()"],
-            capture_output=True, text=True)
-        if proc_h.returncode == 0:
-            subprocess.run(["sudo", "-n", "chown", f"{os.getuid()}:{os.getgid()}", str(hermes_dst)], check=False)
-        else:
-            _rep("WARN", f"hermes state.db backup failed: {proc_h.stderr.strip()[:120]}")
+        backed_up = False
+        try:
+            s = sqlite3.connect(f"file:{hermes_db}?mode=ro", uri=True)
+            d = sqlite3.connect(str(hermes_dst))
+            s.backup(d)
+            s.close()
+            d.close()
+            backed_up = True
+        except (sqlite3.Error, PermissionError, OSError):
+            pass
+        if not backed_up:
+            proc_h = subprocess.run(
+                ["sudo", "-n", "python3", "-c",
+                 f"import sqlite3; s=sqlite3.connect('{hermes_db}'); d=sqlite3.connect('{hermes_dst}'); "
+                 f"s.backup(d); s.close(); d.close()"],
+                capture_output=True, text=True)
+            if proc_h.returncode == 0:
+                subprocess.run(["sudo", "-n", "chown", f"{os.getuid()}:{os.getgid()}", str(hermes_dst)], check=False)
+            else:
+                _rep("WARN", f"hermes state.db backup failed: {proc_h.stderr.strip()[:120]}")
     else:
         _rep("WARN", f"hermes state.db not found at {hermes_db}")
 
