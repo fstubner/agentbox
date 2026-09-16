@@ -47,10 +47,10 @@ def render_people_card(flash_error: str = "") -> str:
         rows.append(
             f"<div class=row><span class='dot {level}'></span>"
             f"<span class=name>{html.escape(identity)}{role}"
-            f"<div class=sub style='margin:0'>{detail}{google}</div></span></div>")
+            f"<div class='sub sub-zero'>{detail}{google}</div></span></div>")
 
     if not rows:
-        rows.append("<p class=sub style='margin:0'>Nobody is configured yet.</p>")
+        rows.append("<p class='sub sub-zero'>Nobody is configured yet.</p>")
 
     error = (f"<div class=flash style='margin:.35rem 0 .2rem'>"
              f"{html.escape(flash_error)}</div>" if flash_error else "")
@@ -66,9 +66,9 @@ def render_people_card(flash_error: str = "") -> str:
         f"here for you to pass on — it is single use and expires.</p>"
         f"<form method=post action=/admin/invite>"
         f"<input name=name placeholder='name, e.g. sam' autocomplete=off "
-        f"style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"class=inline-input>"
         f"<input name=email type=email placeholder='email (optional)' "
-        f"autocomplete=off style='padding:.4rem .5rem;margin:0 .4rem .4rem 0'>"
+        f"autocomplete=off class=inline-input>"
         f"<button class=yes>Invite</button></form>{error}</div></div>")
 
 
@@ -94,7 +94,7 @@ def _field(setting, value: str, error: str) -> str:
         f"padding:.4rem .5rem'>"
         + (f"<span class=sub>{html.escape(setting.hint)}</span>"
            f"<details style='margin:.15rem 0 0'>"
-           f"<summary class=sub style='cursor:pointer;font-size:.8rem'>Why"
+           f"<summary class=sub class=summary-hint>Why"
            f"</summary>"
            f"<div class=sub style='margin:.25rem 0 0'>"
            f"{html.escape(setting.help)}</div></details>"

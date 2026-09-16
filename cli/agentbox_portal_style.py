@@ -298,6 +298,11 @@ STYLE = """
   .form-group { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.85rem; }
   .field-input { width: 100%; padding: 0.6rem 0.8rem; font-size: 0.92rem; border-radius: 6px; }
   .item-row { display: flex; align-items: center; gap: 0.6rem; }
+  .sub-zero { margin: 0; }
+  .inline-input { padding: 0.4rem 0.5rem; margin: 0 0.4rem 0.4rem 0; font-size: 0.9rem; border-radius: 4px; }
+  .full-input { display: block; width: 100%; margin: 0.35rem 0 0.2rem; }
+  .summary-hint { cursor: pointer; font-size: 0.8rem; color: var(--muted); }
+  .divider-top { margin: 0.8rem 0 0; padding-top: 0.7rem; border-top: 1px solid var(--border); }
 """
 
 ICON_BRAND = (
