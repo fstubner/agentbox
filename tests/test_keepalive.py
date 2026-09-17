@@ -130,24 +130,21 @@ def test_it_restores_units_an_abandoned_run_left_down(ka, monkeypatch):
 
 
 def test_it_starts_only_what_is_actually_down(ka, monkeypatch):
-    states = ["active", "inactive", "active", "active", "inactive", "active"]
+    states = ["active", "inactive"]
     fake = Fake(pgrep=(1, ""),
                 **{"is-active": (3, "\n".join(states) + "\n")})
     monkeypatch.setattr(ka, "evaluation_running", lambda: False)
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 0
-    assert fake.started()[0][3:] == ["fastcontext-worker.service",
-                                     "agentbox-router.service"]
+    assert fake.started()[0][3:] == ["nemohermes-docker-bridge.service"]
 
 
 def test_models_are_started_before_the_router_that_needs_them(ka):
-    """A router answering for workers that are not up yet is a worse state
+    """The bridge answering for a model that is not up yet is a worse state
     than one that is plainly down."""
     units = list(ka.PRODUCTION_UNITS)
     assert units.index("agentbox-production-model.service") < units.index(
-        "agentbox-router.service")
-    assert units.index("vibethinker-worker.service") < units.index(
-        "agentbox-router.service")
+        "nemohermes-docker-bridge.service")
 
 
 def test_a_failed_restore_is_reported_not_swallowed(ka, monkeypatch):

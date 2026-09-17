@@ -57,8 +57,10 @@ def _parse_skill(skill_dir: Path, origin: str) -> dict[str, Any] | None:
 def load_all_skills() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     def _scan(p: Path, o: str) -> list[dict[str, Any]]:
         return [s for d in sorted(p.iterdir()) if d.is_dir() and (s := _parse_skill(d, o))] if p.is_dir() else []
-    personal = _scan(Path("/home/alex/oss/agentbox-personal/skills"), "personal")
-    platform = _scan(Path("/home/alex/oss/agentbox/skills"), "platform")
+    base = Path(__file__).resolve().parent.parent
+    personal_root = Path(os.environ.get("AGENTBOX_PERSONAL_PATH", Path.home() / "oss" / "agentbox-personal"))
+    personal = _scan(personal_root / "skills", "personal")
+    platform = _scan(base / "skills", "platform")
     return personal, platform
 
 
