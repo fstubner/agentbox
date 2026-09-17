@@ -87,3 +87,29 @@ Within a single home instance:
    - Admin (Parents): full access to portal, settings, skill configuration, and unrestricted tool execution.
    - Standard (Family members): interactive tasks, inbox messaging, calendar events.
    - Restricted (Children/Guests): write proposals require Admin approval before committing to Vikunja or state databases.
+
+
+---
+
+## 5. Automated Remote Tunneling & Appliance Network Topology
+
+### The Friction in Home Network Access
+Non-technical household users cannot configure router port-forwarding, navigate carrier-grade NAT (CGNAT), or safely manage dynamic IP updates. A mobile family member at the supermarket requires seamless, secure access to `https://<family>.agentbox.app` without exposing the local network.
+
+### Outbound Reverse Tunnel Architecture
+```
+[Mobile Phone / Remote Client]
+       │
+       ▼ (HTTPS :443)
+[Agentbox Cloud Gateway Cluster (*.agentbox.app)]
+       │ (Wildcard TLS Termination + Token Check)
+       ▼ (Encrypted WireGuard / Egress WebSocket Tunnel)
+[Local Agentbox Tunnel Container (services/compose/tunnel)]
+       │
+       ▼ (Loopback HTTP :8771)
+[Agentbox Portal]
+```
+
+1. **Zero-Configuration Handshake:** Upon box registration with a household subscription token, the local appliance provisions an ephemeral WireGuard keypair and initiates an outbound connection to `relay.agentbox.app`.
+2. **Strict Invariant:** No inbound ports on the home router are ever opened. The connection is egress-only.
+3. **Session Authentication:** The cloud gateway terminates TLS at the edge, while all application sessions and identity nonces are negotiated directly with the local `agentbox-portal` daemon.

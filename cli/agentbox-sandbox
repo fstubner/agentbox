@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run an agent process sandboxed with Bubblewrap (bwrap) so it cannot read ~/.config
+# Run an agent process sandboxed with Bubblewrap (bwrap) so it cannot read ~/.config, ~/.ssh, ~/.gnupg, ~/.aws
 if ! command -v bwrap >/dev/null 2>&1; then
     echo "[warn] bwrap not found in PATH; running without bubblewrap sandbox" >&2
     exec "$@"
@@ -7,12 +7,15 @@ fi
 
 STATE_DIR="${AGENT_CONTROL_PLANE_STATE_DIR:-$HOME/.local/state/agentbox}"
 
-exec bwrap \
-    --ro-bind / / \
-    --dev /dev \
-    --proc /proc \
-    --tmpfs /tmp \
-    --tmpfs "$HOME/.config" \
+BWRAP_ARGS="--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp"
+for dir in "$HOME/.config" "$HOME/.ssh" "$HOME/.gnupg" "$HOME/.aws"; do
+    if [ -d "$dir" ]; then
+        BWRAP_ARGS="$BWRAP_ARGS --tmpfs $dir"
+    fi
+done
+
+# shellcheck disable=SC2086
+exec bwrap $BWRAP_ARGS \
     --bind "$STATE_DIR" "$STATE_DIR" \
     --chdir "$PWD" \
     -- "$@"

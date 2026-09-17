@@ -152,3 +152,22 @@ def test_each_role_forwards_the_instruction(stack, monkeypatch):
         captured.clear()
         handler({"text": "the email body", "instruction": marker})
         assert marker in captured["user"], handler.__name__
+
+
+def test_token_authentication_enforced(stack, monkeypatch):
+    base, mod = stack
+    monkeypatch.setattr(mod, "ROUTER_TOKEN", "secret-token-123")
+    try:
+        _post(base, "/context/extract", {"text": "hello"})
+        raise AssertionError("expected 401")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 401
+        assert json.loads(exc.read()) == {"error": "unauthorized"}
+
+    req = urllib.request.Request(
+        base + "/context/extract",
+        data=json.dumps({"text": "hello"}).encode(),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer secret-token-123"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 200

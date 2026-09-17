@@ -27,6 +27,7 @@ REASON_MODEL = os.environ.get("AGENTBOX_REASON_MODEL", "vibethinker-worker")
 
 KEY_FILE = os.environ.get("AGENTBOX_LLAMA_KEY_FILE", os.path.expanduser("~/.config/llama-server/api_key.txt"))
 TIMEOUT_SECONDS = float(os.environ.get("AGENTBOX_ROUTER_TIMEOUT_SECONDS", "600"))
+ROUTER_TOKEN = os.environ.get("AGENTBOX_ROUTER_TOKEN", "").strip()
 
 
 def read_key() -> str:
@@ -189,6 +190,11 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"ok": all(v["ok"] for v in checks.values()), "checks": checks})
 
     def do_POST(self) -> None:
+        if ROUTER_TOKEN:
+            auth = self.headers.get("Authorization", "").strip()
+            if auth != f"Bearer {ROUTER_TOKEN}":
+                self._send(401, {"error": "unauthorized"})
+                return
         handler = ROUTES.get(self.path)
         if handler is None:
             self._send(404, {"error": "not_found", "routes": sorted(ROUTES)})

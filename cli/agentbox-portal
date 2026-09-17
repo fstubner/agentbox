@@ -1180,7 +1180,7 @@ def delivery_channels(identity: str, address: str) -> list[str]:
     would take.
     """
     channels = []
-    if SETTINGS.value("smtp_host") and address:
+    if (SETTINGS.value("smtp_host") or os.environ.get("AGENTBOX_RELAY_URL")) and address:
         channels.append("email")
     if chat_account_for(identity):
         channels.append("discord")
@@ -1342,8 +1342,10 @@ agentbox_portal_engine = _sibling("agentbox_portal_engine")
 agentbox_portal_views = _sibling("agentbox_portal_views")
 agentbox_portal_cards = _sibling("agentbox_portal_cards")
 agentbox_portal_admin = _sibling("agentbox_portal_admin")
+agentbox_portal_calendar = _sibling("agentbox_portal_calendar")
 
 agentbox_portal_engine.bind(sys.modules[__name__])
+agentbox_portal_calendar.bind(sys.modules[__name__])
 agentbox_portal_views.bind(sys.modules[__name__])
 agentbox_portal_cards.bind(sys.modules[__name__])
 agentbox_portal_admin.bind(sys.modules[__name__])
@@ -1564,6 +1566,12 @@ class PortalHandler(BaseHTTPRequestHandler):
 
         if parsed.path in ("/tasks", "/projects"):
             self._send(200, agentbox_portal_engine.render_tasks(
+                session["identity"], session["role"], flash,
+                session.get("origin", ORIGIN_AGENT)))
+            return
+
+        if parsed.path in ("/calendar", "/schedule"):
+            self._send(200, agentbox_portal_calendar.render_calendar(
                 session["identity"], session["role"], flash,
                 session.get("origin", ORIGIN_AGENT)))
             return

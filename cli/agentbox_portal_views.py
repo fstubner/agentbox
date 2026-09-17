@@ -60,6 +60,7 @@ def chrome(identity: str, role: str, origin: str, active: str,
     nav_items = [
         ("/", "Inbox", _icon("ICON_INBOX"), inbox_badge, active in ("/", "/inbox")),
         ("/tasks", "Tasks", _icon("ICON_TASKS"), "", active in ("/tasks", "/projects")),
+        ("/calendar", "Calendar", _icon("ICON_CALENDAR"), "", active in ("/calendar", "/schedule")),
         ("/knowledge", "Knowledge Base", _icon("ICON_KNOWLEDGE"), "", active == "/knowledge"),
         ("/capabilities", "Capabilities", _icon("ICON_CAPABILITIES"), "",
          active in ("/capabilities", "/connectors", "/skills")),

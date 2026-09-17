@@ -1,0 +1,27 @@
+services:
+  agentbox-tunnel:
+    image: wireguard/wireguard:latest
+    container_name: agentbox-tunnel
+    # --- LAN EXPOSURE, DELIBERATE ---------------------------------------
+    # Reverse WireGuard tunnel connecting outbound to relay.agentbox.app.
+    # Uses host networking to bind loopback and routing interfaces without
+    # publishing inbound ports.
+    network_mode: host
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "Etc/UTC"
+    volumes:
+      - "${AGENTBOX_STATE_DIR:-${HOME}/.local/state/agentbox}/tunnel:/config"
+    cpus: "0.50"
+    mem_limit: 128m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    labels:
+      agentbox.service: agentbox-tunnel
+      agentbox.exposure: lan
+      agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
