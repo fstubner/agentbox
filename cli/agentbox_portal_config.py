@@ -8,12 +8,14 @@ from __future__ import annotations
 import os
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 # The portal that loaded this file, which registers it as "<portal>.<part>".
 portal = sys.modules[__name__.rpartition(".")[0]]
 
 __all__ = [
+    "service_url",
     "STATE",
     "LINK_TTL_SECONDS",
     "SESSION_TTL_SECONDS",
@@ -280,3 +282,10 @@ ROLE_CAPABILITIES = {
 
 def now() -> int:
     return int(time.time())
+
+
+def service_url(port: int) -> str:
+    """A link to another service on this box, on the host people already use
+    to reach the portal."""
+    host = urllib.parse.urlparse(PUBLIC_URL).hostname or "127.0.0.1"
+    return f"http://{host}:{port}"

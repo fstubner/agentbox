@@ -48,6 +48,8 @@ def test_service_status_is_probed_not_assumed():
 
 
 def test_links_use_the_portal_host_not_a_fixed_address():
-    source = code_of(ENGINE)
-    assert "PUBLIC_URL" in source
-    assert "http://192." not in source
+    cli = ENGINE.parent
+    for name in ("agentbox_portal_engine.py", "agentbox_portal_calendar.py"):
+        source = code_of(cli / name)
+        assert "service_url(" in source, name
+        assert "http://192." not in source and "agentbox.local:" not in source, name

@@ -65,7 +65,7 @@ def render_calendar(identity: str, role: str, flash: str = "",
         "<p class=sub style='margin:0'>Unified timeline of family commitments, "
         "deadlines, and scheduled tasks.</p></div>"
         "<div style='display:flex;gap:.5rem;align-items:center'>"
-        "<a href='http://agentbox.local:3456' target=_blank class='button' "
+        f"<a href='{html.escape(_portal.service_url(3456))}' target=_blank class='button' "
         "style='margin:0;display:inline-flex;align-items:center;gap:.4rem'>"
         "Vikunja Workspace &rarr;</a>"
         "<a href='https://calendar.google.com' target=_blank class='button' "

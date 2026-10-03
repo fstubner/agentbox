@@ -1,128 +1,126 @@
 ---
 name: adding-a-bridge
-description: Use when adding a new credential bridge to the Agentbox platform — a narrow HTTP service that holds an upstream API/OAuth credential and exposes an allowlisted API to the assistant. Trigger when the user wants to connect a new external service (a new SaaS API, device, or data source) that requires a secret the assistant must not see directly.
+description: Use when adding a new credential bridge to the Agentbox platform, a narrow HTTP service that holds an upstream API or OAuth credential and exposes an allowlisted API to the assistant. Trigger when the user wants to connect a new external service (a SaaS API, a device, or a data source) that needs a secret the assistant must not see.
 ---
 
-# Adding a Bridge
+# Adding a bridge
 
-A bridge isolates a credential: the assistant calls the bridge with a *bridge
-token*; the bridge calls the upstream service with the real credential and
-returns only allowlisted results. New bridges must reuse the shared base so
-they inherit fail-closed auth — a past bug shipped a bridge that accepted an
-empty token because auth was hand-rolled.
+A bridge keeps a credential away from the assistant. agentbox-mcp calls the
+bridge with a bridge token, and the bridge calls the upstream service with the
+real credential and returns only what it allows. Every bridge uses the shared
+base so it gets auth that fails closed. A hand-written check once accepted an
+empty token.
 
 ## Steps
 
 1. **Scaffold it.** `cli/agentbox scaffold <name>` generates the service with
-   the guardrails already in place, runs `validate`, and commits to a branch.
-   It never deploys and never merges.
+   the guardrails in place, runs `validate` and commits to a branch. It never
+   deploys or merges.
 
-2. **Do NOT edit `services/templates/bridge/app/bridge_base.py`.** It provides
+2. **Leave `services/templates/bridge/app/bridge_base.py` alone.** It provides
    auth, error handling, body limits, health, readiness, request logging,
-   policy enforcement, and the server loop.
+   policy enforcement and the server loop. Every bridge's Dockerfile copies it
+   at build time, so there is one copy. Changing it changes every bridge, and
+   `doctor` marks them all stale until they are redeployed.
 
-   It is not copied into your service. The build context is the repo root, so
-   the Dockerfile copies the shared source directly — there is exactly one
-   bridge_base.py and nothing to keep in sync. Changing it changes every
-   bridge, which is the point; `source_sha` reads the Dockerfile's COPY lines,
-   so `doctor` marks every affected service stale.
-
-3. **Write `app/bridge.py`** — the only file you author:
-   - Read two secrets from env: the upstream credential and `*_BRIDGE_TOKEN`.
-   - Write one function per route: `def route(handler, body) -> (status, payload)`.
-     Raise `BridgeError(status, msg)` for expected failures; return only the
-     safe subset of the upstream response.
-   - Subclass `BridgeHandler`, set `bridge_token` and `routes`.
+3. **Write `app/bridge.py`**, the only file you author.
+   - Read two secrets from the environment, the upstream credential and
+     `*_BRIDGE_TOKEN`.
+   - Write one function per route, `def route(handler, body) -> (status,
+     payload)`. Raise `BridgeError(status, msg)` for expected failures, and
+     return only the safe part of the upstream response.
+   - Subclass `BridgeHandler` and set `bridge_token` and `routes`.
    - **Override `capability_for()` for anything gated.** Return the policy
-     capability a request exercises, or None. The MCP gates tool calls too, but
-     the MCP holds your bridge token — a gate in the same process as the
-     credential falls with it. Yours is the authoritative check.
-   - **If your bridge fronts a service you run** (rather than a remote SaaS
-     API), override `upstream_status()` to probe it. Return
-     `{"ok": bool, "upstream": {...}}`. This is what makes `/ready` meaningful.
-     Do not add the upstream to `/health` — see below.
+     capability a request uses, or None. agentbox-mcp checks tool calls too,
+     but it also holds your bridge token, so the bridge's check is the one
+     that counts.
+   - **If the bridge fronts a service you run**, override `upstream_status()`
+     to probe it and return `{"ok": bool, "upstream": {...}}`. That is what
+     makes `/ready` meaningful. Never add the upstream to `/health`.
    - Consider a `view` parameter on list endpoints that return many objects.
-     Emitting only the fields the agent acts on is the cheapest context saving
-     available, because the tokens are never generated. See `vikunja-bridge`
-     for the pattern.
+     Returning only the fields the assistant acts on is the cheapest context
+     saving there is. `vikunja-bridge` shows the pattern.
 
-   Four surface rules, all learned from getting them wrong here:
+   Four rules for the API, each learned by getting it wrong.
 
-   - **Every list endpoint takes a bound.** Use `resolve_limit` from
-     `bridge_base`. An unbounded list is a context problem before it is a
-     performance one — the caller cannot know how much of its window a call
-     will spend.
-   - **Creates are idempotent where the domain allows it.** A retried call must
-     not leave a second copy behind. Return the existing object instead
-     (`create_gmail_label` by name, `propose_memory` by statement) or offer a
-     `find_or_create_*` variant where the backing store has no natural key.
-   - **Constrain writes symmetrically.** If creating an object forces a
-     namespace, applying or referencing one must enforce the same namespace.
-     Gmail label create was prefixed while label apply was not, which made the
-     prefix decorative.
-   - **Tools are primitives, not workflows.** If a tool is another tool plus a
-     fixed argument, do not ship it — the agent can compose. Two vikunja tools
-     were `add_task_comment` and `list_tasks` with a canned string, and a Gmail
-     tool was `search` with a hardcoded vendor query. Workflow belongs in a
-     skill or prompt, where it can change without an API change.
+   - **Every list endpoint takes a limit.** Use `resolve_limit` from
+     `bridge_base`. Without one the caller cannot know how much of the model's
+     context a call will use.
+   - **Creating is idempotent where the domain allows.** A retried call must
+     not leave a second copy. Return the existing object, as
+     `create_gmail_label` does by name and `propose_memory` by statement, or
+     offer a `find_or_create_*` variant.
+   - **Constrain writes the same way in every direction.** If creating
+     something forces a namespace, applying or referencing it must enforce the
+     same namespace, or the namespace means nothing.
+   - **Tools are building blocks, not workflows.** A tool that is another tool
+     plus a fixed argument should not exist. Workflow belongs in a skill or
+     prompt, where it can change without an API change.
 
-   Never encode policy in a tool description. "Do not use without approval" is
-   documentation; the assistant is free to ignore it. Enforce it in the bridge
-   or do not claim it.
+   Never put policy in a tool description. "Do not use without approval" is
+   only documentation, and the assistant can ignore it. Enforce it in the
+   bridge or do not claim it.
 
-4. **Know which probe is which.** `/health` is liveness and must never touch
-   the upstream — the container healthcheck uses it, and a bridge that
-   restart-loops because its backing service is down is strictly worse than
-   one that stays up and reports honestly. `/ready` is readiness and does probe
-   the upstream. A downed backing service should turn `/ready` red and leave
-   `/health` green.
+4. **Know which probe is which.** `/health` says whether the process answers
+   and never touches the upstream, because the container healthcheck uses it.
+   A bridge that restart-loops when its backing service is down is worse than
+   one that stays up and reports it. `/ready` does probe the upstream. A
+   stopped backing service should turn `/ready` red and leave `/health` green.
 
-5. **Rename the env vars** in `compose.yaml` and `*.env.example` to match your
-   service. Keep the `:?` guards so a missing secret fails the deploy loudly.
-   Keep the host port bound to `127.0.0.1` (or an explicit LAN IP).
+5. **Check the compose file and env example.** Keep the `:?` guards so a
+   missing secret fails the deploy loudly. The scaffold publishes a port on
+   `127.0.0.1` with the label `agentbox.exposure: operator`, so the bridge can
+   be tested on its own during review. Remove that `ports` block and set the
+   label to `private` once the bridge is wired into agentbox-mcp. A bridge
+   with a host port lets any local process use a stolen bridge token.
 
-6. **Add the token to the deny-by-default policy if the bridge can mutate
-   state.** A read-only bridge is `approval_required` at most; a bridge that
-   sends/deletes/pays belongs in `always_denied` unless explicitly gated.
-   Update `policies/approval-policy.yaml`.
+6. **Map capabilities in `policies/approval-policy.yaml`.** Reads are usually
+   `allowed`. Anything that changes state needs a deliberate tier, and
+   anything that sends, deletes or pays belongs in `always_denied` unless a
+   bridge constrains it. A tool with no mapping fails closed.
 
-7. **Register the bridge with the assistant** as an MCP lever (a matching
-   `*-mcp` service), not by giving the assistant the bridge URL directly, if
-   the assistant needs to call it.
+7. **Wire it into agentbox-mcp.**
+   - Add an integration module in
+     `services/compose/agentbox-mcp/app/integrations/` exporting `TOOLS` and
+     `dispatch(name, args)`, and add it to `INTEGRATIONS` in `server.py`.
+   - Add `<PREFIX>_BRIDGE_URL` and `<PREFIX>_BRIDGE_TOKEN` to the agentbox-mcp
+     compose file and env example.
+   - Join the bridge's compose network (`<name>-bridge_default`) in the
+     agentbox-mcp compose file.
+   - Add the bridge to the readiness list in `server.py`, so agentbox-mcp's
+     `/ready`, and therefore `doctor`, reports it.
 
-8. **Add it to `doctor`.** A service nothing checks is a service that can be
-   down for hours without anyone noticing — that has already happened once.
-   Put the port in `BRIDGE_READY_PORTS` in `cli/agentbox` if it has an
-   upstream, and in `ENDPOINTS` otherwise.
+8. **Check before deploying.**
+   - The scaffolded test, `python3 -m pytest tests/test_<name>_bridge.py`.
+   - `cli/agentbox validate`, which covers bindings, resource limits, non-root
+     and tool mapping.
+   - While the review port exists, `curl -s localhost:<port>/health` gives 200,
+     and a route without a token gives 401.
+   - Once wired in, `curl -s localhost:3465/ready` names the bridge.
+   - If you implemented `upstream_status()`, stop the backing service and
+     confirm `/health` stays 200 while `/ready` fails and
+     `cli/agentbox doctor` exits non-zero. A readiness check nobody has seen
+     fail may not work.
 
-9. **Verify before deploy:**
-   - `python3 -m pytest services/compose/<name>-bridge` (copy the base test).
-   - `cli/agentbox validate` (bindings, resource limits, non-root, tool mapping).
-   - `curl -s localhost:<port>/health` → 200; the same route without a token → 401.
-   - `curl -s localhost:<port>/ready` → 200 with the upstream up.
-   - **Run the outage drill if you implemented `upstream_status()`:** stop the
-     backing service, confirm `/health` stays 200 while `/ready` returns 503
-     and `cli/agentbox doctor` exits non-zero, then restart it. A readiness
-     check nobody has seen fail is a readiness check that may not work — the
-     first version of this one silently downgraded a real outage to a warning.
+9. **Deploy** with `cli/agentbox deploy <name>-bridge`, then
+   `cli/agentbox deploy agentbox-mcp`.
 
-10. **Deploy:** `cli/agentbox deploy <name>-bridge`.
+## Checklist
 
-## Checklist (all enforced by base/template/validate — confirm you didn't undo them)
-
-- [ ] `bridge_base.py` unchanged (there is only one; it is not vendored)
-- [ ] upstream credential and bridge token are distinct env vars
-- [ ] every mutating route validates its input and returns only allowlisted fields
-- [ ] host port bound to loopback/LAN, never `0.0.0.0` on the host
-- [ ] policy entry added for any state-changing capability
+- [ ] `bridge_base.py` unchanged
+- [ ] the upstream credential and the bridge token are separate variables
+- [ ] every route that changes state validates its input and returns only
+      allowlisted fields
+- [ ] no host port once integrated, and the label says `private`
+- [ ] a policy mapping for every tool
 - [ ] `upstream_status()` implemented if the bridge fronts a service you run
-- [ ] `/health` does **not** touch the upstream
+- [ ] `/health` does not touch the upstream
 - [ ] `capability_for()` returns a capability for every gated route
-- [ ] every list endpoint takes a bound via `resolve_limit`
-- [ ] creates are idempotent, or a `find_or_create_*` variant exists
-- [ ] write constraints are symmetric between create and apply
+- [ ] every list endpoint takes a limit through `resolve_limit`
+- [ ] creating is idempotent, or a `find_or_create_*` variant exists
+- [ ] write constraints match between creating and applying
 - [ ] no tool is another tool plus a fixed argument
 - [ ] no tool description states a rule the code does not enforce
-- [ ] registered in `doctor` so an outage is visible
-- [ ] no secret, request body, or free-text query param reaches the request log
-- [ ] tests + `validate` pass
+- [ ] the bridge is in agentbox-mcp's readiness list
+- [ ] no secret, request body or free-text query parameter reaches the log
+- [ ] tests and `validate` pass

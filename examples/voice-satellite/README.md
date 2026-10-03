@@ -1,7 +1,7 @@
 # Voice satellite (reference client)
 
-A Raspberry Pi in a room that you can talk to. Records, transcribes locally,
-sends **text** to Agentbox, speaks the reply locally.
+A Raspberry Pi in a room that you can talk to. It records, transcribes
+locally, sends text to Agentbox, and speaks the reply locally.
 
 ```
   ┌─ Pi in the kitchen ──────────────────┐
@@ -12,15 +12,16 @@ sends **text** to Agentbox, speaks the reply locally.
   └──────────────────────────────────────┘        └────────────────┘
 ```
 
-**Audio never leaves the satellite.** Only text crosses the network. That is
-the point of putting the two small models on the Pi rather than streaming
-microphone audio to the main box: a Pi cannot run a 30B-class model, but
-Whisper and Piper are well within it — and a device that never transmits audio
-cannot leak a live microphone.
+Audio never leaves the satellite, and only text crosses the network. A Pi
+cannot run the main model, but it can run Whisper and Piper, and a device that
+never sends audio cannot leak a live microphone.
 
-## Status: the client is complete, the server endpoint is not
+This is a different route from the one in `docs/voice.md`, which goes through
+Home Assistant's Assist pipeline. This client talks to Agentbox directly.
 
-This client is written against a contract Agentbox does not serve yet:
+## Status
+
+The client is finished. The server endpoint it needs does not exist yet.
 
 ```
 POST {AGENTBOX_URL}/v1/say
@@ -30,12 +31,12 @@ Authorization: Bearer <token>
 200 {"reply": "You have two things..."}
 ```
 
-`hermes webhook` accepts a POST and runs the agent, but delivers the reply to
-Discord rather than returning it — so a satellite cannot speak the answer. The
-missing piece is a small synchronous endpoint; see `docs/roadmap.md`.
+The gateway's webhook runs the agent but delivers the reply to Discord rather
+than returning it, so a satellite could not speak the answer. What is missing
+is a small endpoint that answers directly (`docs/roadmap.md`).
 
-`--dry-run` runs the entire audio loop against a canned reply, so you can set
-up and validate a Pi today and point it at the real endpoint later.
+`--dry-run` runs the whole audio loop against a canned reply, so a Pi can be
+set up and checked now and pointed at the real endpoint later.
 
 ## Setup
 
@@ -55,8 +56,8 @@ Check the speaker, then the microphone:
 ./satellite.py --dry-run
 ```
 
-Speak; it should print what it heard and read it back. If it never triggers,
-lower `SATELLITE_SILENCE_RMS`; if it triggers on room noise, raise it.
+Speak, and it should print what it heard and read it back. If it never
+triggers, lower `SATELLITE_SILENCE_RMS`. If room noise triggers it, raise it.
 
 Then point it at the box:
 
@@ -71,11 +72,11 @@ AGENTBOX_SATELLITE_TOKEN=... \
 | Variable | Default | |
 |---|---|---|
 | `AGENTBOX_URL` | `http://127.0.0.1:8770` | where the assistant lives |
-| `AGENTBOX_SATELLITE_TOKEN` | — | bearer token; unauthenticated requests should be refused |
+| `AGENTBOX_SATELLITE_TOKEN` | | bearer token, and requests without it should be refused |
 | `SATELLITE_NAME` | `satellite` | which room, sent with every request |
 | `SATELLITE_WHISPER_MODEL` | `base.en` | `tiny.en` on a Pi 4 if `base.en` drags |
 | `SATELLITE_PIPER_VOICE` | `~/piper-voices/en_US-lessac-medium.onnx` | |
-| `SATELLITE_SILENCE_RMS` | `0.012` | speech threshold; tune per room |
+| `SATELLITE_SILENCE_RMS` | `0.012` | speech threshold, tuned per room |
 | `SATELLITE_SILENCE_HANG` | `1.2` | seconds of quiet that end an utterance |
 
 ## Running it as a service
@@ -99,26 +100,23 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-## What this deliberately does not do
+## What it does not do
 
-- **No wake word.** It opens the microphone on any sound above a threshold,
-  which is fine for a demo and wrong for an always-on device — you want
-  openWakeWord or a ReSpeaker HAT with on-board detection so the Pi ignores
-  everything until it hears its name.
-- **No echo cancellation.** It can hear its own speaker. Use a HAT with AEC, or
-  keep the mic and speaker apart.
-- **No barge-in.** You cannot interrupt it mid-sentence.
+- **No wake word.** It listens on any sound above a threshold, which is fine
+  for a demo and wrong for an always-on device. openWakeWord, or a ReSpeaker
+  HAT with on-board detection, would make it wait for its name.
+- **No echo cancellation.** It can hear its own speaker. Use a HAT with echo
+  cancellation, or keep the microphone and speaker apart.
+- **No interrupting.** You cannot stop it mid-sentence.
 
-Those three are exactly what Home Assistant's Assist stack and the ESPHome
-voice firmware already solve. If you end up wanting more than one of these
-around the house, that is the direction to go — this file is a reference for
-how a client talks to Agentbox, not a product.
+Home Assistant's Assist stack and ESPHome voice firmware already solve all
+three, so for more than one device around the house, use those. This is a
+reference for how a client talks to Agentbox, not a product.
 
-## Two things to settle before this becomes real
+## Two questions to settle first
 
-- **Which room heard it.** `satellite` is sent on every request and the reply
-  has to come back to that device, or every answer plays everywhere at once.
-- **What a voice request may do.** A spoken request has no operator reading it
-  carefully first, so the Discord approval loop is a poor fit — a satellite
-  probably wants a narrower capability set rather than the same one with
-  approvals in front of it. Deciding that is a policy question, not a code one.
+- **Which room heard it.** `satellite` is sent with every request, and the
+  reply has to come back to that device, or every answer plays everywhere.
+- **What a spoken request may do.** Nobody reads a spoken request carefully
+  before it runs, so the Discord approval loop fits badly. A satellite should
+  get a narrower set of tools rather than the same set behind approvals.

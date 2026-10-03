@@ -8,7 +8,6 @@ import html
 import os
 import shutil
 import sqlite3
-import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -114,9 +113,7 @@ def render_capabilities(identity: str, role: str, flash: str = "",
 
     # 2. Smart Home & Household Services
     parts.append("<h2>Smart Home & Core Services</h2>")
-    # Links use the host people already reach the portal on, and each dot is a
-    # live probe rather than a claim.
-    host = urllib.parse.urlparse(_portal.PUBLIC_URL).hostname or "127.0.0.1"
+    # Each dot is a live probe rather than a claim.
     for title, blurb, port, health in (
             ("Vikunja Tasks & Projects", "Household shared task lists and todo items.",
              3456, "/api/v1/info"),
@@ -128,7 +125,7 @@ def render_capabilities(identity: str, role: str, flash: str = "",
             f"<p class=sub style='margin:.3rem 0 .7rem'>{blurb}</p>"
             f"<div class=row><span class='dot {'ok' if up else 'fail'}'></span>"
             f"<span class=name>{'Running' if up else 'Not answering'} on :{port}</span>"
-            f"<span class=when><a href='http://{html.escape(host)}:{port}' target=_blank>"
+            f"<span class=when><a href='{html.escape(_portal.service_url(port))}' target=_blank>"
             f"open web app</a></span></div></div>")
 
     # 3. Reasoning Skills
@@ -322,7 +319,7 @@ def render_tasks(identity: str, role: str, flash: str = "",
         "margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem'>"
         "<div><h1 style='margin:0 0 .25rem'>Projects & Tasks</h1>"
         "<p class=sub style='margin:0'>Household task lists, active projects, and todo tracking via Vikunja.</p></div>"
-        "<a href='http://agentbox.local:3456' target=_blank class='button yes' "
+        f"<a href='{html.escape(_portal.service_url(3456))}' target=_blank class='button yes' "
         "style='margin:0;font-weight:600;display:inline-flex;align-items:center;gap:.4rem'>"
         "Open Vikunja Workspace &rarr;</a></div>"
     )
