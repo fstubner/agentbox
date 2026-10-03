@@ -3,7 +3,7 @@
 ## Executive Summary
 This document provides an adversarial critique of the proposed optimization strategies for a self-hosted personal AI assistant running on a local 35B model. While the known cloud playbook (KV caching, speculative decoding, prefix reuse) offers incremental performance gains, the lead's hypothesis—that **amortization over a lifetime of use** is the correct paradigm shift—is directionally sound but fundamentally flawed in its specific mechanisms. 
 
-Below, we critique the three proposed mechanisms, steelman a radical fourth approach that leverages the "one user, own both ends" layout, and identify the core blind spot of the team's entire efficiency paradigm.
+Below, we critique the three proposed mechanisms, steelman a radical fourth approach that exploits the "one user, own both ends" layout, and identify the core blind spot of the team's entire efficiency paradigm.
 
 ---
 

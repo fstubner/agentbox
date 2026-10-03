@@ -94,7 +94,7 @@ Within a single home instance:
 ## 5. Automated Remote Tunneling & Appliance Network Topology
 
 ### The Friction in Home Network Access
-Non-technical household users cannot configure router port-forwarding, navigate carrier-grade NAT (CGNAT), or safely manage dynamic IP updates. A mobile family member at the supermarket requires seamless, secure access to `https://<family>.agentbox.app` without exposing the local network.
+Non-technical household users cannot configure router port-forwarding, navigate carrier-grade NAT (CGNAT), or safely manage dynamic IP updates. A mobile family member at the supermarket needs secure access, with nothing to configure, to `https://<family>.agentbox.app` without exposing the local network.
 
 ### Outbound Reverse Tunnel Architecture
 ```

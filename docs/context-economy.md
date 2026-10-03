@@ -28,7 +28,7 @@ therefore control*. Headroom compresses them after the fact (~34% on Cursor's
 JSON); we can elide them at the source (potentially 80-95%, losslessly, because
 the tokens are never generated).
 
-## Three mechanisms, in leverage order
+## Three mechanisms, in order of impact
 
 ### 1. Projection pushdown at the bridge (databases / GraphQL)
 
