@@ -12,7 +12,7 @@ services:
     #
     # The consequence, stated plainly: Home Assistant listens on 192.0.2.10
     # (and every other interface), so anyone on the LAN can reach its login
-    # page. That is normal for Home Assistant — you will want it from a phone —
+    # page. That is normal for Home Assistant, you will want it from a phone ,
     # but it is a real change in posture for this platform, and the
     # `agentbox.exposure: lan` label below is what `validate` requires before
     # allowing host networking at all.
@@ -34,7 +34,7 @@ services:
       # two days while discovering nothing at all.
       #
       # State the cost plainly. This is the system bus, not a private one, so
-      # the container can address other services on it — a wider grant than a
+      # the container can address other services on it, a wider grant than a
       # device mapping. It is here because there are real Bluetooth devices to
       # talk to; a deployment with none should delete these three lines and
       # disable the integration rather than carry the grant for nothing.
@@ -43,7 +43,7 @@ services:
       # this costs nothing and stops the container creating files in /run/dbus.
       - /run/dbus:/run/dbus:ro
     # The Zigbee radio, mapped by its stable by-id path rather than
-    # /dev/ttyUSB0 — the numbered name is assigned in probe order and will
+    # /dev/ttyUSB0, the numbered name is assigned in probe order and will
     # move the first time another serial device is plugged in, silently
     # pointing Home Assistant at the wrong hardware.
     #

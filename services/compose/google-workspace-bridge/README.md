@@ -24,8 +24,8 @@ credentials.
 - `POST /v1/calendar/events/create`
 
 Gmail modification is deliberately limited to marking read, archiving, and
-adding labels from the assistant's own `agentbox/` namespace — applying a
-label outside it is refused. Composing is limited to drafts; sending is not
+adding labels from the assistant's own `agentbox/` namespace. Applying a
+label outside it is refused. Composing is limited to drafts, and sending is not
 exposed. Calendar writes are limited to the configured assistant-owned calendar, and
 reject `attendees` and `conferenceData` with `sendUpdates=none`, so creating
 an event cannot notify anyone.
@@ -79,8 +79,8 @@ cli/agentbox deploy google-workspace-bridge
 cli/agentbox doctor
 ```
 
-Over SSH, forward the callback port first — the redirect lands on the server's
-loopback, not your workstation's:
+Over SSH, forward the callback port first, because the redirect lands on the
+server's loopback, not your workstation's.
 
 ```
 ssh -L 8899:127.0.0.1:8899 alex@<host>

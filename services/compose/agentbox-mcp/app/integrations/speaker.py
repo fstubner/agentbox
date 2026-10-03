@@ -24,13 +24,13 @@ SPEAKER_TOKEN = os.environ.get("AGENTBOX_SPEAKER_TOKEN", "")
 TOOLS = [
     {"name": "speak_aloud",
      "description": "Say something out loud on a household speaker. Use your "
-                    "own words — this is for telling someone in the room "
+                    "own words. This is for telling someone in the room "
                     "something, not for reading out a message or document you "
                     "received. Refused during quiet hours, and not queued for "
                     "later.",
      "inputSchema": schema_object({
          "text": {"type": "string",
-                  "description": "What to say, in your own words. Short — "
+                  "description": "What to say, in your own words. Short, because "
                                  "somebody is standing there listening."},
          "speaker": {"type": "string",
                      "description": "Which speaker, by name. Omit for the "

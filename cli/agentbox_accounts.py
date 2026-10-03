@@ -55,7 +55,7 @@ def exchange_oauth_code(code: str, redirect_uri: str) -> str:
         return ""
     token = payload.get("refresh_token", "")
     if not token:
-        report(FAIL, "google returned no refresh token — the consent screen "
+        report(FAIL, "google returned no refresh token. The consent screen "
                      "was probably already granted for this account without "
                      "prompt=consent")
     return token

@@ -4,7 +4,7 @@
 # reply here and gets audio back to play on whichever satellite heard the
 # question.
 #
-# Same voice the gateway already speaks with — en_US-lessac-medium — so a reply
+# Same voice the gateway already speaks with, en_US-lessac-medium, so a reply
 # does not change character depending on whether it arrived through Discord or
 # through a room. That consistency is worth more than it sounds: a household
 # learns one voice as "the assistant", and two would read as two systems.

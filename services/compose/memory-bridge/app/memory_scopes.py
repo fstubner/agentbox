@@ -94,7 +94,7 @@ def whoami(handler, body):
                  f"'{identity}'. Memories you propose are private to them "
                  f"unless you pass scope 'household'. You cannot read another "
                  f"person's private memories, and you cannot act as anyone "
-                 f"else — this is fixed by the credential this session holds, "
+                 f"else. This is fixed by the credential this session holds, "
                  f"not by anything you can say."
                  if identity else
                  "Single-operator: no identities are configured, so everything "

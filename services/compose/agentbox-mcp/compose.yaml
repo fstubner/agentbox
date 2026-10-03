@@ -10,14 +10,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      # The policy this bridge enforces, read from the read-only mount rather
-      # than the copy baked into the image. Editing a tier used to mean
-      # rebuilding every bridge; grants.json has always been read live from
-      # this same mount, and a grant is the sharper decision of the two.
-      # Nothing is baked into the image any more, so an unset variable
-      # finds no file and fails closed — every tool drops to
-      # approval_required. That is the intended answer to a missing mount:
-      # enforcing a stale policy silently is the worse of the two.
+      # The policy this bridge enforces, read live from the read-only mount like
+      # grants.json, so editing a tier needs no rebuild. Nothing is built into
+      # the image, so with the variable unset no file is found, and every tool
+      # fails closed to approval_required, which is safer than enforcing a
+      # stale policy.
       AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       AGENTBOX_SPEAKER_URL: "${AGENTBOX_SPEAKER_URL:-http://host.docker.internal:8772}"
       AGENTBOX_SPEAKER_TOKEN: "${AGENTBOX_SPEAKER_TOKEN:-}"
@@ -27,20 +24,20 @@ services:
       AGENTBOX_PORTAL_AGENT_TOKEN: "${AGENTBOX_PORTAL_AGENT_TOKEN:-}"
 
       # The model router, also on the host. Unauthenticated because it is bound
-      # to loopback and offers no tools — the worst a caller can do is spend
+      # to loopback and offers no tools, the worst a caller can do is spend
       # inference. See app/harness.py for why dispatching to a small model is
       # safe here and would not be if that were untrue.
       AGENTBOX_HARNESS_ROUTER_URL: "${AGENTBOX_HARNESS_ROUTER_URL:-http://host.docker.internal:8765}"
       # Set to 0 to stop a failed extraction retrying on the main model.
       AGENTBOX_HARNESS_ESCALATE: "${AGENTBOX_HARNESS_ESCALATE:-1}"
-      # Identity-aware auth. `alex:tokenA,sam:tokenB` — the presented token
+      # Identity-aware auth. `alex:tokenA,sam:tokenB`, the presented token
       # IS the identity, resolved before any tool runs and never taken from a
       # tool argument. Leave empty for single-operator, which falls back to
       # AGENTBOX_MCP_SHARED_TOKEN with no identity.
       AGENTBOX_IDENTITIES: "${AGENTBOX_IDENTITIES:-}"
       AGENTBOX_MCP_SHARED_TOKEN: "${AGENTBOX_MCP_SHARED_TOKEN:-}"
 
-      # Bridge tokens. Scoped, local, revocable — never an upstream credential.
+      # Bridge tokens. Scoped, local, revocable, never an upstream credential.
       VIKUNJA_BRIDGE_URL: "${VIKUNJA_BRIDGE_URL:-http://vikunja-bridge:8080}"
       VIKUNJA_BRIDGE_TOKEN: "${VIKUNJA_BRIDGE_TOKEN:-}"
       MEMORY_BRIDGE_URL: "${MEMORY_BRIDGE_URL:-http://memory-bridge:8080}"

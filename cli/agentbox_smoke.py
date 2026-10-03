@@ -105,10 +105,10 @@ def smoke() -> int:
     def check(name: str, ok: bool, detail: str = "") -> None:
         nonlocal failures
         if ok:
-            report(OK, f"{name}{(' — ' + detail) if detail else ''}")
+            report(OK, f"{name}{(': ' + detail) if detail else ''}")
         else:
             failures += 1
-            report(FAIL, f"{name}{(' — ' + detail) if detail else ''}")
+            report(FAIL, f"{name}{(': ' + detail) if detail else ''}")
 
     print("\n-- protocol --")
     live = []
@@ -339,7 +339,7 @@ def scenarios() -> int:
             print("by person: " + ", ".join(
                 f"{k}: {v}" for k, v in summary["by_identity"].items()))
         if summary["household_ok"] < summary["self_management_ok"]:
-            report(WARN, "the assistant mostly talks to itself — more "
+            report(WARN, "the assistant mostly talks to itself, with more "
                          "self-management than household calls. The score "
                          "above says what to unblock.")
     return 0 if outcome["ready"] > 0 else 1

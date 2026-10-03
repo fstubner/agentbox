@@ -140,7 +140,7 @@ def validate(raw_text: str, parsed: Any, controllable: frozenset[str]) -> dict:
         if domain in FORBIDDEN_DOMAINS:
             raise AutomationRefused(
                 f"'{service}' is in the {domain} domain. Locks, alarms and "
-                f"covers are never actuated by this platform — not directly "
+                f"covers are never actuated by this platform, not directly "
                 f"and not by an automation it wrote, which would be the same "
                 f"thing on a delay.")
         if domain in FORBIDDEN_SERVICE_DOMAINS or service.lower() in FORBIDDEN_SERVICES:

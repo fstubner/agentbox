@@ -69,7 +69,7 @@ def classify_kind(statement: str) -> tuple[str, str]:
     for marker in SELF_REPORT_MARKERS:
         if marker in text:
             return KIND_FEEDBACK, (f"describes how a tool behaved "
-                                   f"(“{marker.strip()}”) — worth fixing, not remembering")
+                                   f"(“{marker.strip()}”), worth fixing, not remembering")
     match = TOOL_NAME.search(statement.lower())
     if match:
         return KIND_FEEDBACK, (f"names a tool (“{match.group(0)}”), so it is "

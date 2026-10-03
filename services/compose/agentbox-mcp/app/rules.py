@@ -233,7 +233,7 @@ def matches(rule: dict, event: dict) -> bool:
         try:
             if not OPERATORS[operator](event.get(field), predicate[operator]):
                 return False
-        except Exception:  # noqa: BLE001 — a broken predicate must not fire
+        except Exception:  # noqa: BLE001 (a broken predicate must not fire)
             return False
     return True
 

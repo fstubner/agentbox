@@ -66,7 +66,7 @@ class HouseholdPolicy:
                 continue
             if not ENTITY_ID.match(entity):
                 raise InvalidEntity(
-                    f"'{entity}' is not an entity id — they look like "
+                    f"'{entity}' is not an entity id. They look like "
                     f"light.kitchen or switch.washer")
             domain = entity.split(".", 1)[0]
             if domain in NEVER_CONTROLLABLE:

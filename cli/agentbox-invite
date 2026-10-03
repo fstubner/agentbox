@@ -73,7 +73,7 @@ class InviteHandler(BaseHTTPRequestHandler):
     household = "the household"
     owner = "The owner"
 
-    def log_message(self, fmt, *args):  # noqa: A003 — quieter default logging
+    def log_message(self, fmt, *args):  # noqa: A003 (quieter default logging)
         # Never log the query string: the invite secret is in it.
         sys.stderr.write(f"[invite] {self.command} "
                          f"{urllib.parse.urlparse(self.path).path}\n")
@@ -118,7 +118,7 @@ class InviteHandler(BaseHTTPRequestHandler):
 
         if query.get("error"):
             return self._error(
-                "Google was not connected — you can ask for a new invite and "
+                "Google was not connected. You can ask for a new invite and "
                 "try again. Everything else you chose is already saved.")
 
         code = query.get("code", [""])[0]
@@ -237,7 +237,7 @@ def cmd_create(args) -> int:
     token_id = record["id"]
     secret = record["secret"]
     host = args.host or "agentbox.local"
-    print(f"Invite for '{args.name}' — valid {args.ttl_hours}h, single use.\n")
+    print(f"Invite for '{args.name}', valid {args.ttl_hours}h, single use.\n")
     print(f"  http://{host}:{BIND_PORT}/?i={token_id}&t={secret}\n")
     print("This link is a credential: anyone holding it can create an identity")
     print("on this box. Send it directly, not to a group chat.\n")
@@ -278,7 +278,7 @@ def cmd_serve(args) -> int:
         print("note: AGENTBOX_GOOGLE_CLIENT_ID is unset, so the Google step is "
               "skipped.", file=sys.stderr)
     server = ThreadingHTTPServer((BIND_HOST, BIND_PORT), InviteHandler)
-    print(f"Onboarding page on {BIND_HOST}:{BIND_PORT} — "
+    print(f"Onboarding page on {BIND_HOST}:{BIND_PORT}, "
           f"{len(pending)} invite(s) outstanding.")
     print("This is reachable on your LAN so she can open it from a phone.")
     if not args.unattended:
@@ -338,7 +338,7 @@ def main() -> int:
     serve.add_argument("--owner", default="The owner")
     serve.add_argument(
         "--unattended", action="store_true",
-        help="stay up with nothing outstanding, for running as a unit — "
+        help="stay up with nothing outstanding, for running as a unit, "
              "an invitation delivered by email reaches somebody who cannot "
              "ask anyone to start this")
 

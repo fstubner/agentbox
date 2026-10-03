@@ -53,7 +53,7 @@ def portal_email_delivery() -> int:
         report(OK, f"portal can deliver sign-in links by "
                    f"{' and '.join(channels)}")
         return 0
-    report(WARN, "portal has addresses configured but no delivery channel — "
+    report(WARN, "portal has addresses configured but no delivery channel, so "
                  "sign-in links are minted and reach nobody, and the page "
                  "cannot say so because answering differently for a registered "
                  "address would reveal who lives here. Set AGENTBOX_SMTP_HOST "
@@ -78,8 +78,8 @@ def portal_redirect_uri() -> int:
     if parsed.scheme != "https" or host.endswith(".local") or "." not in host:
         report(FAIL, f"AGENTBOX_PORTAL_URL={url} cannot be registered as a "
                      f"Google redirect URI. Google accepts loopback over http, "
-                     f"or a real public domain over https — .local and bare "
-                     f"hostnames are refused by the console.")
+                     f"or a real public domain over https. The console refuses .local "
+                     f"and bare hostnames.")
         return 1
     return 0
 
@@ -108,7 +108,7 @@ def connector_credentials() -> int:
         if '"ok": true' in result.stdout.lower() or '"ok":true' in result.stdout.lower():
             report(OK, f"{identity}'s google credential is live")
         else:
-            report(WARN, f"{identity}'s google credential looks dead — they "
+            report(WARN, f"{identity}'s google credential looks dead, so they "
                          f"can reconnect at the portal, then run: "
                          f"cli/agentbox identity reconnect {identity}")
     # Always zero, because a disconnected account is not a broken deployment.
@@ -141,7 +141,7 @@ def assistant_containment() -> int:
             continue
         if writable:
             bad += 1
-            report(FAIL, f"{GATEWAY_USER} can write {path} — '{capability}' is "
+            report(FAIL, f"{GATEWAY_USER} can write {path}, so '{capability}' is "
                          f"bypassable by shell regardless of its tier")
         else:
             report(OK, f"{capability} enforced ({path.name} not writable)")
@@ -150,7 +150,7 @@ def assistant_containment() -> int:
     # undone by one command without any error.
     if agent_can("-r", "/var/run/docker.sock"):
         bad += 1
-        report(FAIL, f"{GATEWAY_USER} can reach the docker socket — it can read "
+        report(FAIL, f"{GATEWAY_USER} can reach the docker socket, so it can read "
                      f"every bridge credential with `docker inspect`")
     elif not unknown:
         report(OK, "docker socket unreachable to the assistant")
@@ -158,8 +158,8 @@ def assistant_containment() -> int:
     operator_env = Path(env_dir())
     if agent_can("-r", str(operator_env)):
         bad += 1
-        report(FAIL, f"{GATEWAY_USER} can read {operator_env} — every bridge "
-                     f"token and the memory review token are in there")
+        report(FAIL, f"{GATEWAY_USER} can read {operator_env}, which holds every "
+                     f"bridge token and the memory review token")
     elif not unknown:
         report(OK, "operator credential directory unreadable to the assistant")
 
@@ -189,7 +189,7 @@ def bridge_readiness() -> int:
                     upstream = body.get("upstream") or {}
                     detail = "; ".join(str(v) for v in upstream.values()
                                        if isinstance(v, str))
-            except Exception:  # noqa: BLE001 — diagnostics only
+            except Exception:  # noqa: BLE001 (diagnostics only)
                 pass
             report(FAIL, f"{service} not ready (HTTP {exc.code}){': ' + detail if detail else ''}")
             bad += 1

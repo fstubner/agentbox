@@ -20,8 +20,8 @@ synthesises faster than real time on both.
 ## The one thing this cannot do yet
 
 Agentbox has no synchronous conversation endpoint. `hermes webhook` accepts a
-POST and runs the agent, but delivers the reply to a *messaging platform* —
-Discord — rather than returning it to the caller. A satellite needs the reply
+POST and runs the agent, but delivers the reply to a messaging platform such
+as Discord rather than returning it to the caller. A satellite needs the reply
 back in the HTTP response to speak it.
 
 So this client is written against a small contract that does not exist on the
@@ -96,7 +96,7 @@ def log(message: str) -> None:
 def record_utterance() -> bytes | None:
     """Block until someone speaks, then return PCM once they stop.
 
-    Returns None if the utterance was too short to be speech — a door closing
+    Returns None if the utterance was too short to be speech. A door closing
     and a cough both trip an amplitude gate, and transcribing them wastes a
     couple of seconds and occasionally invents a sentence.
     """
@@ -165,7 +165,7 @@ def play_wav(path: str) -> None:
     """Play through aplay rather than a Python audio library.
 
     alsa-utils is on every Raspberry Pi image, so this drops the `soundfile`
-    dependency entirely — one fewer wheel to build on a Pi, where native builds
+    dependency, one fewer wheel to build on a Pi, where native builds
     are slow and occasionally fail outright. Set SATELLITE_PLAY_CMD to override
     (`paplay` for PulseAudio, or a command that targets a specific device).
     """
@@ -241,9 +241,8 @@ def ask(text: str, name: str) -> str:
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:200]
         log(f"agentbox returned {exc.code}: {detail}")
-        # Spoken, not just logged — a satellite with no screen has no other way
-        # to tell you it is broken, and silence is indistinguishable from
-        # "it did not hear me".
+        # Spoken, not just logged. A satellite has no screen, and silence would
+        # look the same as "it did not hear me".
         return "Sorry, I could not reach the assistant."
     except urllib.error.URLError as exc:
         log(f"agentbox unreachable: {exc.reason}")

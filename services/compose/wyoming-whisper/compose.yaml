@@ -1,6 +1,6 @@
 # Speech to text for the house, on this box.
 #
-# The Discord voice path already transcribes locally — faster-whisper inside
+# The Discord voice path already transcribes locally, faster-whisper inside
 # the gateway process. This is the same model served over the Wyoming protocol
 # so that Home Assistant can reach it, which is what a satellite in another
 # room needs: the Pi streams audio to Home Assistant, Home Assistant asks this
@@ -26,7 +26,7 @@ services:
     container_name: wyoming-whisper
     command:
       # `base` because that is what the gateway already uses and has been
-      # verified against on this hardware — see docs/voice.md, where a
+      # verified against on this hardware, see docs/voice.md, where a
       # text -> Piper -> WAV -> faster-whisper round trip came back identical.
       # Larger models are a real quality gain and a real memory cost on a box
       # where a benchmark and the production model already cannot coexist.
@@ -37,7 +37,7 @@ services:
       - --beam-size
       - "1"
     # Loopback only. Home Assistant runs with host networking, so 127.0.0.1
-    # from its perspective is this host — it reaches this without the port
+    # from its perspective is this host, it reaches this without the port
     # being on the LAN. Nothing else needs to.
     ports:
       - "127.0.0.1:10300:10300"

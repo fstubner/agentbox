@@ -43,7 +43,7 @@ TOOLS = [
      "description": "Get the person you are talking to a sign-in link for "
                     "their Agentbox portal, where they can review what you "
                     "have proposed remembering and see which accounts you can "
-                    "reach. The link is for them — there is no way to request "
+                    "reach. The link is for them. There is no way to request "
                     "one for somebody else. It expires quickly, works once, "
                     "and is deliberately limited: it can read, but it cannot "
                     "approve a memory or change any account, because you can "
@@ -56,7 +56,7 @@ TOOLS = [
                     "yet, so they can be given their own account. This does "
                     "NOT send anything: it writes a draft that the household "
                     "admin sees on their Operations page, and they decide "
-                    "whether it goes out. Say that plainly when you use it — "
+                    "whether it goes out. Say that plainly when you use it, because "
                     "promising somebody an invitation is on its way would be "
                     "wrong. Give an email address, a Discord user id, or "
                     "both, so there is somewhere for it to go once approved.",
@@ -146,7 +146,7 @@ def _propose_invite(args):
     user_id = str(args.get("discord_user_id") or "").strip()
     if not address and not user_id:
         raise ToolError(
-            "give an email address or a Discord user id — an invitation with "
+            "give an email address or a Discord user id. An invitation with "
             "nowhere to go cannot be sent even once it is approved.")
     if not PORTAL_TOKEN:
         raise ToolError(
@@ -168,7 +168,7 @@ def _propose_invite(args):
     except urllib.error.HTTPError as exc:
         if exc.code == 400:
             raise ToolError(
-                "the portal refused that draft — check the account name is "
+                "the portal refused that draft. Check the account name is "
                 "lowercase letters, digits, dashes or underscores.") from None
         if exc.code == 429:
             # A refusal is an answer. Saying so plainly stops the model

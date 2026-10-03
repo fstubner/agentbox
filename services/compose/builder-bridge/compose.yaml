@@ -5,14 +5,11 @@ services:
       dockerfile: services/compose/builder-bridge/Dockerfile
     image: agentbox/builder-bridge:local
     environment:
-      # The policy this bridge enforces, read from the read-only mount rather
-      # than the copy baked into the image. Editing a tier used to mean
-      # rebuilding every bridge; grants.json has always been read live from
-      # this same mount, and a grant is the sharper decision of the two.
-      # Nothing is baked into the image any more, so an unset variable
-      # finds no file and fails closed — every tool drops to
-      # approval_required. That is the intended answer to a missing mount:
-      # enforcing a stale policy silently is the worse of the two.
+      # The policy this bridge enforces, read live from the read-only mount like
+      # grants.json, so editing a tier needs no rebuild. Nothing is built into
+      # the image, so with the variable unset no file is found, and every tool
+      # fails closed to approval_required, which is safer than enforcing a
+      # stale policy.
       AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       BUILDER_BRIDGE_TOKEN: "${BUILDER_BRIDGE_TOKEN:-}"
       BUILDER_REPO: "/repo"
@@ -21,7 +18,7 @@ services:
       HOME: "/tmp"
       BRIDGE_LOG_FILE: "/logs/builder-bridge.jsonl"
     # No host port, deliberately. This bridge is reachable only on its compose
-    # network, which the MCP gateway joins — so a leaked bridge token is
+    # network, which the MCP gateway joins, so a leaked bridge token is
     # unusable by any process on the host. The gateway concentrating five
     # tokens is only a prize if something outside it can spend them; this is
     # what makes them unspendable. Operator probes go through the gateway's
@@ -29,7 +26,7 @@ services:
     networks:
       builder:
     volumes:
-      # The assistant's own clone — NOT the operator's working tree, so a bad
+      # The assistant's own clone, NOT the operator's working tree, so a bad
       # proposal cannot dirty an in-progress edit or a stash. It pushes branches
       # back to the real repo, which is where the operator reviews them.
       - "${AGENTBOX_BUILDER_REPO:-${HOME}/.local/state/agentbox/builder-repo}:/repo"

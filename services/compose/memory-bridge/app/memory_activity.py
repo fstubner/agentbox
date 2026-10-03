@@ -86,7 +86,7 @@ def activity(handler, body):
                         break
                 else:
                     tiers[name] = "approval_required"  # unmapped fails closed
-        except Exception:  # noqa: BLE001 — a summary must not fail on policy
+        except Exception:  # noqa: BLE001 (a summary must not fail on policy)
             tiers = {}
 
     summary = {}

@@ -30,7 +30,7 @@ PAGE = """<!doctype html>
 </style>
 <h1>Join {household}</h1>
 <p class="sub">This sets up your own account on {household}'s assistant.
-Your things stay yours — the assistant can't read another person's mail or
+Your things stay yours. The assistant can't read another person's mail or
 private notes.</p>
 {body}
 """
@@ -46,18 +46,18 @@ FORM = """<form method="post">
 {personal}
 </fieldset>
 
-<fieldset><legend>Already shared — nothing to do</legend>
+<fieldset><legend>Already shared, nothing to do</legend>
 {shared}
 </fieldset>
 
 <button type="submit">Continue</button>
 </form>"""
 
-DONE = """<p>Thanks{name} — that's everything we need.</p>
+DONE = """<p>Thanks{name}, that's everything we need.</p>
 <p>{owner} will finish setting up your account. You'll hear from them shortly.</p>
 <p class="fixed">You can close this page.</p>"""
 
-GOOGLE_STEP = """<p>Thanks{name}. One more step — you asked to connect Gmail
+GOOGLE_STEP = """<p>Thanks{name}. One more step: you asked to connect Gmail
 and Calendar, so Google needs your permission.</p>
 <p>You'll sign in to Google directly. {owner} never sees your password, and you
 can revoke access at any time from your Google account.</p>
@@ -78,7 +78,7 @@ def render_form(household: str) -> str:
                 f'checked> {html.escape(spec["label"])}</label>'
                 f'<p class="note">{html.escape(spec["note"])}</p>')
         else:
-            shared.append(f'<p class="fixed">{html.escape(spec["label"])} — '
+            shared.append(f'<p class="fixed">{html.escape(spec["label"])}: '
                           f'{html.escape(spec["note"])}</p>')
     return PAGE.format(household=html.escape(household),
                        body=FORM.format(personal="\n".join(personal),

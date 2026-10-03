@@ -51,7 +51,7 @@ def clean_names(raw: str) -> str:
     for name in names:
         if not NAME.match(name):
             raise InvalidSetting(
-                f"'{name}' is not an identity name — lowercase letters, "
+                f"'{name}' is not an identity name. Lowercase letters, "
                 f"digits and hyphens, starting with a letter")
     return ",".join(names)
 
@@ -70,7 +70,7 @@ def clean_admins(raw: str) -> str:
     names = clean_names(raw)
     if not names:
         raise InvalidSetting(
-            "at least one admin is required — saving this empty would leave "
+            "at least one admin is required. Saving this empty would leave "
             "nobody able to reach Operations, including you, and it cannot be "
             "undone from this page. To hand over, name the new admin instead.")
     return names
@@ -118,7 +118,7 @@ def clean_snowflake(raw: str) -> str:
     if value and not SNOWFLAKE.match(value):
         raise InvalidSetting(
             f"'{value}' is not a Discord id. Turn on Developer Mode in "
-            f"Discord, then right-click and Copy ID — it is a long number, "
+            f"Discord, then right-click and Copy ID. It is a long number, "
             f"not a username")
     return value
 

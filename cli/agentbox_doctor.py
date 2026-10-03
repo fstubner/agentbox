@@ -81,11 +81,11 @@ def stopped_hint(name: str) -> str:
         state = subprocess.run(["systemctl", "--user", "is-active", unit],
                                capture_output=True, text=True, timeout=10,
                                check=False).stdout.strip()
-    except Exception:  # noqa: BLE001 — a hint must never break the check
+    except Exception:  # noqa: BLE001 (a hint must never break the check)
         return ""
     if state == "active":
         return "  (unit is running, so it is wedged rather than stopped)"
-    return f"  ({unit} is {state or 'not running'} — "\
+    return f"  ({unit} is {state or 'not running'}, "\
            f"start it: systemctl --user start {unit})"
 
 
@@ -173,7 +173,7 @@ def deploy_freshness() -> int:
         current = source_sha(service)
         if label != current:
             report(FAIL, f"stale: {service} running source {label} != "
-                         f"current {current} — run cli/agentbox deploy {service}")
+                         f"current {current}, run cli/agentbox deploy {service}")
             stale += 1
         else:
             report(OK, f"deploy fresh: {service}")

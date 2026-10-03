@@ -63,7 +63,7 @@ def invite_complete(token_id: str) -> int:
     """Turn a submitted invite into a working identity."""
     record = _invite(token_id)
     if not record:
-        report(FAIL, f"no invite '{token_id}' — check `agentbox-invite list`")
+        report(FAIL, f"no invite '{token_id}', check `agentbox-invite list`")
         return 1
     if not record.get("used_at"):
         report(FAIL, "that invite has not been filled in yet")
@@ -107,7 +107,7 @@ def invite_complete(token_id: str) -> int:
                 print(f"      Store it: op item edit Agentbox/google-{name} "
                       f"--refresh_token=<from "
                       f"{name}-google-bridge.env>")
-                print("      She has no writable calendar yet — set "
+                print("      They have no writable calendar yet. Set "
                       "GOOGLE_ALLOWED_WRITE_CALENDAR_ID in that env file "
                       "if she wants one.")
 

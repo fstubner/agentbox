@@ -64,7 +64,7 @@ def unit_environment(unit: str) -> dict:
         result = subprocess.run(
             ["systemctl", "--user", "show", unit, "-p", "Environment"],
             capture_output=True, text=True, timeout=20, check=False)
-    except Exception:  # noqa: BLE001 — a listing must not fail on this
+    except Exception:  # noqa: BLE001 (a listing must not fail on this)
         return out
     for chunk in (result.stdout or "").replace("Environment=", "").split():
         key, _, value = chunk.partition("=")
@@ -78,7 +78,7 @@ def identity_list() -> int:
     values = read_env_file(identity_env_path())
     identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
     if not identities:
-        report("WARN", "no identities configured — running single-operator")
+        report("WARN", "no identities configured, running single-operator")
         print("\nAdd one with: cli/agentbox identity add <name>")
         return 0
 
@@ -155,12 +155,12 @@ def identity_add(name: str) -> int:
         print("\n  NOTE: this is the first identity, so AGENTBOX_MCP_SHARED_TOKEN")
         print("  stops working. Point the Hermes gateway config at this token")
         print("  instead, or it will get 401 on every call.")
-    print(f"\n  Optional — give {name} their own Google account rather than "
+    print(f"\n  Optional: give {name} their own Google account rather than "
           f"sharing yours:")
     suffix = name.upper().replace("-", "_")
     print(f"    GOOGLE_BRIDGE_URL_{suffix}=http://{name}-google-bridge:8080")
     print(f"    GOOGLE_BRIDGE_TOKEN_{suffix}=<that bridge's token>")
-    print(f"  Without those, {name} shares the existing Google bridge — which "
+    print(f"  Without those, {name} shares the existing Google bridge, which "
           f"is\n  correct for shared services and wrong for personal mail.")
     return 0
 
@@ -178,7 +178,7 @@ def identity_remove(name: str) -> int:
               ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
     report("OK", f"removed identity '{name}'; redeploy agentbox-mcp to apply")
     if not identities:
-        report("WARN", "no identities remain — the gateway falls back to "
+        report("WARN", "no identities remain, so the gateway falls back to "
                      "AGENTBOX_MCP_SHARED_TOKEN")
     print(f"\nTheir memories are NOT deleted. They are still scoped to "
           f"'{name}'\nand simply unreachable. Remove them deliberately if "

@@ -125,9 +125,9 @@ def from_1password(field: str) -> str:
         out = subprocess.run(["op", "read", ref], capture_output=True, text=True,
                              timeout=30, env=env, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
-        sys.exit("1Password CLI (op) not found — pass --client-id/--client-secret instead")
+        sys.exit("1Password CLI (op) not found. Pass --client-id and --client-secret instead")
     except subprocess.TimeoutExpired:
-        sys.exit(f"timed out reading {ref} — is the service account token valid?")
+        sys.exit(f"timed out reading {ref}. Is the service account token valid?")
     if out.returncode != 0:
         sys.exit(f"could not read {ref}: {out.stderr.strip()}")
     return out.stdout.strip()
@@ -220,7 +220,7 @@ def main() -> int:
 
     refresh = payload.get("refresh_token")
     if not refresh:
-        sys.exit("no refresh_token in the response — retry with prompt=consent "
+        sys.exit("no refresh_token in the response. Retry with prompt=consent "
                  "(already set here) and confirm the client is an installed/desktop app")
 
     print()

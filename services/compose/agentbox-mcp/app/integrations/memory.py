@@ -32,12 +32,12 @@ TOOLS = [
          "change what you do next time and could not be looked up. Durable "
          "patterns and stated preferences qualify. One-off observations, "
          "things you inferred rather than were told, restatements of what a "
-         "tool already returns, and notes about your own tools do not — the "
+         "tool already returns, and notes about your own tools do not. The "
          "last of those belong in feedback, and the classifier will route "
          "them there. When in doubt, do not propose: a rejected proposal "
          "costs a person's attention, which is the scarcest thing here.\n\n"
          "**Scope decides who will ever see it.** Omit `scope` and it is "
-         "private to whoever you are acting for — the safe default. Pass "
+         "private to whoever you are acting for, the safe default. Pass "
          "`scope: household` only for things the whole household shares: a "
          "shopping preference, when the bins go out, a joint plan. Never put "
          "one person's private matter in the household scope to be helpful; "
@@ -58,7 +58,7 @@ TOOLS = [
                     "Each memory is the CURRENT version. If a fact has been "
                     "revised, the versions it replaced are nested under it as "
                     "`previously`, each with the date it stopped being true. "
-                    "Use those to say when something changed — never to "
+                    "Use those to say when something changed, never to "
                     "contradict the current value.",
      "inputSchema": schema_object({"limit": LIMIT})},
 
@@ -67,7 +67,7 @@ TOOLS = [
          "Report which identity this session is acting for, which memory "
          "scopes are readable, and which accounts are reachable. Call this "
          "when a request involves personal data and you are not certain whose "
-         "it is — before searching mail, before proposing a memory as "
+         "it is: before searching mail, before proposing a memory as "
          "household, and before telling someone about something that may not "
          "be theirs. You cannot change the answer; it is decided by the "
          "credential this session holds.",
@@ -78,7 +78,7 @@ TOOLS = [
          "Look at how your own tool calls have actually gone: which tools you "
          "used, how often each failed or was refused, and what the operator "
          "approved or rejected. Use this when reflecting on your own "
-         "performance — it is evidence, where your memory of a conversation is "
+         "performance. It is evidence, where your memory of a conversation is "
          "not, and it survives restarts. Returns counts only, never past "
          "content. Record what you conclude with propose_memory so the lesson "
          "outlives this conversation; the operator reviews it before it "

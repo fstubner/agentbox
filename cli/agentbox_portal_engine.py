@@ -88,8 +88,8 @@ def render_capabilities(identity: str, role: str, flash: str = "",
                and int(rec.get("expires_at", 0)) > _portal.now()]
     if account:
         body = (f"<p class=sub style='margin:.3rem 0 .8rem'>"
-                f"Connected as <b>{html.escape(account)}</b> "
-                "— sign-in links come to you on Discord.</p>"
+                f"Connected as <b>{html.escape(account)}</b>. "
+                "Sign-in links come to you on Discord.</p>"
                 "<form method=post action=/chat/unlink style='display:inline'>"
                 "<button class=danger "
                 "onclick=\"return confirm('Disconnect Discord identity?');\">"
@@ -148,7 +148,7 @@ def render_capabilities(identity: str, role: str, flash: str = "",
         )
 
 
-    return _portal.page("Capabilities — Agentbox",
+    return _portal.page("Capabilities · Agentbox",
                         _portal.chrome(identity, role, origin, "/capabilities", "".join(parts)))
 
 
@@ -201,7 +201,7 @@ def render_engine(identity: str, role: str, flash: str = "",
     )
 
 
-    return _portal.page("Engine — Agentbox",
+    return _portal.page("Engine · Agentbox",
                         _portal.chrome(identity, role, origin, "/engine", "".join(parts)))
 
 
@@ -364,5 +364,5 @@ def render_tasks(identity: str, role: str, flash: str = "",
                 f"</div></div>"
             )
 
-    return _portal.page("Projects & Tasks — Agentbox",
+    return _portal.page("Projects & Tasks · Agentbox",
                         _portal.chrome(identity, role, origin, "/tasks", "".join(parts)))

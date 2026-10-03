@@ -78,7 +78,7 @@ def _has_items(label: str, key: str | None = None, needs: str = ""):
             return BLOCKED, f"unexpected shape: {type(payload).__name__}"
         if rows:
             return READY, f"{len(rows)} {label}"
-        return EMPTY, f"no {label} yet" + (f" — {needs}" if needs else "")
+        return EMPTY, f"no {label} yet" + (f", {needs}" if needs else "")
     return check
 
 
@@ -122,7 +122,7 @@ SCENARIOS = [
         # this suite reported "3 events" that were three dict keys.
         _has_items("events", key="items",
                    needs="a busier day, or check the calendar is shared"),
-        needs="Google connected (it is) — this one is live"),
+        needs="Google connected (it is), this one is live"),
 
     Scenario(
         "Am I free this afternoon?",
@@ -140,7 +140,7 @@ SCENARIOS = [
         # this suite read the raw dict, never matched, and reported an empty
         # inbox they had not actually looked inside.
         _has_items("recent unread", key="messages",
-                   needs="quiet inbox — that is the good case"),
+                   needs="quiet inbox, that is the good case"),
         needs="Google connected"),
 
     Scenario(
@@ -167,7 +167,7 @@ SCENARIOS = [
         "Turn the landing light off.",
         "list_home_entities", {"domain": "light", "view": "lean"},
         _has_items("lights", key="entities"),
-        needs="a light integration (Hue: press the bridge button) — none present yet"),
+        needs="a light integration (Hue: press the bridge button), none present yet"),
 
     Scenario(
         "Read the shopping list back to me.",
@@ -177,7 +177,7 @@ SCENARIOS = [
               + (" (quiet hours)" if p.get("quiet_hours") else ""))
         if isinstance(p, dict) and p.get("speakers")
         else (EMPTY, "no speakers paired"),
-        needs="a paired speaker (both Echoes are paired) — live"),
+        needs="a paired speaker (both Echoes are paired), live"),
 
     Scenario(
         "What do you remember about me?",
@@ -188,8 +188,8 @@ SCENARIOS = [
     Scenario(
         "What's on the to-do list?",
         "list_tasks", {"view": "lean"},
-        _has_items("tasks", needs="add tasks — the backend is up"),
-        needs="Vikunja (up) — live"),
+        _has_items("tasks", needs="add tasks, the backend is up"),
+        needs="Vikunja (up), live"),
 
     Scenario(
         "Find that lease PDF in my Drive.",
@@ -199,10 +199,10 @@ SCENARIOS = [
         # zero results and a report that reads like an empty Drive. The
         # scenario has to name the scope or it teaches the wrong lesson.
         _has_items("files", key="files",
-                   needs="nothing is visible under the drive.file scope — see "
+                   needs="nothing is visible under the drive.file scope. See "
                          "below"),
         needs="the granted scope is drive.file, which sees ONLY files Agentbox "
-              "created — not your own documents. Granting drive.readonly at "
+              "created, not your own documents. Granting drive.readonly at "
               "consent time would let it search your real Drive; that is a "
               "deliberate privacy decision, not a bug to fix"),
 ]
@@ -221,7 +221,7 @@ def _run_one(scenario, tool_call, token: str) -> tuple[str, str]:
     if scenario.prepare is not None:
         try:
             prepared = scenario.prepare(tool_call, token)
-        except Exception as exc:  # noqa: BLE001 — a prepare bug is not a house verdict
+        except Exception as exc:  # noqa: BLE001 (a prepare bug is not a house verdict)
             return BLOCKED, f"scenario prepare errored: {type(exc).__name__}"
         if prepared is None:
             return EMPTY, "nothing to act on yet"
@@ -231,7 +231,7 @@ def _run_one(scenario, tool_call, token: str) -> tuple[str, str]:
     ok, payload = tool_call("agentbox-mcp", scenario.tool, args, token)
     try:
         return scenario.verdict(ok, payload)
-    except Exception as exc:  # noqa: BLE001 — a verdict bug is not a house verdict
+    except Exception as exc:  # noqa: BLE001 (a verdict bug is not a house verdict)
         return BLOCKED, f"scenario check errored: {type(exc).__name__}"
 
 

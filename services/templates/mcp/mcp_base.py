@@ -273,7 +273,7 @@ class McpHandler(BaseHTTPRequestHandler):
                 else:
                     note(outcome_log.ERROR, detail="upstream_rejected")
                 return self._reply(message_id, protocol.tool_result(text, True))
-            except Exception as exc:  # noqa: BLE001 — never leak a traceback
+            except Exception as exc:  # noqa: BLE001 (never leak a traceback)
                 note(outcome_log.ERROR, detail=type(exc).__name__)
                 return self._reply(message_id, protocol.tool_result(
                     f"internal error: {type(exc).__name__}", True))
@@ -311,7 +311,7 @@ class McpHandler(BaseHTTPRequestHandler):
                 detail: Any = f"HTTP {exc.code}"
                 try:
                     detail = json.loads(exc.read())
-                except Exception:  # noqa: BLE001 — diagnostics only
+                except Exception:  # noqa: BLE001 (diagnostics only)
                     pass
                 self.send_json(503, {"ok": False, "bridge": detail})
             except Exception as exc:  # noqa: BLE001
@@ -373,7 +373,7 @@ def serve(handler_cls: type[McpHandler]) -> None:
               f"{'y' if len(handler_cls.identity_tokens) == 1 else 'ies'} configured",
               file=sys.stderr, flush=True)
     elif not handler_cls.shared_token:
-        print(f"WARNING {handler_cls.service_name}: MCP shared token unset — "
+        print(f"WARNING {handler_cls.service_name}: MCP shared token unset, "
               f"every /mcp request will be refused", file=sys.stderr, flush=True)
     print(f"{handler_cls.service_name} listening on {host}:{port}; "
           f"bridge={handler_cls.bridge_url}", file=sys.stderr, flush=True)

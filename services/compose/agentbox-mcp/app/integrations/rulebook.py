@@ -24,7 +24,7 @@ TOOLS = [
     {"name": "propose_rule",
      "description": "Propose a standing rule: when something happens, if some "
                     "conditions hold, do these tool calls. The rule is "
-                    "checked immediately and stored inert — a person activates "
+                    "checked immediately and stored inert, and a person activates "
                     "it. Rules take literal values only; there are no "
                     "templates and nothing from the event is substituted.",
      "inputSchema": schema_object({
@@ -119,7 +119,7 @@ def dispatch(name, args):
         if checked["name"] in evaluator.approvals():
             raise ToolError(
                 f"'{checked['name']}' is active. Rules are not edited in "
-                f"place — propose a differently named rule and ask for the "
+                f"place. Propose a differently named rule and ask for the "
                 f"old one to be retired.")
         path.write_text(json.dumps(checked, indent=2), encoding="utf-8")
     except OSError as exc:
@@ -138,6 +138,6 @@ def dispatch(name, args):
         result["caveat"] = (
             f"'{source}' events are not wired up yet (live sources: "
             f"{', '.join(evaluator.LIVE_SOURCES)}). Even once approved, this "
-            f"rule cannot fire until that source lands — say so if someone "
+            f"rule cannot fire until that source lands, so say so if someone "
             f"is counting on it.")
     return result

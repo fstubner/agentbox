@@ -212,7 +212,7 @@ def fire(rule: dict, dispatch, now: float | None = None) -> None:
             # nobody issued does nothing, because 3am is when nobody is
             # reading approval prompts.
             note(outcome_log.DENIED)
-        except Exception as exc:  # noqa: BLE001 — one bad action, not a dead loop
+        except Exception as exc:  # noqa: BLE001 (one bad action, not a dead loop)
             note(outcome_log.ERROR, detail=type(exc).__name__)
 
 
@@ -244,13 +244,13 @@ def _loop(dispatch) -> None:
             events = [schedule_event()]
             try:
                 events.extend(homeassistant_events())
-            except Exception:  # noqa: BLE001 — a bridge outage is not fatal
+            except Exception:  # noqa: BLE001 (a bridge outage is not fatal)
                 pass
             fired = evaluate_pass(events, dispatch)
             if fired:
                 print(f"{SERVICE}: fired {fired} rule(s)",
                       file=sys.stderr, flush=True)
-        except Exception as exc:  # noqa: BLE001 — the loop must outlive anything
+        except Exception as exc:  # noqa: BLE001 (the loop must outlive anything)
             print(f"{SERVICE}: pass failed: {type(exc).__name__}",
                   file=sys.stderr, flush=True)
         time.sleep(INTERVAL_SECONDS)

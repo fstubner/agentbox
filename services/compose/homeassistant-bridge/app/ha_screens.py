@@ -34,7 +34,7 @@ def cast(handler, body):
         raise BridgeError(400, "summary is required")
     if len(summary) > MAX_SUMMARY_CHARS:
         raise BridgeError(
-            400, f"summary must be {MAX_SUMMARY_CHARS} characters or fewer — it "
+            400, f"summary must be {MAX_SUMMARY_CHARS} characters or fewer, because it "
                  f"is the preview a shared screen shows, and a long one is a "
                  f"detail field wearing a disguise. Put the rest in 'detail'.")
 
@@ -50,5 +50,5 @@ def cast(handler, body):
         "showed_detail": bool(private and detail),
         "note": ("Full detail shown." if private else
                  "This screen is shared, so only the summary was shown. Detail "
-                 "was discarded, not queued — say it in conversation instead."),
+                 "was discarded, not queued. Say it in conversation instead."),
     }

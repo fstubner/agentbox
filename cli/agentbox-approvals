@@ -174,7 +174,7 @@ def main() -> int:
             capability = request.get("capability") or "no mapped capability"
             posted = discord("POST", f"/channels/{channel}/messages", token, {
                 "content": (f"**Approval needed**\n"
-                            f"`{tool}` — capability `{capability}`\n"
+                            f"`{tool}`: capability `{capability}`\n"
                             f"Reply `approve {tool}` to allow it once "
                             f"({DEFAULT_TTL}), or `deny {tool}` to clear it."),
             })
@@ -219,7 +219,7 @@ def main() -> int:
             if verb == "approve":
                 ok = grant(tool, DEFAULT_TTL)
                 discord("POST", f"/channels/{channel}/messages", token, {
-                    "content": (f"approved `{tool}` for {DEFAULT_TTL} — ask again and it "
+                    "content": (f"approved `{tool}` for {DEFAULT_TTL}. Ask again and it "
                                 f"will go through" if ok else f"could not grant `{tool}`")})
             else:
                 record_denial(tool, str(author.get("id")))

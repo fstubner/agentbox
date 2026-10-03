@@ -71,7 +71,7 @@ def decode_header_value(value: str) -> str:
     if value.startswith("=?base64?") and value.endswith("?="):
         try:
             return base64.b64decode(value[9:-2]).decode("utf-8")
-        except Exception:  # noqa: BLE001 — malformed encoding is a mismatch
+        except Exception:  # noqa: BLE001 (malformed encoding is a mismatch)
             return value
     return value
 

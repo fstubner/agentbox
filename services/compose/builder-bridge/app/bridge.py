@@ -211,7 +211,7 @@ def propose(handler, body):
         raise BridgeError(400, "branch must be lowercase letters, digits, "
                                "dot, dash, underscore or slash")
     if not message:
-        raise BridgeError(400, "message is required — the commit message is the "
+        raise BridgeError(400, "message is required, because the commit message is the "
                                "explanation the operator reads first")
     if not isinstance(files, list) or not files:
         raise BridgeError(400, "files must be a non-empty list of "
@@ -259,7 +259,7 @@ def propose(handler, body):
     if rationale:
         full_message += f"\n\n{rationale}"
     full_message += ("\n\nProposed by the agentbox assistant. Not merged, not "
-                     "deployed — review with `git diff " + default + "..." +
+                     "deployed. Review with `git diff " + default + "..." +
                      branch + "`.")
     git("commit", "-m", full_message)
 

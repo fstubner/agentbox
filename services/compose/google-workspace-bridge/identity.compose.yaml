@@ -10,7 +10,7 @@
 # the onboarding flow has to rewrite is a config that will eventually be
 # rewritten wrongly. One network, one container per person, no gateway change.
 #
-# Everything else matches the shared bridge exactly — same image, same
+# Everything else matches the shared bridge exactly, same image, same
 # constraints, no host port. The only difference is whose refresh token is
 # inside it.
 services:

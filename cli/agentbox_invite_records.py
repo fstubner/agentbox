@@ -43,7 +43,7 @@ CONNECTORS = {
     "google": {
         "label": "Gmail and Calendar",
         "personal": True,
-        "note": "You sign in with Google. Agentbox never sees your password — "
+        "note": "You sign in with Google. Agentbox never sees your password, "
                 "only a token you can revoke from your Google account.",
         "external": True,
     },

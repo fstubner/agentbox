@@ -88,7 +88,7 @@ def lan_exposure() -> list[Check]:
             exposed.append(Check(
                 name=f"{watched[port]} reachable from the network",
                 ok=False,
-                detail=f"listening on {local} rather than 127.0.0.1 — anything "
+                detail=f"listening on {local} rather than 127.0.0.1, so anything "
                        f"on the LAN can reach it, and {tail}",
                 severity=WARN))
     return exposed

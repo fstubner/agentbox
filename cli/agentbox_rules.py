@@ -87,7 +87,7 @@ def rules_list(rules_dir: Path | None = None, approved_path: Path | None = None)
         state = "ACTIVE " if record.get("_active") else "inactive"
         print(f"[{state}] {record.get('name')}  (as {record.get('identity')})")
         if record.get("_edited_since_approval"):
-            print("          !! changed since it was approved — the approval "
+            print("          !! changed since it was approved, so the approval "
                   "is void and it will not fire. Re-read it and approve again.")
         if record.get("description"):
             print(f"          {record['description']}")
@@ -140,7 +140,7 @@ def rules_decide(name: str, activate: bool,
             live = ("schedule", "homeassistant")
             source = str((record.get("when") or {}).get("source", ""))
             if source in live:
-                report(OK, f"'{source}' events are live — this rule can fire "
+                report(OK, f"'{source}' events are live, so this rule can fire "
                                     f"within a minute or two of matching")
             else:
                 report(WARN, f"'{source}' events are NOT wired up yet (live: "
@@ -167,7 +167,7 @@ def rules_remove(name: str,
             except OSError:
                 report(OK, f"revoked approval for '{name}'; it cannot fire")
                 report(WARN, f"the proposal file remains at "
-                                      f"{record['_path']} (owned by the gateway) — "
+                                      f"{record['_path']} (owned by the gateway). "
                                       f"harmless, and listed as inactive")
             return 0
     report(FAIL, f"no rule named '{name}'")

@@ -159,7 +159,7 @@ def cmd_link(args) -> int:
         return 1
     minutes = config.LINK_TTL_SECONDS // 60
     print(url)
-    print(f"\n[ok] link {link_id} for {args.identity} — single use, "
+    print(f"\n[ok] link {link_id} for {args.identity}, single use, "
           f"expires in {minutes} minutes", file=sys.stderr)
     return 0
 

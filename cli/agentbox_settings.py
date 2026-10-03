@@ -103,7 +103,7 @@ SETTINGS: tuple[Setting, ...] = (
         hint="Which address belongs to which person.",
         label="Sign-in addresses",
         help="Which address belongs to which person, so they can ask for their "
-             "own sign-in link. An address here is not a credential — it only "
+             "own sign-in link. An address here is not a credential. It only "
              "decides where a link is sent, and the link is limited unless "
              "opened in the browser that asked for it.",
         clean=clean_identity_emails,
@@ -146,7 +146,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         key="smtp_password",
-        hint="For Gmail, an app password — not the account password.",
+        hint="For Gmail, an app password, not the account password.",
         label="Password",
         help="For Gmail this is an app password, not the account password, and "
              "it needs 2-Step Verification switched on.",
@@ -159,8 +159,8 @@ SETTINGS: tuple[Setting, ...] = (
         key="not_deployed",
         label="Services this household does not run",
         hint="Named here, they are listed but never counted as broken.",
-        help="A compose directory with no container could mean two things — "
-             "never deployed here, or deployed and since removed — and "
+        help="A compose directory with no container could mean two things: "
+             "never deployed here, or deployed and since removed, and "
              "nothing on the box can tell them apart. Guessing either way is "
              "wrong: guess 'never' and `docker compose down` reads as "
              "healthy; guess 'removed' and the page is permanently red over "
@@ -190,7 +190,7 @@ SETTINGS: tuple[Setting, ...] = (
         hint="Whose replies the approval loop acts on.",
         label="Who may approve",
         help="Discord ids whose replies the approval loop will act on. "
-             "Everyone else is ignored, including the assistant — bot "
+             "Everyone else is ignored, including the assistant. Bot "
              "messages are skipped before this list is consulted, so an "
              "injected instruction cannot approve itself.",
         clean=clean_snowflakes,

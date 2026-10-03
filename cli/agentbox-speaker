@@ -89,7 +89,7 @@ def say(text: str, speaker: str = "") -> tuple[bool, str]:
         return False, (f"refused: {len(text)} characters is longer than a "
                        f"person will stand in a room. Limit is {MAX_CHARS}.")
     if in_quiet_hours():
-        return False, (f"refused: quiet hours are {QUIET_HOURS}. Not queued — "
+        return False, (f"refused: quiet hours are {QUIET_HOURS}. Not queued. "
                        f"say it next time someone asks.")
     available = speakers()
     if not available:

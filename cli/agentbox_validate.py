@@ -140,7 +140,7 @@ def validate() -> int:
                 detail = (proc.stderr or proc.stdout).strip().splitlines()
                 report(WARN, f"docker could not parse {compose.relative_to(REPO)}"
                              + (f": {detail[0][:120]}" if detail else "")
-                             + " — deploy will refuse it if it is genuinely broken")
+                             + ", deploy will refuse it if it is genuinely broken")
     else:
         report(WARN, "docker not found; skipped compose config validation")
 

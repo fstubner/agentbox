@@ -144,7 +144,7 @@ def require_controllable(entity_id: str, expected_domains: tuple[str, ...]) -> N
         raise BridgeError(
             403, f"'{entity_id}' is in the {domain} domain, which this bridge "
                  f"never actuates. Locks, alarms and covers map to "
-                 f"home_control_security, which is always_denied — no approval "
+                 f"home_control_security, which is always_denied, so no approval "
                  f"exists for it and none can be issued.")
 
     if domain not in expected_domains:

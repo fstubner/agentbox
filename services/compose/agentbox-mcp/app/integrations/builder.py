@@ -41,7 +41,7 @@ TOOLS = [
 
     {"name": "read_repo_file", "title": "Read a repository file",
      "description": "Read one tracked text file. The response says whether the "
-                    "file is writable — check that before drafting a change to "
+                    "file is writable. Check that before drafting a change to "
                     "it, rather than discovering the refusal on submit.",
      "inputSchema": schema_object({
          "path": {"type": "string"}}, ["path"])},
@@ -57,7 +57,7 @@ TOOLS = [
     {"name": "propose_change", "title": "Propose a change for review",
      "description":
          "Write files onto a new branch and push it for the operator to "
-         "review. This does NOT merge and does NOT deploy — nothing you "
+         "review. This does NOT merge and does NOT deploy. Nothing you "
          "propose takes effect until a human merges it and deploys it, which "
          "you cannot do and must not claim to have done. Use it to add a new "
          "service, fix a bug you found, or improve your own tooling. You "
@@ -69,7 +69,7 @@ TOOLS = [
                     "description": "Short branch name, e.g. 'add-todoist-bridge'. "
                                    "Prefixed with proposal/ automatically."},
          "message": {"type": "string",
-                     "description": "Commit subject — the first thing the "
+                     "description": "Commit subject, the first thing the "
                                     "operator reads. Say what changes and why."},
          "rationale": {"type": "string",
                        "description": "Optional longer explanation for the "

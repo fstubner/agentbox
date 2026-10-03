@@ -106,7 +106,7 @@ FLASHES = {
                                 "Try again, or ask the operator to check the "
                                 "portal log."),
     "backup_ok": "Backup snapshot created and verified.",
-    "backup_failed": "Backup failed — inspect system journal.",
+    "backup_failed": "Backup failed. Inspect system journal.",
     "restore_ok": "Restore rehearsal verified: all 4 tiers extracted cleanly.",
     "restore_failed": "Restore rehearsal failed.",
 }

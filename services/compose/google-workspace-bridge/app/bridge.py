@@ -127,9 +127,9 @@ class GoogleWorkspaceBridge(BridgeHandler):
             try:
                 body = json.loads(exc.read().decode("utf-8"))
                 detail = body.get("error", "unknown")
-            except Exception:  # noqa: BLE001 — diagnostics only
+            except Exception:  # noqa: BLE001 (diagnostics only)
                 pass
-            hint = (" — refresh token revoked or expired; re-run the OAuth consent flow"
+            hint = (": refresh token revoked or expired. Re-run the OAuth consent flow"
                     if detail == "invalid_grant" else "")
             return {"ok": False, "upstream": {"google_oauth": f"HTTP {exc.code}: {detail}{hint}"}}
         except Exception as exc:  # noqa: BLE001

@@ -210,7 +210,7 @@ def deliver_pending_links(token: str) -> None:
         if action == "deliver_invite":
             greeting = str(record.get("display_name", "")) or "there"
             content = (
-                f"Hi {greeting} — you have been invited to join a household "
+                f"Hi {greeting}, you have been invited to join a household "
                 f"Agentbox, an assistant running on somebody's own "
                 f"hardware.\n{record.get('url')}\nOpen it to set up your "
                 f"account. It works once and expires. Nothing is created "
@@ -221,8 +221,8 @@ def deliver_pending_links(token: str) -> None:
             content = (
                 f"Here is your Agentbox sign-in link.\n{record.get('url')}\n"
                 f"It works once and expires shortly. Opened in the browser you "
-                f"asked from, it gives you everything. Opened anywhere else — "
-                f"including from this app — you can read your memories and "
+                f"asked from, it gives you everything. Opened anywhere else, "
+                f"including from this app, you can read your memories and "
                 f"accounts but not approve or disconnect anything, because "
                 f"anyone who saw this message could be the one opening it. "
                 f"That includes me.")

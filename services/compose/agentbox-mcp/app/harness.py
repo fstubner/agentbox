@@ -188,7 +188,7 @@ TASKS = {
         "instruction": (
             "Read the email below and answer ONLY with a JSON object, no prose "
             "and no code fence, with exactly these keys:\n"
-            '  "needs_reply": true or false — does this need a human answer?\n'
+            '  "needs_reply": true or false. Does this need a human answer?\n'
             '  "urgency": one of "none", "low", "normal", "high"\n'
             '  "category": one of "personal", "work", "bill", "shipping", '
             '"newsletter", "notification", "spam", "other"\n'
@@ -333,7 +333,7 @@ def run_task(name: str, text: str, transport=call_router) -> dict:
     # failure would hand the caller exactly the unvalidated channel this whole
     # module exists to close, and it would do it precisely when something has
     # already gone wrong.
-    raise HarnessError(f"no valid answer for {name} — " + "; ".join(problems))
+    raise HarnessError(f"no valid answer for {name}: " + "; ".join(problems))
 
 
 def run_reasoning_check(text: str, transport=call_router) -> dict:

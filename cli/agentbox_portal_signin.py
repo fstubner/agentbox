@@ -49,7 +49,7 @@ class SigninRoutes:
             "url": url,
             "expires_in_seconds": portal.LINK_TTL_SECONDS,
             "limits": "This link can review memories and connector status. It "
-                      "cannot approve a memory or disconnect an account — for "
+                      "cannot approve a memory or disconnect an account, for "
                       "those, sign in from the email link.",
         }).encode()
         self.send_response(200)

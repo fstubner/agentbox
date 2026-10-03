@@ -112,7 +112,7 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
         shutil.rmtree(staging)
     except OSError as exc:
         _rep("FAIL", f"could not remove {staging}: {exc}. It holds an "
-                     f"unencrypted copy of household memory — delete it by hand.")
+                     f"unencrypted copy of household memory. Delete it by hand.")
         return 1
 
     # Restore-check the archive we just made before touching the old ones. A
@@ -187,7 +187,7 @@ def restore_check(archive_name: str = "", report: Callable[[str, str], None] | N
         vikunja = target / "vikunja"
         files = list(vikunja.rglob("*")) if vikunja.is_dir() else []
         if not any(f.is_file() for f in files):
-            problems.append("vikunja directory is empty — tasks would not "
+            problems.append("vikunja directory is empty, so tasks would not "
                             "come back")
         else:
             _rep("OK", f"vikunja restores: {sum(1 for f in files if f.is_file())} file(s)")
@@ -215,10 +215,10 @@ def restore_check(archive_name: str = "", report: Callable[[str, str], None] | N
             _rep("FAIL", f"{archive.name} would NOT fully restore")
             return 1
 
-    _rep("OK", f"{archive.name} verified — extracts, parses, and holds state")
+    _rep("OK", f"{archive.name} verified: extracts, parses, and holds state")
     print("\nTo restore for real: stop the services, replace the memory volume "
           "and the vikunja state dir from this archive, then redeploy.\n"
-          "See docs/runbook.md — do it deliberately, not from this command.")
+          "See docs/runbook.md, and do it deliberately, not from this command.")
     return 0
 
 

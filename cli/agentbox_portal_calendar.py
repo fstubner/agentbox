@@ -141,5 +141,5 @@ def render_calendar(identity: str, role: str, flash: str = "",
 
     parts.append("</div></div>")
 
-    return _portal.page("Calendar & Schedule — Agentbox",
+    return _portal.page("Calendar & Schedule · Agentbox",
                         _portal.chrome(identity, role, origin, "/calendar", "".join(parts)))

@@ -61,7 +61,7 @@ def proposals_list() -> int:
         name, _, rest = row.partition("\t")
         when, _, subject = rest.partition("\t")
         print(f"{name.replace('assistant/', ''):<32} {when:<16} {subject}")
-    print(f"\n{len(rows)} proposal(s) — review with: "
+    print(f"\n{len(rows)} proposal(s), review with: "
           f"cli/agentbox proposals show <name>")
     return 0
 

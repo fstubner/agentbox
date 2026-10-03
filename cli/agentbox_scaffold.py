@@ -94,7 +94,7 @@ def scaffold(name: str, port: int | None, upstream_env: str | None,
         f"## Before this is worth merging\n\n"
         f"1. Replace the echo route in `app/bridge.py` with real calls.\n"
         f"2. Implement `upstream_status()` if this fronts a service you run.\n"
-        f"3. Follow `skills/adding-a-bridge/SKILL.md` — bounded lists, idempotent\n"
+        f"3. Follow `skills/adding-a-bridge/SKILL.md`: bounded lists, idempotent\n"
         f"   creates, symmetric write constraints, no policy stated only in prose.\n"
         f"4. Map any new MCP tools to a capability in `policies/approval-policy.yaml`;\n"
         f"   unmapped tools fail closed and `validate` will flag them.\n"
@@ -139,7 +139,7 @@ def scaffold(name: str, port: int | None, upstream_env: str | None,
                     f"Not deployed and not merged: review against\n"
                     f"skills/adding-a-bridge/SKILL.md before either."],
                    cwd=repo, check=False)
-    report(OK, f"committed on branch {branch} — not merged, not deployed")
+    report(OK, f"committed on branch {branch}, not merged, not deployed")
     print(f"\nNext: edit services/compose/{service}/app/bridge.py, then open a PR.\n"
           f"Nothing runs this service until someone reviews it and runs "
           f"`cli/agentbox deploy {service}`.")

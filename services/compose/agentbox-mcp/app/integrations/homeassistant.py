@@ -24,7 +24,7 @@ ENTITY_ID = {"type": "string",
 TOOLS = [
     {"name": "list_home_entities", "title": "List things in the house",
      "description":
-         "List entities and their current state — lights, sensors, switches, "
+         "List entities and their current state: lights, sensors, switches, "
          "climate. Filter by domain to keep it small; a house has hundreds of "
          "entities. The response also lists which entities you are permitted "
          "to control, so check that before offering to change something.",
@@ -63,8 +63,8 @@ TOOLS = [
     {"name": "set_home_climate", "title": "Set a target temperature",
      "description":
          "Set the target temperature on an allowlisted thermostat. This needs "
-         "operator approval each time — heating costs money and a household "
-         "may be asleep — so expect it to be refused until one is granted, and "
+         "operator approval each time, because heating costs money and a household "
+         "may be asleep, so expect it to be refused until one is granted, and "
          "say what you are trying to do rather than retrying.",
      "inputSchema": schema_object({
          "entity_id": ENTITY_ID,
@@ -91,8 +91,8 @@ TOOLS = [
          "- It may never touch locks, alarms, covers, cameras, or call "
          "shell_command, python_script, rest_command or homeassistant.turn_on.\n\n"
          "Triggers may reference anything, including sensors you cannot "
-         "control — 'when the hall motion sensor fires' is the normal case. "
-         "Give it a clear alias saying what it does; that is what the operator "
+         "control. 'When the hall motion sensor fires' is the normal case. "
+         "Give it a clear alias saying what it does, because that is what the operator "
          "reads when deciding.",
      "inputSchema": schema_object({
          "automation": {
@@ -117,7 +117,7 @@ TOOLS = [
          "`summary` is shown. `detail` is discarded, not queued.\n"
          "- **Private** (an office monitor the operator has marked): both are "
          "shown.\n\n"
-         "Write `summary` the way a phone writes a lock-screen preview — "
+         "Write `summary` the way a phone writes a lock-screen preview: "
          "enough to know something is there, not enough to read over someone's "
          "shoulder. 'Calendar: 3 things today' rather than the appointments "
          "themselves. Put the actual content in `detail`; if the screen is "
@@ -144,7 +144,7 @@ RETIRED_TOOLS = [
          "facts**: how many people, their broad posture, and whether any text "
          "is visible. You never receive the image, and never a description in "
          "prose.\n\n"
-         "Prefer presence sensors for 'which room is someone in' — "
+         "Prefer presence sensors for 'which room is someone in'. "
          "list_home_entities with domain 'binary_sensor' answers that without "
          "looking at anyone. Use this when you need to know whether a room is "
          "occupied and roughly what is happening, and say that you are about "

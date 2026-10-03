@@ -103,7 +103,7 @@ def render_overview(identity: str, role: str, waiting: int,
             "<div class=card><b>What this is</b>"
             "<p class=sub style='margin:.4rem 0 0'>Agentbox is your "
             "household's own assistant, running on a box in your home. It can "
-            "reach your mail, calendar, tasks and the house — and it "
+            "reach your mail, calendar, tasks and the house, and it "
             "remembers things about you, but only the ones you approve here. "
             "Nothing is saved because it decided to; every memory on this page "
             "is waiting for you to say yes.</p></div>")
@@ -155,12 +155,12 @@ def render_overview(identity: str, role: str, waiting: int,
 def _render_proposals_list(proposals: list[dict], reachable: bool, identity: str) -> str:
     if not reachable:
         return ("<p class=empty><b>The memory service is not responding.</b> "
-                "This is not the same as having nothing waiting — there may be "
+                "This is not the same as having nothing waiting. There may be "
                 "proposals here that cannot be shown. Tell whoever runs this box.</p>")
     if not proposals:
         return ("<div class=empty>"
                 "<div style='font-size:1.2rem;margin-bottom:.3rem;color:#22c55e'>&#10003;</div>"
-                "<b>All clear — Inbox Zero</b>"
+                "<b>All clear: Inbox Zero</b>"
                 "<p class=sub style='margin:.3rem 0 0'>The assistant proposes a memory "
                 "when it notices something worth keeping; it cannot save one until you say yes.</p></div>")
 
@@ -175,7 +175,7 @@ def _render_proposals_list(proposals: list[dict], reachable: bool, identity: str
         if is_feedback:
             hint = ("<p class=sub style='margin:.1rem 0 .6rem'>This looks like "
                     "<b>feedback about how I behave</b>"
-                    + (f" — {html.escape(reason)}" if reason else "")
+                    + (f": {html.escape(reason)}" if reason else "")
                     + ". Filing it as feedback puts it on a list to fix "
                     "properly, instead of storing a note that works around it.</p>")
         parts.append(
@@ -188,7 +188,7 @@ def _render_proposals_list(proposals: list[dict], reachable: bool, identity: str
             f"Edit before saving if it is not quite right.</p>"
             f"<button class=yes name=verb value=approve>"
             f"{'Save as a memory' if is_feedback else 'Remember this'}</button>"
-            f"<button name=verb value=feedback>Not a memory — file as feedback</button>"
+            f"<button name=verb value=feedback>Not a memory, file as feedback</button>"
             f"<button class=danger name=verb value=reject "
             f"onclick=\"return confirm('Forget this memory proposal?');\">Forget it</button>"
             f"</form></div>")
@@ -248,8 +248,8 @@ def render_home(identity: str, role: str, flash: str,
             "<div class='card warn'><b>Opened in a different browser</b>"
             "<p class=sub style='margin:.35rem 0 .5rem'>You can read "
             "everything here. Approving a memory or disconnecting an account "
-            "needs a link opened in the same browser that asked for it — "
-            "that is what proves the person opening it is the person who asked, "
+            "needs a link opened in the same browser that asked for it, "
+            "because that is what proves the person opening it is the person who asked, "
             "rather than anyone who saw the message.</p>"
             "<p class=sub style='margin:0'>Phone apps usually open links in "
             "their own browser, so this is normal. To get full access, request "
@@ -266,9 +266,9 @@ def render_home(identity: str, role: str, flash: str,
     parts.append(_render_memories_list(stored, history, identity))
 
     parts.append("<footer>Only you can approve a memory in your own private "
-                 "scope — not the assistant, and not the household admin."
+                 "scope, not the assistant, and not the household admin."
                  "</footer>")
-    return page(f"{identity} — Agentbox",
+    return page(f"{identity} · Agentbox",
                 chrome(identity, role, origin, "/", "".join(parts)))
 
 def render_knowledge(identity: str, role: str, flash: str,
@@ -335,7 +335,7 @@ def render_knowledge(identity: str, role: str, flash: str,
             "Forget this</button></form></div>")
 
     # footer signout removed
-    return page("Knowledge Base — Agentbox",
+    return page("Knowledge Base · Agentbox",
                 chrome(identity, role, origin, "/knowledge", "".join(parts)))
 
 SIGNIN = """<div class=card style="max-width:28rem;margin:3.5rem auto 0;padding:2rem 2.25rem">
@@ -353,9 +353,9 @@ change anything.</footer></div>"""
 
 def render_signin(sent: bool = False) -> bytes:
     told = ("If that address belongs to someone here, a sign-in link is on "
-            "its way. Open it in this browser for full access — opened "
+            "its way. Open it in this browser for full access. Opened "
             "anywhere else it can read but not change anything.")
-    return page("Sign in — Agentbox", SIGNIN.format(
+    return page("Sign in · Agentbox", SIGNIN.format(
         minutes=_portal.LINK_TTL_SECONDS // 60,
         flash=f"<div class=flash>{html.escape(told)}</div>" if sent else ""))
 
@@ -365,7 +365,7 @@ def render_connectors(identity: str, role: str, flash: str,
     if _portal and hasattr(_portal, "agentbox_portal_engine"):
         return _portal.agentbox_portal_engine.render_capabilities(
             identity, role, flash, origin)
-    return page("Capabilities — Agentbox",
+    return page("Capabilities · Agentbox",
                 chrome(identity, role, origin, "/capabilities", "<h1>Capabilities</h1>"))
 
 def time_ago(seconds: int) -> str:

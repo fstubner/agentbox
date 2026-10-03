@@ -26,7 +26,7 @@ def render_status_card() -> str:
         note = ("<p class=sub style='margin:.5rem 0 0'>An evaluation is "
                 "running. Benchmarks that need the whole memory budget stop "
                 "the assistant on purpose and start it again afterwards, so "
-                "some of this may be expected — but it is listed rather than "
+                "some of this may be expected, but it is listed rather than "
                 "hidden, because a page that goes quiet during evaluations "
                 "cannot be trusted during one.</p>") if snap.evaluating else ""
     else:
@@ -49,7 +49,7 @@ def render_status_card() -> str:
     if not snap.services:
         body += ("<p class=sub style='margin:.6rem 0 0'>No containers are "
                  "visible from here, so this list is incomplete rather than "
-                 "empty — Docker did not answer.</p>")
+                 "empty, because Docker did not answer.</p>")
     else:
         lines = []
         for service in snap.services:

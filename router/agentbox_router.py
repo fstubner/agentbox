@@ -222,9 +222,9 @@ def main() -> None:
     container's own. `0.0.0.0` would serve both and also serve the LAN, and
     this endpoint is unauthenticated and will run any prompt it is given.
 
-    So bind `127.0.0.1,172.17.0.1` instead — the Docker bridge address is
+    So bind `127.0.0.1,172.17.0.1` instead. The Docker bridge address is
     reachable from containers and not routable from the network. Check yours
-    with `ip -4 addr show docker0`; it is assigned, not fixed.
+    with `ip -4 addr show docker0`, since it is assigned, not fixed.
     """
     hosts = [h.strip() for h in
              os.environ.get("AGENTBOX_ROUTER_HOST", "127.0.0.1").split(",")
@@ -235,8 +235,8 @@ def main() -> None:
         try:
             servers.append(ThreadingHTTPServer((host, port), Handler))
         except OSError as exc:
-            # One address being unavailable — docker0 absent on a box with no
-            # containers — must not take down the loopback listener the
+            # One address being unavailable, such as docker0 on a box with no
+            # containers, must not take down the loopback listener the
             # evaluator needs. Say so and carry on.
             print(f"agentbox-router: cannot bind {host}:{port}: {exc}",
                   flush=True)

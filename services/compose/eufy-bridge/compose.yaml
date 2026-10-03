@@ -5,7 +5,7 @@
 # Both services bind loopback only, so the only thing that can reach
 # either is this box. Neither is reachable from the LAN.
 #
-# The alternative — a HACS integration inside Home Assistant — would put
+# The alternative, a HACS integration inside Home Assistant, would put
 # unreviewed third-party code in the container that has host networking, a
 # system D-Bus socket, NET_ADMIN, NET_RAW and a Bluetooth radio. Same
 # functionality, far worse placement.

@@ -223,7 +223,7 @@ def create_invite(identity: str, existing: set[str],
     if not IDENTITY_NAME.match(identity):
         raise ValueError(
             "a name must be lowercase letters, digits, dashes or underscores, "
-            "starting with a letter — for example sam")
+            "starting with a letter, for example sam")
     if identity in {e.strip().lower() for e in existing}:
         raise NameTaken(f"{identity} already lives here")
     # Checked here rather than at the call site, for the same reason `existing`

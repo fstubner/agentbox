@@ -97,7 +97,7 @@ class PortalActions:
         self._send(200, portal.render_admin(
             session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
             invite_error=f"{name} has no way to receive a link yet. Hand this "
-                         f"over directly — single use, and it expires: {url}"))
+                         f"over directly. Single use, and it expires: {url}"))
 
 
     def _propose_invite(self, form) -> None:
@@ -329,7 +329,7 @@ class PortalActions:
                 session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
                 errors={"admins": (
                     f"nobody here is called {', '.join(unknown)}. Invite them "
-                    f"first, or check the spelling — an admin list naming "
+                    f"first, or check the spelling. An admin list naming "
                     f"only people who do not exist locks this page for "
                     f"everyone, and cannot be undone from it.")},
                 submitted=submitted))

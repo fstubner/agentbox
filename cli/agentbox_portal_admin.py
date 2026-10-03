@@ -58,7 +58,7 @@ def render_people_card(flash_error: str = "") -> str:
         f"<b style='font-size:.95rem'>Invite someone</b>"
         f"<p class=sub style='margin:.3rem 0 .5rem'>Adds them and sends a "
         f"sign-in link. If there is no way to deliver it, the link is shown "
-        f"here for you to pass on — it is single use and expires.</p>"
+        f"here for you to pass on. It is single use and expires.</p>"
         f"<form method=post action=/admin/invite>"
         f"<input name=name placeholder='name, e.g. sam' autocomplete=off "
         f"class=inline-input>"

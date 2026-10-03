@@ -81,7 +81,7 @@ def announce_proposals(channel: str, token: str, state: dict) -> None:
             user = mapping.get(scope)
             if not user:
                 log(f"proposal {short_id(key)} is private to {scope}, who has "
-                    f"no Discord id configured — left for the portal")
+                    f"no Discord id configured, left for the portal")
                 seen[key] = int(time.time())
                 continue
             target = dm_channel(user, token)
@@ -149,7 +149,7 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
     memory_id, where = resolve_memory(prefix)
     if not memory_id:
         discord("POST", f"/channels/{channel}/messages", token,
-                {"content": f"no single match for `{prefix}` — check `memories`"})
+                {"content": f"no single match for `{prefix}`. Check `memories`"})
         return True
 
     # `replaces <new> <old>` links two memories that are already stored, which
@@ -164,7 +164,7 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
         result = memory_call("POST", f"/v1/memories/{memory_id}/supersede",
                              {"supersedes": old_id})
         discord("POST", f"/channels/{channel}/messages", token, {
-            "content": (f"linked — “{result['replaced']['statement'][:80]}” is "
+            "content": (f"linked: “{result['replaced']['statement'][:80]}” is "
                         f"now history" if result else "could not link those")})
         return True
 
@@ -198,10 +198,10 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
         if not result:
             reply = "could not do that"
         elif verb == "feedback":
-            reply = ("filed as feedback — on the list to fix properly, not "
+            reply = ("filed as feedback: on the list to fix properly, not "
                      "stored as a memory")
         elif result.get("replaced"):
-            reply = (f"remembered — “{result['replaced']['statement'][:70]}” "
+            reply = (f"remembered: “{result['replaced']['statement'][:70]}” "
                      f"is now history")
         else:
             reply = "remembered"
@@ -209,7 +209,7 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
             # act on it rather than leaving two contradictory facts current.
             for candidate in result.get("possibly_supersedes", [])[:2]:
                 reply += (f"\nthis may replace “{candidate['statement'][:60]}” "
-                          f"— `replaces {short_id(memory_id)} "
+                          f"Reply `replaces {short_id(memory_id)} "
                           f"{short_id(candidate['id'])}` to link them")
     discord("POST", f"/channels/{channel}/messages", token, {"content": reply})
     state.get("memories_announced", {}).pop(memory_id, None)

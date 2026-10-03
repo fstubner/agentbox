@@ -34,8 +34,8 @@ TOOLS = [
                     "it. Prefer this over create_task when a retry could "
                     "duplicate work.\n\n"
                     "**Needs a project_id, which is a number, not a name.** "
-                    "Call list_projects first and match on title to get it — "
-                    "there is no way to pass a project by name, and guessing "
+                    "Call list_projects first and match on title to get it. "
+                    "There is no way to pass a project by name, and guessing "
                     "an id will either fail or file the task in the wrong "
                     "project.",
      "inputSchema": schema_object(TASK_FIELDS, ["project_id", "title"])},
@@ -47,8 +47,8 @@ TOOLS = [
          "page": {"type": "integer", "minimum": 1, "default": 1},
          "per_page": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
          "view": {"type": "string", "enum": ["full", "lean"], "default": "full",
-                  "description": "Use 'lean' when picking, counting or ranking tasks — "
-                                 "returns only id, title, done and priority, about a tenth "
+                  "description": "Use 'lean' when picking, counting or ranking tasks. "
+                                 "It returns only id, title, done and priority, about a tenth "
                                  "the size. Use 'full' only when you need descriptions, "
                                  "dates or labels."}})},
     {"name": "create_task", "title": "Create a task", "description": "Create a task in a project.",

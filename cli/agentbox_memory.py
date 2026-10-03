@@ -59,11 +59,11 @@ def memory_list(identity: str = "") -> int:
     for item in proposals:
         scope = item.get("scope", "household")
         print(f"{item['id']}  [{scope}]  {item.get('statement', '')}")
-    print(f"\n{len(proposals)} pending — approve with: "
+    print(f"\n{len(proposals)} pending, approve with: "
           f"cli/agentbox memory approve <id>")
     if not payload.get("as_operator"):
         report(WARN, "listed without the operator review token, so private "
-                              "proposals are hidden — check MEMORY_REVIEW_TOKEN")
+                              "proposals are hidden, check MEMORY_REVIEW_TOKEN")
     return 0
 
 
@@ -100,7 +100,7 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "",
     for candidate in result.get("possibly_supersedes", []):
         # Offered, never applied: an automatic supersession that is wrong
         # hides a true memory behind a false one and says nothing.
-        report(WARN, f"this may replace an existing memory — if so: "
+        report(WARN, f"this may replace an existing memory. If so: "
                               f"cli/agentbox memory forget {candidate['id']}  "
                               f"(or re-add with --supersedes {candidate['id']})\n"
                               f"         existing: {candidate['statement'][:70]}")
@@ -128,7 +128,7 @@ def memory_show(limit: int = 50) -> int:
         if item.get("edited_by_reviewer"):
             print(f"{'':38}(edited; originally: "
                   f"{item.get('original_statement','')[:60]})")
-    print(f"\n{len(items)} remembered — remove one with: "
+    print(f"\n{len(items)} remembered, remove one with: "
           f"cli/agentbox memory forget <id>")
     return 0
 

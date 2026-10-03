@@ -236,7 +236,7 @@ def services() -> list[Service]:
                              container="", running=False, stale=False,
                              deployed=not chosen,
                              status=("not deployed here, by choice" if chosen
-                                     else "no container — expected to be "
+                                     else "no container, expected to be "
                                           "running")))
     return sorted(found, key=lambda s: s.label.lower())
 

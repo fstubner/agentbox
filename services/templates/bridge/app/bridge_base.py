@@ -273,7 +273,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except BridgeError as exc:
             status = exc.status
             self.send_json(status, {"error": exc.message})
-        except Exception as exc:  # noqa: BLE001 — never leak a traceback
+        except Exception as exc:  # noqa: BLE001 (never leak a traceback)
             status = 500
             # The caller gets only the class name, because an exception message
             # often quotes the input that caused it. The full traceback goes to
@@ -323,7 +323,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             line = json.dumps(record)
             print(line, flush=True)
             self._write_log_file(line)
-        except Exception:  # noqa: BLE001 — logging must never break a response
+        except Exception:  # noqa: BLE001 (logging must never break a response)
             pass
 
     def do_GET(self) -> None:
