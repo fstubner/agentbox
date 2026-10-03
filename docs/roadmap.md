@@ -246,6 +246,12 @@ because partial isolation reads as isolation.
 
 ### 8. Harness dispatch — farming work out to other models
 
+> **Retired 2026-09-16**, with the router it dispatches to. Both worker
+> models failed the agent-capability baseline, and one obeyed an
+> instruction embedded in tool data. The section below is the record of
+> what was built. `router/README.md` covers why it stopped and what would
+> bring it back.
+
 Sound, and less new than it looks. `router/agentbox_router.py` already routes
 deterministically to a context worker (`:1235`) and a reasoning worker
 (`:1236`). It serves the evaluator; the gateway config points only at `:1234`

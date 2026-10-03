@@ -109,29 +109,6 @@ TOOLS = [
                             "\"light.hall\"}}"}},
          ["automation"])},
 
-    {"name": "look_at_camera", "title": "Check a room",
-     "description":
-         "Take one frame from an allowlisted camera and get back **structured "
-         "facts**: how many people, their broad posture, and whether any text "
-         "is visible. You never receive the image, and never a description in "
-         "prose.\n\n"
-         "Prefer presence sensors for 'which room is someone in' — "
-         "list_home_entities with domain 'binary_sensor' answers that without "
-         "looking at anyone. Use this when you need to know whether a room is "
-         "occupied and roughly what is happening, and say that you are about "
-         "to look.\n\n"
-         "You cannot ask a free-text question, and text in the room is "
-         "reported as present but never transcribed. Both limits exist because "
-         "anyone who can put writing where the lens sees it would otherwise be "
-         "able to address you through it.",
-     "inputSchema": schema_object({
-         "entity_id": {"type": "string", "description": "e.g. camera.kitchen"},
-         "look_for": {"type": "string", "enum": ["occupancy", "activity"],
-                      "default": "occupancy",
-                      "description": "'occupancy' counts people; 'activity' "
-                                     "also reports broad posture."}},
-         ["entity_id"])},
-
     {"name": "cast_to_screen", "title": "Show something on a screen",
      "description":
          "Put a message on a screen or speaker. Screens have two privacy "
@@ -155,6 +132,35 @@ TOOLS = [
                     "description": "The full content. Shown only on a screen "
                                    "the operator has marked private."}},
          ["entity_id", "summary"])},
+]
+
+# Retired 2026-09-16 with the vision model it asks. The definition is kept as
+# it was so re-enabling is one line. The assistant does not see it, because
+# the server only collects TOOLS. A tool that is registered and fails on
+# every call is worse than one that is absent. See router/README.md.
+RETIRED_TOOLS = [
+    {"name": "look_at_camera", "title": "Check a room",
+     "description":
+         "Take one frame from an allowlisted camera and get back **structured "
+         "facts**: how many people, their broad posture, and whether any text "
+         "is visible. You never receive the image, and never a description in "
+         "prose.\n\n"
+         "Prefer presence sensors for 'which room is someone in' — "
+         "list_home_entities with domain 'binary_sensor' answers that without "
+         "looking at anyone. Use this when you need to know whether a room is "
+         "occupied and roughly what is happening, and say that you are about "
+         "to look.\n\n"
+         "You cannot ask a free-text question, and text in the room is "
+         "reported as present but never transcribed. Both limits exist because "
+         "anyone who can put writing where the lens sees it would otherwise be "
+         "able to address you through it.",
+     "inputSchema": schema_object({
+         "entity_id": {"type": "string", "description": "e.g. camera.kitchen"},
+         "look_for": {"type": "string", "enum": ["occupancy", "activity"],
+                      "default": "occupancy",
+                      "description": "'occupancy' counts people; 'activity' "
+                                     "also reports broad posture."}},
+         ["entity_id"])},
 ]
 
 def dispatch(name, args):

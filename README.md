@@ -4,7 +4,7 @@
 [![clean-room onboarding](https://github.com/fstubner/agentbox/actions/workflows/onboarding.yml/badge.svg)](https://github.com/fstubner/agentbox/actions/workflows/onboarding.yml)
 [![licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 
-A self-hosted, privacy-first AI assistant for a household running on local hardware. Agentbox runs a local LLM behind a gateway with narrow, policy-gated levers: task management, calendar/email bridges, and role-routed worker models.
+A self-hosted, privacy-first AI assistant for a household running on local hardware. Agentbox runs a local LLM behind a gateway with narrow, policy-gated levers: task management, calendar and email bridges, home control, and memory that a person reviews before it is kept.
 
 Two people share it, with a shared household plane (joint tasks, shopping, shared scheduling) and isolated private planes (private mail, personal calendar, personal memory). Identity is bound to the authenticated session, never passed as an LLM tool argument.
 
@@ -36,7 +36,7 @@ rather than just written down.
 | `cli/` | Operator CLI (`agentbox`) and sandbox launcher (`agentbox-sandbox`) |
 | `services/` | Docker Compose service stacks (Vikunja, bridges, MCP servers) |
 | `policies/` | Declarative approval, network, and tool capability policies |
-| `router/` | Role router dispatching over local llama.cpp worker endpoints |
+| `router/` | Retired. Routed work to small local models until they failed evaluation. See `router/README.md` |
 | `gateway/` | Gateway configuration and integration definitions |
 | `docs/` | Architecture records, runbooks, and baseline evaluations |
 

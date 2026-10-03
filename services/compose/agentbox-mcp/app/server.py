@@ -60,7 +60,6 @@ from integrations import (
     _client,
     builder,
     google,
-    harness,
     homeassistant,
     memory,
     portal,
@@ -78,7 +77,8 @@ INTEGRATIONS = {
     "homeassistant": homeassistant,
     "speaker": speaker,
     "rulebook": rulebook,
-    "harness": harness,
+    # harness is retired with the router it dispatches to, and is not wired in.
+    # Its module and tool definitions are kept. See router/README.md.
     "portal": portal,
 }
 

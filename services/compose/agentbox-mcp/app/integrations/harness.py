@@ -20,7 +20,15 @@ from mcp_base import ToolError, schema_object
 
 from integrations.google import bridge_post
 
-TOOLS = [
+# Retired 2026-09-16, along with the router these depend on. Both small
+# workers failed the agent-capability baseline of 2026-08-18 with 80 failures
+# each, and FastContext obeyed an instruction embedded in tool data, which
+# disqualifies it here whatever its throughput. See router/README.md.
+#
+# The definitions are kept as they were so re-enabling is one line. The
+# assistant does not see them, because the server only collects TOOLS. A tool
+# that is registered and fails on every call is worse than one that is absent.
+RETIRED_TOOLS = [
     {"name": "triage_email",
      "description": "Classify one email without reading it into this "
                     "conversation. Returns whether it needs a reply, how "
@@ -44,6 +52,8 @@ TOOLS = [
                                       "document text."}},
          ["reasoning"])},
 ]
+
+TOOLS: list = []
 
 
 def _triage(args):

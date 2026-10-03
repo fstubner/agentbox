@@ -145,34 +145,35 @@ def test_an_undeclared_dict_shape_is_blocked_not_counted():
     assert "unexpected shape" in detail
 
 
-def test_triage_prepares_a_real_message_then_dispatches():
-    """A fake id tested Gmail's error path and blamed the router. prepare
-    must find a real message, and the triage call must carry its id."""
-    seen = {}
+def test_summarise_prepares_a_real_message_then_reads_it():
+    """A fake id tested Gmail's error path instead of the route itself. prepare
+    must find a message with readable text, and the read must carry its id.
+
+    This scenario used to dispatch to triage_email. That route is retired with
+    the router, so it now reads the clean text the main model summarises.
+    """
+    calls = []
 
     def tool_call(service, tool, args, token):
         if tool == "search_gmail":
             # Gmail's real shape: hits ride under "messages". The first hit
-            # has no readable text — an invite — and must be skipped, not
-            # scored as a blocked triage path.
+            # has no readable text, an invite, and must be skipped rather than
+            # scored as a blocked summary path.
             return True, {"messages": [{"id": "m-invite"}, {"id": "m-123"}],
                           "resultSizeEstimate": 2}
         if tool == "clean_gmail":
-            # The live clean route's real shape: clean_text, subject nested.
+            calls.append(args["message_id"])
             if args["message_id"] == "m-invite":
                 return True, {"clean_text": "", "headers": {"subject": "Invite"}}
             return True, {"clean_text": "real body", "headers": {"subject": "Hi"}}
-        if tool == "triage_email":
-            seen["args"] = args
-            return True, {"model_role": "context", "escalated": False,
-                          "urgency": "low"}
         return False, "not reachable: fake"
 
     outcome = lib.run(tool_call, "tok")
-    triage = next(r for r in outcome["results"] if "Summarise" in r["asked"])
-    assert triage["state"] == lib.READY
-    assert "context model" in triage["detail"]
-    assert seen["args"] == {"message_id": "m-123"}
+    summary = next(r for r in outcome["results"] if "Summarise" in r["asked"])
+    assert summary["state"] == lib.READY
+    assert "9 characters" in summary["detail"]
+    # The scenario's own read comes last, and it is the readable message.
+    assert calls[-1] == "m-123"
 
 
 def test_google_payloads_are_read_at_their_real_keys():

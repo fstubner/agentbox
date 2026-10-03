@@ -267,7 +267,11 @@ def test_every_ha_tool_is_mapped():
     mapping = pg.load_tool_map(POLICY)
     src = (REPO / "services" / "compose" / "agentbox-mcp" / "app"
            / "integrations" / "homeassistant.py").read_text()
-    block = src.split("TOOLS = [", 1)[1].split("\ndef ", 1)[0]
+    # The live list only. RETIRED_TOOLS also contains "TOOLS = [", and a
+    # retired tool has no policy mapping on purpose.
+    m = re.search(r"^TOOLS\b[^=\n]*=\s*\[", src, re.M)
+    rest = src[m.end():]
+    block = re.split(r"^\]", rest, maxsplit=1, flags=re.M)[0]
     for name in re.findall(r'"name":\s*"([a-z_]+)"', block):
         assert name in mapping, name
 

@@ -157,16 +157,11 @@ tools:
   speak_aloud: speak_aloud
   list_speakers: home_read_state
 
-  # harness dispatch
-  #
-  # triage_email reads a message, so it sits in the same tier as reading one —
-  # a cheaper-and-safer way to do a thing already permitted, not a new power.
-  # It reads strictly less into the conversation than read_gmail does.
-  #
-  # check_reasoning touches nothing outside the box and returns text to the
-  # caller only. There is no smaller tier than local_only for it.
-  triage_email: personal_data_read
-  check_reasoning: local_only
+  # triage_email and check_reasoning are retired with the router, and
+  # look_at_camera with the vision model. They are no longer registered, so
+  # they have no mapping. If one is re-registered without its mapping,
+  # test_every_live_mcp_tool_is_mapped fails, which is the reminder to add it.
+  # They were personal_data_read, local_only and home_view_camera respectively.
 
   # google-workspace (drive)
   search_drive: drive_read
@@ -204,11 +199,6 @@ tools:
   # it cannot say whether the automation is a good idea. Code that runs
   # unattended at 3am deserves a human reading it once.
   create_home_automation: home_write_automation
-  # Allowed, because the allowlist is the constraint and an approval on "look
-  # at the kitchen" would be granted unread. Every camera is opt-in one at a
-  # time, nothing is stored, and the frame never enters the assistant's
-  # context — the bridge asks the local vision model and returns text.
-  look_at_camera: home_view_camera
   cast_to_screen: home_control_comfort
 
   # Builder: the assistant reads the repo and proposes changes as git branches.

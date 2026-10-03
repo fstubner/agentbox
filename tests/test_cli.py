@@ -83,16 +83,21 @@ def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
     sys.modules["abx_hint"] = cli
     spec.loader.exec_module(cli)
 
+    # The portal stands in for the router here. The router was the service
+    # this check was written for, and it is retired now, but the distinction
+    # between stopped and wedged still matters for everything that remains.
+    state = {"value": "inactive"}
+
     def fake(cmd, **kwargs):
-        state = "inactive" if "agentbox-router" in cmd else "active"
-        return type("R", (), {"stdout": state + "\n", "returncode": 0})()
+        return type("R", (), {"stdout": state["value"] + "\n", "returncode": 0})()
 
     monkeypatch.setattr(subprocess, "run", fake)
     monkeypatch.setattr(cli.subprocess, "run", fake)
-    hint = cli.stopped_hint("router")
+    hint = cli.stopped_hint("portal")
     assert "inactive" in hint
-    assert "systemctl --user start agentbox-router" in hint
+    assert "systemctl --user start agentbox-portal" in hint
     # A running-but-unreachable service needs the opposite diagnosis.
+    state["value"] = "active"
     assert "wedged" in cli.stopped_hint("portal")
     # An endpoint with no unit we can name says nothing rather than guessing.
     assert cli.stopped_hint("main model") == ""

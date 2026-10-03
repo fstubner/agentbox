@@ -25,7 +25,7 @@ flowchart TD
 
     subgraph assistant[Assistant request path]
         gw["Hermes gateway<br/><small>isolated user · no shell</small>"]
-        gw --> models["Local models<br/><small>:1234 main · :1240 vision</small>"]
+        gw --> models["Local model<br/><small>:1234 · Ornith 1.5 35B</small>"]
         gw --> amcp["agentbox-mcp :3465<br/><small>one gate · identity-aware<br/>bridge tokens only</small>"]
         amcp --> tbr["tasks bridge<br/><small>holds credential · no host port</small>"]
         amcp --> mbr["memory bridge :3471<br/><small>review gate · operator port</small>"]
@@ -40,11 +40,6 @@ flowchart TD
     bbr --> clone[(builder clone)]
     hbr --> ha[(Home Assistant :8123)]
 
-    subgraph evaluator[Evaluator infrastructure — not in the assistant path]
-        router["role router :8765"] --> ctx["fastcontext :1235"]
-        router --> rsn["vibethinker :1236"]
-    end
-
     subgraph operator[Operator plane — no assistant access]
         cli["cli/agentbox<br/><small>validate · doctor · deploy</small>"]
         pol["approval-policy.yaml<br/><small>capabilities + tool map</small>"]
@@ -58,10 +53,10 @@ flowchart TD
 ```
 
 Solid edges are the live request path. Dotted edges are configuration the
-operator controls and the assistant cannot write. The role router and both
-worker models are drawn separately because the gateway does not call them —
-they serve the evaluator. Verified against the live gateway config and the
-router's access log, 2026-08-02.
+operator controls and the assistant cannot write. The role router, its two
+worker models and the vision model are no longer drawn. They were retired on
+2026-09-16 after both workers failed evaluation, and `router/README.md` says
+why. Production now runs one model.
 
 
 ## Shell access — closed, and what it rests on
@@ -170,8 +165,9 @@ human reads carefully first.
 - **Bridges hold credentials.** OAuth tokens and API secrets live inside
   bridge containers, injected at deploy time (1Password `op://` references or
   plain env files). The assistant and router never see them.
-- **Deterministic routing.** Which worker handles which role is code
-  (`router/agentbox_router.py`), not model judgment. Used by the evaluator.
+- **Deterministic routing.** When work goes to a smaller model, which one
+  handles it is decided in code (`router/agentbox_router.py`) and never by
+  model judgment. Retired for now, along with the workers it routed to.
 - **Constrain rather than gate, where possible.** A constraint holds when the
   model is compromised; an approval only helps if a human reads carefully
   first. Several capabilities are `allowed` because the bridge contains them.
@@ -186,7 +182,7 @@ human reads carefully first.
 
 | Dir | Role |
 |---|---|
-| `router/` | Stdlib-only role router + systemd user units for the two workers. Evaluator infrastructure; not called by the gateway |
+| `router/` | Retired. Role router for small worker models, with their systemd units. See `router/README.md` |
 | `gateway/` | Example gateway configuration (model aliases, MCP endpoints) |
 | `policies/` | Machine-readable approval policy + human-readable mirrors |
 | `services/compose/` | One directory per service: task backend (Vikunja) and bridge/MCP pairs for memory and Google Workspace |
@@ -354,9 +350,8 @@ and others) that no tool implements.
 
 AMD Strix Halo (Ryzen AI Max+ 395, Radeon 8060S iGPU, gfx1151, unified
 memory) running Ubuntu Server with llama.cpp (Vulkan) serving a ~35B MoE
-model at up to 200K context, plus two small worker models. Any machine that
-can serve an OpenAI-compatible endpoint works; the router and CLI are
-stdlib-only Python.
+model at up to 200K context. Any machine that can serve an OpenAI-compatible
+endpoint works, and the CLI is stdlib-only Python.
 
 ## Identity
 

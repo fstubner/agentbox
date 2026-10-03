@@ -193,9 +193,14 @@ def test_every_live_mcp_tool_is_mapped(tool_map):
         if module.name.startswith("_"):
             continue
         src = code_of(module)
-        if "TOOLS = [" not in src:
+# The live list only. A bare substring search for "TOOLS = [" also
+        # matches RETIRED_TOOLS, and reading on to the next def swallows
+        # whatever list follows, so retired tools were counted as live.
+        m = re.search(r"^TOOLS\b[^=\n]*=\s*\[", src, re.M)
+        if not m:
             continue
-        block = src.split("TOOLS = [", 1)[1].split("\ndef ", 1)[0]
+        rest = src[m.end():]
+        block = "" if rest.lstrip().startswith("]") else re.split(r"^\]", rest, maxsplit=1, flags=re.M)[0]
         for name in re.findall(r'"name":\s*"([a-z_]+)"', block):
             seen += 1
             assert name in tiered, f"{module.stem} exposes untiered tool: {name}"

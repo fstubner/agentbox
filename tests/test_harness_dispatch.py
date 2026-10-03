@@ -203,11 +203,34 @@ def test_harness_module_is_in_the_image():
     assert "app/harness.py /app/harness.py" in dockerfile
 
 
-def test_both_tools_are_policy_mapped():
-    policy = (Path(__file__).resolve().parents[1]
-              / "policies/approval-policy.yaml").read_text()
-    assert "triage_email: personal_data_read" in policy
-    assert "check_reasoning: local_only" in policy
+def test_retired_tools_are_not_offered_to_the_assistant():
+    """Retired 2026-09-16 with the router they call.
+
+    A registered tool whose backend is gone fails on every call, and the
+    assistant cannot tell that apart from an outage, so it keeps trying. The
+    definitions are kept in RETIRED_TOOLS so bringing them back is one line,
+    and they are not in TOOLS, which is all the server collects.
+    """
+    import importlib.util
+    import sys
+    sys.path.insert(0, str(APP))
+    spec = importlib.util.spec_from_file_location(
+        "harness_integration", APP / "integrations" / "harness.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["harness_integration"] = module
+    spec.loader.exec_module(module)
+    retired = {t["name"] for t in module.RETIRED_TOOLS}
+    assert retired == {"triage_email", "check_reasoning"}
+    assert module.TOOLS == []
+
+
+def test_retired_tools_have_no_policy_mapping():
+    """No mapping for a tool nothing registers. When one is re-registered,
+    test_every_live_mcp_tool_is_mapped fails until its mapping comes back."""
+    policy = code_of(Path(__file__).resolve().parents[1]
+                     / "policies/approval-policy.yaml")
+    assert "triage_email:" not in policy
+    assert "check_reasoning:" not in policy
 
 
 def test_triage_never_returns_the_body_to_the_caller(monkeypatch):

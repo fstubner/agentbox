@@ -93,7 +93,7 @@ def _has_items(label: str, key: str | None = None, needs: str = ""):
 
 
 def _recent_message_id(tool_call, token):
-    """Find any real message to triage.
+    """Find a real message with readable text to summarise.
 
     Without this, the triage scenario sent a fake id and Gmail's 400 arrived
     before the dispatch ever ran — the one scenario meant to exercise the
@@ -110,7 +110,7 @@ def _recent_message_id(tool_call, token):
     # Screen candidates through clean_gmail — bridge calls, no model
     # inference — because the newest message anywhere is often a calendar
     # invite or image-only mail with no extractable text, and "that one
-    # message was unreadable" must not score the whole triage path blocked.
+    # message was unreadable" must not score the whole summary path blocked.
     for message in messages:
         message_id = message.get("id") or message.get("message_id")
         if not message_id:
@@ -157,16 +157,17 @@ SCENARIOS = [
 
     Scenario(
         "Summarise that email without me reading it.",
-        "triage_email", {},
-        # A real message id, found by prepare — so a READY here means an
-        # actual email went through the dispatch table, the schema held, and
-        # a typed answer came back. The whole item-8 path, live.
-        lambda ok, p: (READY, f"triaged by the {p.get('model_role', '?')} model"
-                       + (" (escalated)" if p.get("escalated") else ""))
-        if ok and isinstance(p, dict)
+        "clean_gmail", {},
+        # The cleaned body of a real message found by prepare, which the main
+        # model then summarises. This used to go through triage_email and a
+        # small worker, which kept the body out of the conversation. That route
+        # is retired with the router (see router/README.md). The body now
+        # enters the conversation, but the question still has an answer, and
+        # this checks that it does.
+        lambda ok, p: (READY, f"{len(p['clean_text'])} characters ready to summarise")
+        if ok and isinstance(p, dict) and p.get("clean_text")
         else (BLOCKED, str(p)[:110]),
-        needs="the model router reachable from the gateway (172.17.0.1:8765), "
-              "and Gmail connected",
+        needs="Gmail connected",
         prepare=_recent_message_id),
 
     Scenario(
@@ -273,7 +274,7 @@ def run(tool_call, token: str) -> dict:
 # being helped. Kept here beside the scenarios so the two notions of "useful"
 # cannot drift.
 HOUSEHOLD_TOOLS = frozenset({
-    "search_gmail", "read_gmail", "clean_gmail", "triage_email",
+    "search_gmail", "read_gmail", "clean_gmail",
     "list_calendar_events", "calendar_freebusy", "create_gmail_draft",
     "search_drive", "read_drive_file", "list_recent_drive_files",
     "set_home_light", "activate_home_scene", "set_home_climate",
