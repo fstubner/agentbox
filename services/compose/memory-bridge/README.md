@@ -49,7 +49,7 @@ Data is stored in a Docker named volume at `/data/memory.json`.
 The assistant may propose a memory. Approving one, or writing straight to
 durable memory, requires `MEMORY_REVIEW_TOKEN` sent as
 `X-Memory-Review-Token`, a second credential the assistant never holds.
-With it unset, approval returns 503: durable memory stops accepting writes
-rather than accepting them from anyone holding the bridge token.
+If it is unset, approval returns 503. Durable memory then refuses all writes,
+so the bridge token alone can never write to it.
 
 Operators use `cli/agentbox memory list|approve|reject`.

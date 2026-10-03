@@ -1,8 +1,8 @@
 """Drive write confinement, query construction, and untrusted-content labelling.
 
-Drive is the broadest surface added to this system so far: search reaches every
-document, and a document is text somebody else may have written. These test the
-constraints that hold when the model is doing something it should not.
+Drive is the broadest surface in this system. Search reaches every document,
+and a document is text somebody else may have written. These test the
+constraints that hold when the model tries to do something it should not.
 """
 from __future__ import annotations
 
@@ -50,9 +50,8 @@ def test_parents_default_to_the_agent_folder(gb):
 def test_unset_folder_disables_writes_rather_than_unrestricting(gb, monkeypatch):
     """A missing config must remove the capability, never widen it.
 
-    The failure direction matters more than the failure: an unset variable that
-    meant "anywhere" would turn a deployment that never asked for Drive writes
-    into one with unconstrained ones.
+    If an unset variable meant "anywhere", a deployment that never asked for
+    Drive writes would get unconstrained ones.
     """
     patch_everywhere(monkeypatch, gb, "AGENT_DRIVE_FOLDER_ID", "")
     with pytest.raises(gb.BridgeError) as exc:
@@ -69,17 +68,17 @@ def test_only_text_formats_can_be_created(gb, monkeypatch):
 
 
 def test_there_is_no_delete_or_share_route(gb):
-    """Absent rather than gated.
+    """Deleting and sharing have no route.
 
-    Sharing is how a private document quietly becomes a public link, and
-    deletion of user data is always_denied policy. Neither should be reachable
-    by any argument to any route.
+    Sharing can turn a private document into a public link, and deleting user
+    data is always_denied in the policy. No argument to any route may reach
+    either.
     """
     for path in gb._POST_ROUTES:
         assert "delete" not in path
 
-    # Sharing may be read, because "is this public?" is worth asking, but
-    # never changed, because that turns a private document into a public link.
+    # Sharing may be read, so the assistant can answer "is this public?". It
+    # is never changed, because that can make a private document public.
     # Checked through the syntax tree, since a text search would match a
     # comment.
     import ast
@@ -106,9 +105,9 @@ def test_there_is_no_delete_or_share_route(gb):
 def test_caller_cannot_inject_drive_query_syntax(gb, monkeypatch):
     """`q` is built here, never accepted from the caller.
 
-    A caller-supplied query string is a small query language, and a query
-    language reaching an API this broad is a way to ask for things the tool
-    schema never offered.
+    A caller-supplied query string is a small query language. Passing it to an
+    API this broad would let a caller ask for things the tool schema does not
+    offer.
     """
     seen = {}
     patch_everywhere(monkeypatch, gb, "google_json",
@@ -117,7 +116,7 @@ def test_caller_cannot_inject_drive_query_syntax(gb, monkeypatch):
     gb.drive_search({"query": "' or fullText contains '"})
     url = seen["url"]
     # The quote that would close the literal is escaped, so the injected
-    # `or` clause stays inside the string rather than becoming syntax.
+    # `or` clause stays inside the string and does not become syntax.
     assert "\\'" in urllib_unquote(url)
     assert "trashed = false" in urllib_unquote(url)
 
@@ -142,9 +141,9 @@ def test_empty_query_is_refused(gb):
 def test_file_text_is_labelled_untrusted(gb, monkeypatch):
     """A document is text a person wrote, possibly not the person who owns it.
 
-    Naming the field `untrusted_text` is the same move as the camera captions:
-    the label travels with the value, so a reader downstream has no excuse for
-    treating document content as instruction.
+    The field is named `untrusted_text`, as with the camera captions. The label
+    travels with the value, so any reader downstream knows the document content
+    is not instruction.
     """
     patch_everywhere(monkeypatch, gb, "drive_metadata",
                         lambda fid: {"id": fid, "name": "notes",
@@ -167,8 +166,8 @@ def test_google_docs_are_exported_not_downloaded(gb, monkeypatch):
 
 
 def test_long_documents_are_truncated_and_say_so(gb, monkeypatch):
-    """Silently truncating would let the assistant reason over a fragment while
-    believing it read the whole thing."""
+    """Truncating without saying so would let the assistant reason over a
+    fragment while believing it read the whole document."""
     patch_everywhere(monkeypatch, gb, "drive_metadata",
                         lambda fid: {"id": fid, "mimeType": "text/plain"})
     patch_everywhere(monkeypatch, gb, "google_bytes",
@@ -198,9 +197,9 @@ def test_folders_are_not_readable_as_files(gb, monkeypatch):
 
 
 def test_every_drive_tool_is_mapped_to_a_capability():
-    """An unmapped tool defaults to approval_required, which would make Drive
-    look broken rather than denied. Deny-by-default is right; arriving there by
-    forgetting to map a tool is not."""
+    """An unmapped tool defaults to approval_required, which makes Drive look
+    broken. Deny by default is correct, but a tool should reach it by a
+    mapping, not because someone forgot one."""
     import re
     policy = (REPO / "policies" / "approval-policy.yaml").read_text()
     tools = dict(re.findall(r"^  (\w+): (\w+)$", policy, re.M))
@@ -266,7 +265,7 @@ def test_broad_drive_read_is_opt_in(monkeypatch):
 
 
 def test_ambiguous_optin_values_do_not_grant_broad_read(monkeypatch):
-    """Anything other than a deliberate yes must fall to the narrow scope."""
+    """Anything other than a clear yes must fall to the narrow scope."""
     for value in ("", "0", "no", "false", "maybe"):
         assert not [s for s in _oauth_scopes(monkeypatch, value)
                     if "drive.readonly" in s]
@@ -313,7 +312,7 @@ def test_activity_defaults_to_the_whole_drive(gb, monkeypatch):
 
 def test_activity_is_flattened_and_actors_are_not_invented(gb, monkeypatch):
     """Resolving a user id to a name needs another call and a wider scope.
-    'someone' is honest; a fabricated name would not be."""
+    Without it the actor is shown as 'someone', never a made-up name."""
     patch_everywhere(monkeypatch, gb, "google_json", lambda *a, **k: {"activities": [{
         "timestamp": "2026-08-06T10:00:00Z",
         "primaryActionDetail": {"edit": {}},
@@ -358,7 +357,7 @@ def test_current_user_needs_no_lookup(gb):
 
 
 def test_missing_contacts_scope_does_not_break_activity(gb, monkeypatch):
-    """Names are a courtesy. Without the contacts scope the history still
+    """Names are optional. Without the contacts scope the history still
     works, with actors shown as "someone".
     """
     def fake(method, url, payload=None, **kwargs):
@@ -473,11 +472,11 @@ def test_ambiguous_values_do_not_widen_any_consent_path(monkeypatch, path, value
 
 
 def test_no_delete_helper_exists_in_the_credential_holder():
-    """The bridge contains no delete helper at all.
+    """The bridge contains no delete helper.
 
-    Deleting mail and files is always_denied and has no tool. Code that could
-    do it would still sit in the process holding the OAuth credential, one call
-    away from being reachable.
+    Deleting mail and files is always_denied and has no tool. A helper that
+    could delete would still sit in the process holding the OAuth credential,
+    one call away from being reachable.
     """
     source = (REPO / "services/compose/google-workspace-bridge"
               / "app" / "bridge.py").read_text()

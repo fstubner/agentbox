@@ -9,10 +9,10 @@ services:
       BRIDGE_PORT: "8080"
     # Published for standalone testing during review. Once this bridge has an
     # integration module in agentbox-mcp, REMOVE this ports block and change
-    # the exposure label back to `private`: a bridge that stays host-reachable
-    # keeps its token spendable by any local process, which is what the
-    # gateway topology exists to prevent. `validate` allows the port only
-    # while the label says `operator`.
+    # the exposure label back to `private`. If a bridge stays host-reachable,
+    # any local process can use its token, and the gateway topology exists to
+    # prevent that. `validate` allows the port only while the label says
+    # `operator`.
     ports:
       - "${LAN_BIND_IP:-127.0.0.1}:3480:8080"
     cpus: "0.50"

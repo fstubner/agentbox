@@ -56,9 +56,9 @@ def known_identities(also: dict[str, str] | None = None) -> set[str]:
     the portal faces the LAN and should not hold a bearer credential.
     """
     # `also` is the form's own submission, merged over what is stored. The
-    # settings page saves identity_emails and admins under one button, so
-    # checking admins against stored state alone refused the obvious flow:
-    # add somebody's address and name them admin in the same save.
+    # settings page saves identity_emails and admins under one button.
+    # Checking admins against stored state alone would refuse adding
+    # somebody's address and naming them admin in the same save.
     names = set(email_map().values()) | portal.discord_identities()
     for pair in (also or {}).get("identity_emails", "").split(","):
         name, _, address = pair.partition(":")
@@ -72,8 +72,8 @@ def known_identities(also: dict[str, str] | None = None) -> set[str]:
 def admin_names() -> set[str]:
     """Identities with the admin role.
 
-    Empty means nobody is an admin, which is the correct failure direction: a
-    misread setting should remove privilege, never hand it out.
+    Empty means nobody is an admin. A misread setting should remove
+    privilege, never grant it.
     """
     return {n.strip() for n in portal.SETTINGS.value("admins").split(",") if n.strip()}
 
@@ -95,8 +95,8 @@ def role_of(identity: str) -> str:
 def can(role: str, capability: str, origin: str = portal.ORIGIN_EMAIL) -> bool:
     """Whether this session may exercise `capability`.
 
-    Two gates, and both must pass: the role says what this person may ever do,
-    the origin says what this particular sign-in may do. An unknown origin is
+    Two gates must both pass. The role says what this person may ever do. The
+    origin says what this particular sign-in may do. An unknown origin is
     treated as agent-minted, which is the safe direction for a value that
     arrived from disk.
     """
@@ -113,10 +113,10 @@ def can(role: str, capability: str, origin: str = portal.ORIGIN_EMAIL) -> bool:
 def refusal(role: str, capability: str, origin: str = portal.ORIGIN_EMAIL) -> str:
     """Which gate refused, as a flash key. Empty when nothing refused.
 
-    `can` combines two gates into one yes or no, which is right for deciding
-    and wrong for explaining. A member refused an admin-only action should be
-    told about their role, not sent to request another link that would be
-    refused the same way.
+    `can` combines two gates into one yes or no. That is enough to decide,
+    but not to explain a refusal. A member refused an admin-only action
+    should be told about their role, not sent to request another link that
+    would be refused the same way.
     """
     if capability not in portal.ROLE_CAPABILITIES.get(role, frozenset()):
         return "admin_only"
@@ -185,8 +185,8 @@ def mint_link(identity: str, base_url: str, request_nonce: str = "",
     An empty nonce is accepted for links the operator hands over directly
     (`portal link`), where there is no browser to bind to.
 
-    Past the hourly cap this raises RuntimeError rather than issuing quietly,
-    so a flood is visible to whoever caused it.
+    Past the hourly cap this raises RuntimeError instead of issuing a link,
+    so whoever caused the flood sees it.
     """
     if _recent_link_count(identity) >= portal.MAX_LINKS_PER_HOUR:
         raise RuntimeError(
@@ -197,9 +197,9 @@ def mint_link(identity: str, base_url: str, request_nonce: str = "",
     record = {
         "id": link_id,
         "identity": identity,
-        # The hash, never the secret. This file is not a login.
+        # The hash, never the secret, so this file cannot be used to sign in.
         "secret_hash": _hash(secret),
-        # Hashed for the same reason the secret is: this file is not a login.
+        # Hashed for the same reason as the secret.
         "nonce_hash": _hash(request_nonce) if request_nonce else "",
         "origin": origin,
         "created_at": portal.now(),
@@ -217,9 +217,9 @@ def redeem_link(link_id: str, secret: str,
                 request_nonce: str = "") -> tuple[str, str, str]:
     """Consume a link, returning (identity, origin, reason).
 
-    Three fields rather than two because origin and reason are different
-    things, and a slot meaning "origin on success, reason on failure" is how a
-    caller ends up treating an error string as a privilege level.
+    It returns three fields because origin and reason are different things.
+    One slot meaning "origin on success, reason on failure" could lead a
+    caller to treat an error string as a privilege level.
 
     Marks the link used *before* returning, so two concurrent redemptions of a
     stolen link cannot both succeed.
@@ -241,7 +241,7 @@ def redeem_link(link_id: str, secret: str,
     expected = str(record.get("nonce_hash", ""))
     origin = str(record.get("origin", portal.ORIGIN_AGENT))
     if expected and not hmac.compare_digest(expected, _hash(request_nonce)):
-        # Not a refusal but a downgrade. See ORIGIN_CHAT.
+        # The link is downgraded, not refused. See ORIGIN_CHAT.
         origin = portal.ORIGIN_CHAT
     if record.get("used_at"):
         return "", "", "This link has already been used. Ask for a new one."
@@ -250,8 +250,8 @@ def redeem_link(link_id: str, secret: str,
     if origin == portal.ORIGIN_CHAT:
         # Not used up. Otherwise whoever read the message could lock the real
         # person out, and would also read the next link sent on the same
-        # channel. Full access is still single-use, and limited access simply
-        # does not consume the link.
+        # channel. Full access is still single-use, and limited access does
+        # not consume the link.
         return str(record.get("identity", "")), origin, ""
 
     record["used_at"] = portal.now()
@@ -281,9 +281,9 @@ def new_session(identity: str, origin: str = portal.ORIGIN_EMAIL) -> str:
 def load_session(sid: str) -> dict | None:
     """Resolve a cookie to (identity, role), or None.
 
-    The role is recomputed from the current admin list rather than trusted from
-    the stored record: removing someone from AGENTBOX_ADMINS must take effect
-    immediately, not whenever their session happens to expire.
+    The role is recomputed from the current admin list, not read from the
+    stored record. Removing someone from AGENTBOX_ADMINS must take effect
+    immediately, not when their session expires.
     """
     if not sid:
         return None
@@ -348,7 +348,7 @@ def consent_state(identity: str) -> str:
 
     Keyed per identity so one person's consent cannot be redirected into
     another's record, and keyed on a random secret so nobody off the box can
-    compute a valid state at all.
+    compute a valid state.
     """
     return hmac.new(state_secret().encode(), f"google:{identity}".encode(),
                     hashlib.sha256).hexdigest()

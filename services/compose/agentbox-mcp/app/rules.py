@@ -1,4 +1,4 @@
-"""Cross-service rules: a small grammar, deliberately not a language.
+"""Cross-service rules, written in a small fixed grammar.
 
     rule = when <bridge-observed event | schedule>
            if   <literal predicates, no templates, no code>
@@ -8,14 +8,14 @@
 
 n8n could have been locked down, but that means taking a general-purpose
 engine and re-checking what was removed on every upgrade. A grammar defined
-here cannot express what it leaves out. Expressiveness is spent only on what
-can be verified.
+here cannot express what it leaves out. It only includes what can be verified.
 
 ## Why it is not Turing-complete
 
 Every rule can be checked before it is stored: the tool exists, the arguments
 fit its schema, the predicates compare literals and the identity is real. A
-rule that passes cannot fail later for a reason someone has to debug at 3am.
+rule that passes cannot fail later, while it runs unattended, for a reason
+someone then has to debug.
 
 There are no templates, and no syntax for them, so there is nothing to escape.
 Any `{{` in a rule is a validation error.
@@ -36,7 +36,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Predicates compare a field to a literal. That is the entire vocabulary.
+# Predicates compare a field to a literal. There are no other predicate forms.
 #
 # No arithmetic, no string building, no regular expressions, no references to
 # other rules. Each one is a total function over two values, so evaluation
@@ -54,17 +54,16 @@ OPERATORS = {
     "is_present": lambda a, b: (a is not None) == bool(b),
 }
 
-# Event sources a rule may trigger on. A closed set: an event kind nobody has
-# thought about is not a trigger, it is a validation error.
+# Event sources a rule may trigger on. This is a closed set, so an unknown
+# event source is a validation error.
 EVENT_SOURCES = ("homeassistant", "gmail", "calendar", "vikunja", "schedule")
 
-# Fields an event may expose. Closed for the same reason as the operators: a
-# predicate over an unknown field silently never matches, which is the worst
-# way for a rule to be wrong.
+# Fields an event may expose. Closed for the same reason as the operators. A
+# predicate over an unknown field would never match and give no error.
 EVENT_FIELDS = ("source", "kind", "entity_id", "state", "previous_state",
                 "label", "subject", "sender", "project", "title", "at")
 
-MAX_ACTIONS = 5          # a rule is a rule, not a program
+MAX_ACTIONS = 5          # keeps each rule short
 MAX_PREDICATES = 10
 TEMPLATE = re.compile(r"\{\{|\}\}|\$\{|<%")
 
@@ -93,9 +92,8 @@ def _number(value: Any):
 def _no_templates(node: Any, where: str) -> None:
     """Refuse template syntax anywhere in the rule, at any depth.
 
-    A rule is data. The moment any part of it is evaluated as an expression,
-    static checking stops meaning anything and the grammar has quietly become
-    a language.
+    A rule is data. If any part of it were evaluated as an expression, static
+    checking would no longer prove anything about what the rule does.
     """
     if isinstance(node, str):
         if TEMPLATE.search(node):
@@ -130,9 +128,9 @@ def validate(rule: dict, known_tools: dict[str, dict],
         raise RuleInvalid("name must be lowercase letters, digits and hyphens, "
                           "3-49 characters")
 
-    # A rule fires as somebody. Not as "the system": every action it takes uses
-    # that person's credentials and is visible in their scope, so an unowned
-    # rule would be an action with no accountable identity behind it.
+    # A rule fires as a named person, never as a system identity. Every action
+    # it takes uses that person's credentials and is visible in their scope.
+    # A rule with no owner would act with no accountable identity.
     identity = str(rule.get("identity", "")).strip()
     if identity not in known_identities:
         raise RuleInvalid(f"identity '{identity}' is not configured; known: "
@@ -200,9 +198,9 @@ def validate(rule: dict, known_tools: dict[str, dict],
         if allowed and unknown:
             raise RuleInvalid(f"do[{index}]: '{tool}' has no argument(s) "
                               f"{unknown}")
-        # Recorded, not enforced here: the policy gate is authoritative at fire
-        # time. Surfacing it now means the author learns that a rule will need
-        # a grant before it silently does nothing at 3am.
+        # Recorded, not enforced here. The policy gate is authoritative at
+        # fire time. Recording it now tells the author that the rule needs a
+        # grant, before it runs unattended and does nothing.
         if capability_of is not None:
             action["_capability"] = capability_of(tool) or ""
 

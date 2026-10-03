@@ -13,7 +13,7 @@ def bind(portal_mod: Any) -> None:
 
 
 def render_status_card() -> str:
-    """What is actually running, rather than a paragraph about why it matters."""
+    """What is running on this box."""
     snap = _portal.agentbox_status.cached()
     age = _portal.time_ago(max(0, _portal.now() - snap.taken_at))
 

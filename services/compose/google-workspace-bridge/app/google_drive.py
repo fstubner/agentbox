@@ -23,7 +23,7 @@ from google_api import (
 # Each route function takes the request body and returns a JSON-able payload.
 # --- Drive ---------------------------------------------------------------------
 #
-# Two scopes, and the difference between them is the security story.
+# Two scopes. The difference between them sets what the assistant can reach.
 #
 #   drive.file      write access only to files this app created. Google
 #                   enforces it, so even a compromised bridge cannot touch
@@ -295,9 +295,8 @@ def drive_activity(body):
 def drive_sharing(body):
     """Who can currently see one file.
 
-    Reading sharing settings is not changing them. "Is anything of mine public?"
-    is worth being able to ask, and making something public belongs to a
-    person, so this only lists.
+    This only lists sharing settings and never changes them. It answers "is
+    anything of mine public?". Making something public is left to a person.
     """
     file_id = str(body.get("file_id", "")).strip()
     if not file_id:

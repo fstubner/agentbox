@@ -1,31 +1,23 @@
 # Agentbox
 
-I designed this system. AI agents wrote most of the implementation, working to
-my architecture and my decisions.
+I designed Agentbox. AI agents wrote most of the code, working from my
+architecture and decisions.
 
-That is why so much of this repository is scaffolding rather than features.
-Dangerous capabilities are absent rather than gated. Identity comes from the
-session and never from a tool argument. Tests hold the invariants, and they
-have caught me breaking them. Acceptance runs in a separate session so the
-builder never signs off its own work, and a clean-room check follows the README
-on a machine that has never seen it. That is what makes it reasonable to point
-agents at a system holding real credentials.
+Because agents write the code, the safety rules are enforced in code and
+checked by tests. Dangerous actions have no tool at all. Who the assistant acts
+for comes from the session and never from a tool argument. Acceptance runs in a
+separate session from the build, and a CI job follows the README on a fresh
+machine every week.
 
-Each line under Success has its real status. **Met** means I checked it on a
-running system. **Partial** means it works for some of the people it names and
-not others. **Not yet** means the mechanism exists but nobody has used it for
-real. Every claim points at a file in this repository.
+Each line under Success has a status. **Met** means I checked it on a running
+system. **Partial** means it works for some of the people it names. **Not
+yet** means it is built but nobody has used it for real.
 
 ## Purpose
 
 Give one household an assistant that runs on hardware they own, reaches their
 real accounts through narrow tools rather than a shell, and remembers only what
 a person has approved.
-
-The bet is **"one person, a million times, for years"**. The same people, the
-same data sources and the same few hundred recurring requests, rather than a
-million strangers once each. Anything expensive is worth doing once if it pays
-off across years of use.
 
 ## Users
 
@@ -39,9 +31,8 @@ more than one of each.
 
 Some things are shared and some are private. Tasks, shopping and joint
 scheduling are shared. Each person's mail, calendar detail and personal
-memories are private. I rejected running a separate stack per person, because
-an assistant that cannot answer "when are we both free" loses most of its
-value.
+memories are private. I decided against a separate stack per person, because
+then it could not answer "when are we both free".
 
 A box with no identities configured runs in single-operator mode, with one
 shared token and every memory belonging to that one operator. It is supported
@@ -51,7 +42,6 @@ household.
 
 ## Success
 
-These are targets, not a status report. Each line says how far off it is.
 Status last checked 2026-08-19.
 
 - **Partial, admin only.** A household member can read every memory proposed
@@ -84,7 +74,7 @@ Status last checked 2026-08-19.
   a shell. I checked this during an evaluation with four services up and five
   down, and it reported them correctly.
 - **Met.** The assistant cannot send mail, delete a file, unlock a door or
-  approve its own memory. Tests check this, not instructions.
+  approve its own memory. Tests check this.
 - **Partial, Discord only.** A person can speak to the assistant and hear a
   reply without any audio leaving the box (`docs/voice.md`). This works through
   Discord with Piper and faster-whisper. The services for microphones around the
@@ -112,7 +102,7 @@ Status last checked 2026-08-19.
   own box.
 - **The assistant never holds an upstream credential.** OAuth tokens live in
   bridge containers, and secret references resolve at deploy time.
-- **Tools, not a shell.** MCP tools with explicit contracts and no terminal
+- **No shell.** MCP tools with explicit contracts and no terminal
   access (`docs/architecture.md`).
 - **Identity is bound to the session, never passed per call.** If the
   assistant could choose which account to act as, an instruction hidden in an
@@ -142,8 +132,8 @@ Status last checked 2026-08-19.
 - **Not multi-tenant.** One household on one box, not a service for strangers.
 - **Not cloud-first.** Remote models are an exception, not the default.
 - **No tool for irreversible actions.** Sending, deleting, unlocking and
-  sharing are absent rather than gated, because absence survives a compromised
-  model.
+  sharing have no tool, because a compromised model cannot call a tool that
+  does not exist.
 
 ## Acceptance
 

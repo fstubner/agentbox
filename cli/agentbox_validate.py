@@ -20,10 +20,10 @@ PORT_MAPPING = re.compile(r'^\s*-\s*"?\d+:\d+')
 
 
 # Every tool schema is sent to the model on every turn, used or not, and
-# together they are the largest fixed cost per turn. A documented figure once
-# drifted to three times its stated value without anyone noticing, so this
-# measures it. It is a ceiling with room to spare, so adding a tool needs no
-# edit here but tripling the cost needs a deliberate decision.
+# together they are the largest fixed cost per turn. A documented figure can
+# drift far from the real value without anyone noticing, so this measures it.
+# The ceiling has room to spare. Adding a tool needs no edit here, but
+# tripling the cost needs an explicit change to the ceiling.
 TOOL_SCHEMA_TOKEN_BUDGET = int(os.environ.get(
     "AGENTBOX_TOOL_SCHEMA_BUDGET", "9000"))
 
@@ -113,8 +113,9 @@ def validate() -> int:
         if "no-new-privileges:true" not in text:
             error(f"compose service should set no-new-privileges: {rel}")
 
-    # A container running as root is one `docker exec` from being root on its
-    # bind mounts. Forgetting to drop it is easy and silent, so it is checked.
+    # With one `docker exec`, a container running as root gives root on its
+    # bind mounts. Leaving root in place is easy and raises no error, so it is
+    # checked.
     for dockerfile in sorted(REPO.glob("services/compose/*/Dockerfile")):
         text = dockerfile.read_text(encoding="utf-8")
         if not re.search(r"^USER\s+\S+", text, re.M):
@@ -124,9 +125,10 @@ def validate() -> int:
             error(f"Dockerfile must not run as root: "
                   f"{dockerfile.relative_to(REPO)}")
 
-    # Docker's compose parser varies by version, and older versions on CI
-    # rejected valid files. So this reports rather than fails. A broken file
-    # still stops `deploy`, and the rules above are checked by code here.
+    # Docker's compose parser varies by version, and older versions, such as
+    # the one on CI, reject valid files. So this reports rather than fails. A
+    # broken file still stops `deploy`, and the rules above are checked by
+    # code here.
     if os.environ.get("AGENTBOX_VALIDATE_SKIP_COMPOSE") == "1":
         report(WARN, "compose config validation skipped "
                      "(AGENTBOX_VALIDATE_SKIP_COMPOSE=1)")
@@ -169,8 +171,8 @@ def validate() -> int:
     except OSError:
         error("policies/approval-policy.yaml missing")
 
-    # Lint blocks a deploy. A NameError that ruff had already reported once
-    # shipped and crash-looped the bridge holding the Google credential.
+    # Lint blocks a deploy, so an error ruff reports, such as a NameError,
+    # cannot ship and crash-loop a bridge.
     #
     # Missing ruff is a warning, so a machine without dev tools can still
     # deploy, but it never reads as a pass. Lint only runs where this

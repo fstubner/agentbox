@@ -1,11 +1,11 @@
 
 """Reviewing memories from Discord, where the assistant is also listening.
 
-This shares a process with the grant loop deliberately, because it needs
-exactly the same protections and reimplementing them is how they drift. The
-one thing it adds is a privacy rule the grant loop never needed: a grant is
-about a tool and is nobody's secret, but a memory proposal can be private to
-one person, and a shared channel is the wrong place for it.
+This shares a process with the grant loop because it needs the same
+protections, and a second implementation of them could drift. It adds one
+privacy rule the grant loop does not need. A grant is about a tool and is not
+secret. A memory proposal can be private to one person, so it must not be
+posted to a shared channel.
 """
 from __future__ import annotations
 
@@ -57,13 +57,13 @@ def test_the_assistants_own_messages_are_never_acted_on():
     memory_handling = loop.index("handle_memory_reply")
     assert bot_check < memory_handling, \
         "memory replies are handled before bots are filtered out"
-    # And the operator allowlist is also ahead of it.
+    # The operator allowlist is also checked first.
     assert loop.index("not in operators") < memory_handling
 
 
 def test_a_private_proposal_never_reaches_the_shared_channel(monkeypatch):
-    """Posting one person's private proposal where the household reads it is
-    a disclosure neither of them chose."""
+    """Posting one person's private proposal where the household reads it
+    would disclose it without that person's consent."""
     posted = Recorder()
     patch_everywhere(monkeypatch, lib, "discord", posted)
     patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
@@ -127,8 +127,8 @@ def test_a_feedback_proposal_says_so_in_the_prompt(monkeypatch):
 
 
 def test_an_ambiguous_id_prefix_acts_on_nothing(monkeypatch):
-    """Two memories sharing four characters must not mean the wrong one is
-    silently forgotten."""
+    """When two memories share a four-character prefix, the command must not
+    act on either, or the wrong one could be forgotten."""
     patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "proposals": [{"id": "aaaa1111"}, {"id": "aaaa2222"}],
         "memories": []})
@@ -199,8 +199,8 @@ def test_remember_replaces_links_them_in_one_step(monkeypatch):
 
 
 def test_replaces_links_two_already_stored(monkeypatch):
-    """The suggestion arrives after the write, so this is the shape it
-    usually needs."""
+    """The suggestion arrives after the write, so both memories are usually
+    already stored."""
     calls = []
     patch_everywhere(monkeypatch, lib, "discord", Recorder())
     patch_everywhere(monkeypatch, lib, "resolve_memory",
@@ -215,8 +215,8 @@ def test_replaces_links_two_already_stored(monkeypatch):
 
 
 def test_a_suggestion_tells_you_exactly_what_to_type(monkeypatch):
-    """Leaving two contradictory facts current with no instruction is how the
-    queue stops being trusted."""
+    """A possible contradiction comes with the exact command to resolve it,
+    so two conflicting facts are not left current."""
     posted = Recorder()
     patch_everywhere(monkeypatch, lib, "discord", posted)
     patch_everywhere(monkeypatch, lib, "resolve_memory", lambda p: ("new-12345678", "proposal"))

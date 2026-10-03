@@ -7,13 +7,13 @@ The tool definitions are kept in RETIRED_TOOLS. See router/README.md.
 
 FastContext-4B obeyed an instruction embedded in tool data in 10 of 10
 attempts (docs/architecture.md), and it is the model best suited to reading a
-long email. Cleaning the input first does not help, because the injection is
-in the data, and a model that reads the data to clean it has already done the
-work. So the dispatched model is constrained instead.
+long email. Cleaning the input first does not help. The injection is in the
+data, and a model that reads the data to clean it is exposed to the injection
+in the same way. So the dispatched model is constrained instead.
 
 - **It holds no tools.** The router speaks plain chat completions and returns a
-  string. An injected worker produces a wrong answer rather than a wrong
-  action, and wrong answers are visible.
+  string. An injected worker can produce a wrong answer but cannot take an
+  action, and a wrong answer is visible.
 - **Its output is typed and checked before anyone sees it.** `FIELDS` below is
   a fixed set of kinds. A corrupted `date` is rejected because "ignore your
   previous instructions" is not a date, and a corrupted `enum` because it is
@@ -22,14 +22,15 @@ work. So the dispatched model is constrained instead.
 The limit is `line`, bounded free text that carries whatever the model wrote.
 Tasks that can answer in dates, enums and booleans should. The ones that cannot
 set `carries_text=True`, so the tool description can say the field is quoted
-material. One 200-character line instead of a whole thread is a reduction, not
-a removal.
+material. One 200-character line instead of a whole thread reduces the
+exposure but does not remove it.
 
 ## Escalation
 
 Try the small local model, and only on a validation failure retry once at the
-escalation role. A model that returns unusable output twice fails loudly
-rather than falling back to prose, because prose is the channel being closed.
+escalation role. If the model returns unusable output twice, the call fails
+with an error. It does not fall back to prose, because free text is the
+channel this module closes.
 """
 from __future__ import annotations
 
@@ -44,7 +45,7 @@ ROUTER_URL = os.environ.get("AGENTBOX_HARNESS_ROUTER_URL",
                             "http://host.docker.internal:8765")
 
 # Escalation costs a second inference on a busier model. Off is a valid
-# deployment choice; the ladder then simply stops after the local attempt.
+# deployment choice. With it off, dispatch stops after the local attempt.
 ESCALATION_ENABLED = os.environ.get("AGENTBOX_HARNESS_ESCALATE", "1") != "0"
 
 ROLE_ROUTES = {
@@ -130,8 +131,8 @@ def coerce(spec: dict, value):
     """Validate one field against its declared kind.
 
     Every kind either returns a value drawn from a shape the model cannot
-    choose freely, or raises. There is no passthrough kind: a
-    field with no contract is a field an injection can write.
+    choose freely, or raises. There is no passthrough kind, because an
+    injection could write any field that has no contract.
     """
     kind = spec["kind"]
     if value is None:
@@ -160,8 +161,8 @@ def coerce(spec: dict, value):
 def validate(fields: dict, payload) -> dict:
     """Coerce a whole result, refusing unknown keys.
 
-    Unknown keys are dropped rather than carried: a field nobody declared is a
-    field nobody checked, and it would ride straight into the caller's context.
+    Unknown keys are dropped. A field that was not declared was not checked,
+    and keeping it would pass it unvalidated into the caller's context.
     """
     if not isinstance(payload, dict):
         raise SchemaError("expected a JSON object")
@@ -208,18 +209,18 @@ TASKS = {
         },
         # Renamed on the way out, to the same convention Drive and Gmail reads
         # use for people-authored text. The model-facing key stays "summary"
-        # because a 4B model fills simple schemas more reliably; the caller
-        # sees "untrusted_summary" so the one field carrying the sender's
-        # bytes is named as loudly as every other such field on this platform.
+        # because a 4B model fills simple schemas more reliably. The caller
+        # sees "untrusted_summary", so the one field carrying the sender's
+        # bytes is named like every other such field on this platform.
         "quote_fields": {"summary": "untrusted_summary"},
     },
 }
 
-# The reasoner's case needs none of the above and is kept separate rather than
-# forced into the same table. Its input is the assistant's own reasoning, never
-# externally-authored text, so there is nothing to constrain and a free-text
-# answer is the useful answer. Routing it through a schema would only make it
-# worse. See roadmap item 8: "the reasoner needs none of this".
+# The reasoner's case needs none of the above and is kept out of the table. Its
+# input is the assistant's own reasoning, never externally-authored text, so
+# there is nothing to constrain and a free-text answer is the useful one. A
+# schema would make that answer worse. See roadmap item 8: "the reasoner needs
+# none of this".
 REASON_TASK = {
     "role": "reason",
     "instruction": ("Check this reasoning. Name any contradiction, unstated "
@@ -233,9 +234,8 @@ REASON_TASK = {
 def call_router(role: str, instruction: str, text: str, timeout: float = 120) -> str:
     """Ask one role endpoint for a completion. Returns text, never an action.
 
-    There is no tool plumbing here on purpose. The absence is the constraint:
-    a dispatched model cannot call anything because nothing is offered, which
-    holds whether or not it was talked into wanting to.
+    No tools are offered to the dispatched model, so it cannot call anything.
+    This holds even if an injection persuades it to try.
     """
     path = ROLE_ROUTES.get(role)
     if path is None:
@@ -329,10 +329,9 @@ def run_task(name: str, text: str, transport=call_router) -> dict:
                 "carries_quoted_text": bool(task.get("carries_text")),
                 **fields}
 
-    # No free-text fallback. Returning the model's prose on
-    # failure would hand the caller the unvalidated channel this whole
-    # module exists to close, and it would do it precisely when something has
-    # already gone wrong.
+    # No free-text fallback. Returning the model's prose on failure would
+    # give the caller the unvalidated channel this module closes, at the
+    # moment something has already gone wrong.
     raise HarnessError(f"no valid answer for {name}: " + "; ".join(problems))
 
 

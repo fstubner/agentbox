@@ -10,8 +10,8 @@ is a branch with a commit, so nothing is untracked and review is a `git diff`.
 
 Every other bridge holds a credential for someone else's API. This one can
 write the source of the system that constrains it. A proposed edit to the
-approval policy would need only one distracted approval. So the containment
-does not rely on careful reading.
+approval policy would need only one careless approval. So the containment
+does not depend on the reviewer reading carefully.
 
 - **Protected paths are refused.** The policy, both gates, the operator CLI and
   CI cannot be changed, whatever the stated reason. This is a path check
@@ -46,8 +46,8 @@ MAX_FILES_PER_PROPOSAL = int(os.environ.get("BUILDER_MAX_FILES", "25"))
 # Everything that constrains the assistant, and the operator's own tooling.
 # Matched as path prefixes after normalisation, so `policies/../policies/x` and
 # `./policies/x` are both caught. That includes the code that enforces the
-# policy, not only the policy file. A tidy refactor that drops one line is the
-# diff most likely to be approved.
+# policy, not only the policy file. A refactor that removes one enforcement
+# line is easy to approve by mistake.
 #
 # A list of named things rather than of writable areas, so the assistant can
 # still propose changes anywhere useful, including its own tools and bridges.

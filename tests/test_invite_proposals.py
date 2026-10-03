@@ -1,13 +1,13 @@
-"""The assistant may write an invitation. It may not decide who lives here.
+"""The assistant may draft an invitation. A person decides whether it is sent.
 
-`request_signin_link` takes no identity argument, because naming a person is
-what an instruction in an email would do. An invitation has to name someone
-with no session, so that protection is not available here.
+`request_signin_link` takes no identity argument, because an instruction in an
+email could name a person. An invitation has to name someone with no session,
+so that protection is not available here.
 
-Instead the tool does not act. It writes a draft, and a person on Operations
-decides. These tests check that the draft sends nothing, that the assistant
-cannot approve its own draft, and that an invitation naming someone who already
-lives here is refused.
+So the tool only writes a draft, and a person on Operations decides. These
+tests check that the draft sends nothing, that the assistant cannot approve its
+own draft, and that an invitation naming someone who already lives here is
+refused.
 """
 from __future__ import annotations
 
@@ -52,19 +52,19 @@ def portal(tmp_path, monkeypatch, spool):
 
 def test_inviting_somebody_to_a_name_in_use_is_refused(spool):
     """Completing an invite re-provisions that identity's bridge with whoever
-    answered the form. For a name already in use that is not an invitation,
-    it is handing somebody the account."""
+    answered the form. For a name already in use, that would hand somebody
+    the existing account."""
     with pytest.raises(spool.NameTaken):
         spool.create_invite("alex", {"alex", "sam"})
-    # A name nobody holds. Deliberately not one of the household's own names:
-    # this assertion is that a *free* name succeeds, so it has to be free.
+    # A name nobody holds. This checks that a free name succeeds, so it cannot
+    # be one of the household's names.
     made = spool.create_invite("newcomer", {"alex", "sam"})
     assert made["identity"] == "newcomer" and made["secret"]
 
 
 def test_the_check_cannot_be_forgotten(spool):
-    """`existing` is a required argument rather than something looked up, so
-    a new caller cannot omit the check by not knowing about it."""
+    """`existing` is a required argument, not looked up internally, so a new
+    caller cannot skip the check without noticing."""
     import inspect
     signature = inspect.signature(spool.create_invite)
     assert signature.parameters["existing"].default is inspect.Parameter.empty
@@ -74,8 +74,8 @@ def test_a_name_that_is_not_a_name_is_refused(spool):
     for bad in ("", "9lives", "a" * 33, "has space", "../etc", "-x"):
         with pytest.raises(ValueError):
             spool.create_invite(bad, set())
-    # Case is normalised rather than refused: somebody typing a capital is
-    # making a typo, not naming a different person.
+    # Case is normalised, not refused. A capital letter is a typo, not a
+    # different person.
     assert spool.create_invite("Sam", set())["identity"] == "sam"
 
 
@@ -88,7 +88,7 @@ def test_a_draft_creates_no_invite_and_sends_nothing(spool, tmp_path):
     # No invite record, so no credential exists yet.
     assert not list((tmp_path / "invites").glob("*.json")) if (
         tmp_path / "invites").exists() else True
-    # And nothing queued for the Discord bot to deliver.
+    # Nothing is queued for the Discord bot to deliver.
     requests = tmp_path / "portal" / "requests"
     assert not requests.exists() or not list(requests.glob("*.json"))
 
@@ -106,11 +106,11 @@ def test_discarding_leaves_nothing_behind(spool):
     assert spool.proposals() == []
 
 
-# --- the approval step is the whole safety argument ---------------------------
+# --- the approval step is the safeguard ---------------------------------------
 
 
 def test_the_assistant_cannot_approve_a_draft(portal):
-    """Without this the approval is decoration: the assistant could mint
+    """Without this the approval protects nothing. The assistant could mint
     itself a link, open its own draft, and send it."""
     for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
         assert not portal.can(portal.ADMIN, "ops:invite", origin), origin
@@ -151,7 +151,7 @@ def test_an_ordinary_draft_is_sendable(portal, spool):
 
 def test_delivery_does_not_consult_the_identity_lookup(portal):
     """An invitee has no registered address or paired account yet, so reusing
-    deliver_link would quietly send nothing."""
+    deliver_link would send nothing and report no error."""
     body = portal_code().split("def deliver_invite")[1][:1400]
     assert "delivery_channels" not in body
     assert "chat_account_for" not in body
@@ -161,11 +161,11 @@ def test_delivery_does_not_consult_the_identity_lookup(portal):
 
 def test_the_bot_dms_the_id_on_the_record(portal):
     """The approvals bot resolves identities to Discord ids. For an invite
-    there is no identity to resolve, so the id rides on the record."""
+    there is no identity to resolve, so the id is stored on the record."""
     body = script_code("agentbox-approvals")
     assert 'action == "deliver_invite"' in body
     assert 'record.get("discord_user_id"' in body
-    # And the identity map is still what the sign-in path uses.
+    # The sign-in path still uses the identity map.
     assert "mapping.get(identity)" in body
 
 
@@ -183,22 +183,22 @@ def test_the_tool_cannot_send(portal):
 
 
 def test_the_tool_says_it_does_not_send(portal):
-    """A tool that quietly drafts while the assistant announces it sent an
-    invitation is worse than no tool."""
+    """If the tool only drafts but the assistant says it sent an invitation,
+    the person is misled."""
     source = (REPO / "services" / "compose" / "agentbox-mcp" / "app" /
               "integrations" / "portal.py").read_text(encoding="utf-8")
     description = source.split('"name": "propose_invite"')[1][:1200]
     assert "NOT send anything" in description
     assert "admin" in description
-    # It must also tell the assistant to say so, or the model relays a
-    # confident "invitation sent" over the draft it actually made.
+    # It must also tell the assistant to say so, or the model may report
+    # "invitation sent" when it only made a draft.
     assert "Say that plainly" in description
 
 
 def test_the_tool_requires_somewhere_to_send_it(portal, tmp_path,
                                                 monkeypatch):
-    """An approved invitation with no channel is a dead end an admin only
-    discovers after deciding."""
+    """An approved invitation with no channel cannot be delivered, and the
+    admin would only find out after approving it."""
     source = code_of(
         "services/compose/agentbox-mcp/app/integrations/portal.py")
     body = source.split("def _propose_invite")[1][:900]
@@ -209,8 +209,8 @@ def test_the_proposed_name_is_not_called_identity(portal):
     """`identity` means who the assistant is acting for, and never comes from
     an argument, which test_portal_tool checks across the module.
 
-    This tool names an account that does not exist yet, a different thing, so
-    it uses a different word.
+    This tool names an account that does not exist yet, so it uses a
+    different word.
     """
     source = code_of(
         "services/compose/agentbox-mcp/app/integrations/portal.py")
@@ -219,7 +219,7 @@ def test_the_proposed_name_is_not_called_identity(portal):
 
 
 def test_the_tool_is_tiered_in_the_policy(portal):
-    """An unmapped tool fails closed silently, so the gate never sees it."""
+    """An unmapped tool fails closed without saying why, so check it here."""
     policy = (REPO / "policies" / "approval-policy.yaml").read_text(
         encoding="utf-8")
     assert "propose_invite: propose_invite" in policy
@@ -227,15 +227,14 @@ def test_the_tool_is_tiered_in_the_policy(portal):
 
 # --- creating an invite from the portal ---------------------------------------
 #
-# The last step of onboarding that still wanted a terminal. Everything after it
-# had already moved: the invitee fills in a web form, an admin finishes it from
-# Operations. Starting one meant a keyboard, so a household could not actually
-# add a person from a phone.
+# The invitee fills in a web form and an admin finishes it from Operations.
+# Creating the invite on the portal too means a household can add a person
+# from a phone, without a terminal.
 
 
 def test_creating_an_invite_needs_no_privilege(spool, tmp_path):
-    """It writes one JSON record, with no Docker socket and no bridge token,
-    nothing this page could not already do."""
+    """It writes one JSON record and needs no Docker socket and no bridge
+    token, nothing this page could not already do."""
     record = spool.create_invite("newcomer", {"alex", "sam"})
     written = tmp_path / "invites" / f"{record['id']}.json"
     assert written.exists()
@@ -252,7 +251,7 @@ def test_the_portal_refuses_to_invite_over_an_existing_person(portal):
 
 def test_creating_an_invite_is_withheld_from_the_assistant(portal):
     """It produces the credential, while a draft only produces something to
-    read, so this is the one that most needs a person behind it."""
+    read, so it most needs a person to do it."""
     body = portal_code().split("def _create_invite")[1][:900]
     assert '"ops:invite"' in body
     assert 'session.get("origin"' in body
@@ -267,7 +266,7 @@ def test_the_form_is_offered_on_operations(portal):
 
 
 def test_the_form_says_nothing_is_created_until_approved(portal):
-    """Otherwise an admin reasonably assumes pressing this made an account."""
+    """Otherwise an admin could assume that pressing this made an account."""
     card = portal.render_new_invite_card().lower()
     assert "approve" in card or "nothing is created" in card
 
@@ -283,7 +282,7 @@ def test_creating_an_invite_always_redirects(portal):
 
 
 def test_a_second_live_invite_for_one_person_is_refused(spool):
-    """Each one is a credential. Two outstanding for the same name is two."""
+    """Each invite is a credential, so only one may be live per name."""
     spool.create_invite("newcomer", set())
     with pytest.raises(spool.AlreadyInvited):
         spool.create_invite("newcomer", set())
@@ -308,8 +307,8 @@ def test_a_used_invite_stops_blocking_a_new_one(spool):
 
 
 def test_the_admin_can_still_reach_a_link_after_a_refresh(portal, spool):
-    """What made minting a second one feel reasonable: the link was only ever
-    shown once, by the POST that created it."""
+    """The card lists links waiting to be opened. If the link were shown only
+    once, by the POST that created it, an admin would mint a second one."""
     spool.create_invite("newcomer", set())
     card = portal.render_new_invite_card()
     assert "Waiting to be opened" in card
@@ -335,5 +334,6 @@ def test_the_approval_card_names_the_account_not_only_the_typed_name(portal, tmp
     submitted_invite(tmp_path, "a" * 16, "stranger", "sam")
     card = portal.render_onboarding_card()
     assert "stranger" in card
-    # What they typed is still shown, but as theirs rather than as the subject.
+    # What they typed is still shown, labelled as their own name for
+    # themselves.
     assert "calls themselves" in card

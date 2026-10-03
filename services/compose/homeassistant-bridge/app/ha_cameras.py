@@ -141,7 +141,7 @@ def coerce_observation(raw: str) -> dict:
     is in view, so its output is untrusted too. Unknown keys are dropped,
     `posture` is checked against a fixed list, `people` is clamped, and a reply
     that is not JSON becomes `unreadable`. Passing the raw text through would
-    reopen the channel exactly when an injection had succeeded.
+    reopen the free-text channel at the moment an injection had succeeded.
     """
     parsed: Any = None
     if raw:

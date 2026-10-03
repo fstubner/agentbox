@@ -1,4 +1,4 @@
-"""Backup and restore, where a failure cannot be undone.
+"""Backup and restore. A failed restore cannot be undone.
 
 Checks that the archive holds real data and can be restored, and that backing
 up leaves no readable copy of private memory behind.
@@ -82,7 +82,7 @@ def test_an_archive_with_no_tasks_fails(cli, capsys):
 
 def test_a_memory_store_of_the_wrong_shape_fails(cli, capsys):
     """`{}` is valid JSON and would restore a household that remembers
-    nothing. Parseability is not the property worth checking."""
+    nothing. So the check is on the shape of the store, not only parsing."""
     _archive(cli, {})
     assert cli.restore_check() == 1
     assert "has no 'memories' list" in capsys.readouterr().out
@@ -94,13 +94,13 @@ def test_no_archive_at_all_is_reported(cli, capsys):
     assert "no archive found" in capsys.readouterr().out
 
 
-# --- the leak ------------------------------------------------------------------
+# --- leftover staging copies ---------------------------------------------------
 
 
 def test_the_container_hands_the_files_back_to_this_user():
-    """Files copied out of the volume landed owned by the container's uid, so
-    the host could not delete them. Thirteen runs, thirteen orphaned staging
-    directories, each an unencrypted copy of every private memory."""
+    """Files copied out of the volume are owned by the container's uid unless
+    chowned, and the host cannot delete them. Each staging directory left
+    behind is an unencrypted copy of every private memory."""
     source = (REPO / "cli" / "agentbox_backup.py").read_text()
     block = source.split("def backup(")[1].split("\ndef ")[0]
     assert "chown -R" in block
@@ -114,7 +114,7 @@ def _code_only(block: str) -> str:
 
 
 def test_cleanup_failure_is_reported_not_swallowed():
-    """ignore_errors=True is why it hid for thirteen runs."""
+    """ignore_errors=True would hide a failed cleanup."""
     source = (REPO / "cli" / "agentbox_backup.py").read_text()
     block = _code_only(source.split("def backup(")[1].split("\ndef ")[0])
     assert "ignore_errors" not in block

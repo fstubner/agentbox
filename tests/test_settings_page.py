@@ -22,7 +22,7 @@ def portal(tmp_path, monkeypatch):
 
 
 def test_a_member_cannot_write_settings(portal):
-    """`admins` decides privilege, so writing it is not a member's to do."""
+    """`admins` decides privilege, so members cannot write it."""
     assert not portal.can(portal.MEMBER, "ops:write_settings")
     assert not portal.can(portal.MEMBER, "ops:write_household")
     assert portal.can(portal.ADMIN, "ops:write_settings")
@@ -44,7 +44,7 @@ def test_settings_writes_are_in_the_withheld_set(portal):
     """Stated once here so removing it from AGENT_WITHHELD fails a test.
 
     The capability check above would still pass if someone granted these to
-    agent links deliberately; this pins the intent.
+    agent links on purpose. This test pins the intent.
     """
     assert "ops:write_settings" in portal.AGENT_WITHHELD
     assert "ops:write_household" in portal.AGENT_WITHHELD
@@ -54,7 +54,7 @@ def test_settings_writes_are_in_the_withheld_set(portal):
 
 
 def test_one_bad_field_changes_nothing(portal):
-    """A half-applied settings page is how you get an admin list nobody chose."""
+    """A half-applied save could leave an admin list nobody chose."""
     portal.SETTINGS.save({"admins": "alex", "smtp_host": "smtp.example.com"})
     with pytest.raises(portal.agentbox_settings.InvalidSetting):
         portal.SETTINGS.save({"admins": "sam", "smtp_port": "not-a-port"})
@@ -63,7 +63,7 @@ def test_one_bad_field_changes_nothing(portal):
 
 
 def test_a_rejection_says_which_field_was_wrong(portal):
-    """So the page can put the message against the input, not at the top."""
+    """The page shows the message next to the input, not at the top."""
     with pytest.raises(portal.agentbox_settings.InvalidSetting) as caught:
         portal.SETTINGS.save({"smtp_port": "99999"})
     assert caught.value.key == "smtp_port"
@@ -74,8 +74,8 @@ def test_the_secret_is_never_rendered_into_the_page(portal):
     portal.SETTINGS.save({"smtp_password": "hunter2-app-password"})
     body = portal.render_admin("alex", "").decode()
     assert "hunter2-app-password" not in body
-    # But the page still says one is stored, or nobody can tell it apart from
-    # a box with no password at all.
+    # The page still says one is stored, or nobody could tell it apart from a
+    # box with no password.
     assert "stored" in body
 
 
@@ -114,7 +114,7 @@ def test_a_validation_message_never_travels_through_the_flash_table(portal):
 
 
 def test_a_refused_domain_is_rejected_rather_than_silently_ignored(portal):
-    """Storing it would leave somebody believing they granted something."""
+    """Storing it would mislead somebody into thinking they granted it."""
     with pytest.raises(portal.agentbox_household.InvalidEntity):
         portal.HOUSEHOLD.save("lock.front_door")
     assert portal.HOUSEHOLD.controllable() == []
@@ -141,17 +141,17 @@ def test_a_member_is_not_told_their_link_is_the_problem(portal):
                           portal.ORIGIN_OPERATOR) == "admin_only"
     assert portal.refusal(portal.MEMBER, "ops:invite",
                           portal.ORIGIN_EMAIL) == "admin_only"
-    # The origin message stays for the case it is actually true of.
+    # The origin message is still used when the origin is the reason.
     assert portal.refusal(portal.ADMIN, "ops:write_settings",
                           portal.ORIGIN_AGENT) == "agent_link_cannot_configure"
     assert portal.refusal(portal.ADMIN, "ops:invite",
                           portal.ORIGIN_CHAT) == "agent_link_cannot_configure"
-    # And nothing is refused when nothing should be.
+    # Nothing is refused when nothing should be.
     assert portal.refusal(portal.ADMIN, "ops:invite", portal.ORIGIN_EMAIL) == ""
 
 
 def test_every_refusal_reason_has_a_message(portal):
-    """A key with no entry renders nothing, so a wrong key is a silent page."""
+    """A key with no entry renders nothing, so a wrong key shows no message."""
     for role in (portal.MEMBER, portal.ADMIN):
         for origin in (portal.ORIGIN_EMAIL, portal.ORIGIN_OPERATOR,
                        portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
@@ -173,15 +173,15 @@ def test_connecting_a_chat_account_is_withheld_from_agent_links(portal):
     for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
         assert not portal.can(portal.ADMIN, "connector:pair_chat", origin)
         assert not portal.can(portal.MEMBER, "connector:pair_chat", origin)
-    # The ordinary path still works, or nobody could ever connect Discord.
+    # The ordinary path still works, or nobody could connect Discord.
     for origin in (portal.ORIGIN_EMAIL, portal.ORIGIN_OPERATOR):
         assert portal.can(portal.MEMBER, "connector:pair_chat", origin)
     assert "connector:pair_chat" in portal.AGENT_WITHHELD
 
 
 def test_pairing_and_unlinking_are_withheld_together(portal):
-    """They are the same decision. Withholding one and not the other is how
-    this was wrong for as long as it was."""
+    """They are the same decision, so withholding one without the other
+    would be inconsistent."""
     for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
         assert (portal.can(portal.MEMBER, "connector:pair_chat", origin)
                 == portal.can(portal.MEMBER, "connector:disconnect_own", origin))
@@ -198,14 +198,14 @@ def test_the_admin_list_cannot_be_saved_empty(portal):
         with pytest.raises(settings.InvalidSetting) as caught:
             portal.SETTINGS.save({"admins": blank})
         assert caught.value.key == "admins"
-    # And the refusal changed nothing.
+    # The refusal changed nothing.
     assert portal.SETTINGS.value("admins") == "alex"
     assert portal.admin_names() == {"alex"}
 
 
 def test_handing_over_is_still_allowed(portal):
-    """The guard stops abolishing administration, not handing it over. A
-    non-empty list saves even without the person saving it."""
+    """The guard stops removing every admin, not handing the role over. A
+    non-empty list saves even if it leaves out the person saving it."""
     portal.SETTINGS.save({"admins": "alex"})
     portal.SETTINGS.save({"admins": "sam"})
     assert portal.admin_names() == {"sam"}
@@ -213,8 +213,8 @@ def test_handing_over_is_still_allowed(portal):
 
 
 def test_absent_still_means_nobody(portal, tmp_path, monkeypatch):
-    """The original fail-safe survives: a missing or garbled setting removes
-    privilege rather than granting it. Only *saving* empty is refused."""
+    """The fail-safe still holds. A missing or garbled setting removes
+    privilege and does not grant it. Only *saving* empty is refused."""
     settings = sys.modules["agentbox_settings"]
     store = settings.SettingsStore(directory=tmp_path / "fresh", environ={})
     assert store.value("admins") == ""
@@ -222,7 +222,7 @@ def test_absent_still_means_nobody(portal, tmp_path, monkeypatch):
 
 def test_a_stored_secret_can_be_cleared(portal):
     """Blank means keep, so without an explicit clear a stored secret could be
-    replaced forever and removed never."""
+    replaced but never removed."""
     portal.SETTINGS.save({"smtp_password": "hunter2"})
     portal.SETTINGS.save({"smtp_password": ""})
     assert portal.SETTINGS.value("smtp_password") == "hunter2"
@@ -240,8 +240,8 @@ def test_the_form_offers_the_clear_only_when_there_is_something_to_clear(portal)
 
 
 def test_expired_credentials_are_reaped(portal, tmp_path):
-    """Each record holds an identity and a secret hash; keeping one past the
-    point where it can authorise anything is surface with no purpose."""
+    """Each record holds an identity and a secret hash. Keeping one after it
+    can no longer authorise anything adds attack surface for no purpose."""
     import json
     live = portal.now() + 3600
     for name, record in (
@@ -278,8 +278,8 @@ def test_an_admin_list_of_strangers_is_refused(portal):
 
 
 def test_an_identity_that_cannot_sign_in_is_shown(portal, monkeypatch):
-    """The card exists to surface exactly this, and missed it: sam was a
-    configured gateway identity with no way in, and the list did not say so."""
+    """The card exists to show this. A configured gateway identity with no
+    way to sign in, such as sam here, must be listed as such."""
     monkeypatch.setenv("AGENTBOX_IDENTITY_NAMES", "alex,sam")
     portal.SETTINGS.save({"identity_emails": "alex:alex@example.com"})
     body = portal.render_people_card()
@@ -288,7 +288,7 @@ def test_an_identity_that_cannot_sign_in_is_shown(portal, monkeypatch):
 
 
 def test_the_module_docstring_describes_the_route_the_assistant_has(portal):
-    """The module docstring must say where the identity binding really lives.
+    """The module docstring must say where the identity binding lives.
 
     Asserted positively, because a check that the old sentence is absent would
     pass without reading anything, since `code_of` strips docstrings.

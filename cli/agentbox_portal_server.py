@@ -77,8 +77,8 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        # This page shows private memories and can revoke credentials. It has
-        # no business being framed, sniffed, or leaked through a referrer.
+        # This page shows private memories and can revoke credentials, so it
+        # must not be framed, MIME-sniffed or leaked through a referrer.
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -116,19 +116,18 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
                                      f"<p>{html.escape(reason)}</p>"))
                 return
             sid = portal.new_session(identity, origin)
-            # The request nonce has done its job; leaving it set would let a
+            # The request nonce is no longer needed. Leaving it set would let a
             # later link be spent from this browser without a fresh request.
-            # HttpOnly so a script cannot read it; SameSite=Lax so another site
-            # cannot drive a POST here with the user's cookie attached.
+            # HttpOnly so a script cannot read it. SameSite=Lax so another site
+            # cannot send a POST here with the user's cookie attached.
             self.send_response(303)
             self.send_header("Location", "/")
-            # No `Secure` flag, deliberately and not happily: this server
-            # speaks plain HTTP, so `Secure` would stop the browser sending
-            # the cookie at all and nobody could sign in. HttpOnly and
-            # SameSite=Lax are set. The session cookie therefore crosses the
-            # LAN in clear, and the real remedy is TLS in front of this port,
-            # not a flag that trades a working product for the appearance of
-            # one. Recorded here so the next reader knows it was weighed.
+            # No `Secure` flag. This server speaks plain HTTP, so `Secure`
+            # would stop the browser sending the cookie and nobody could sign
+            # in. HttpOnly and SameSite=Lax are set. The session cookie
+            # therefore crosses the LAN in clear. The fix for that is TLS in
+            # front of this port. Setting `Secure` without TLS would only
+            # break sign-in.
             self.send_header("Set-Cookie",
                              f"sid={sid}; HttpOnly; SameSite=Lax; Path=/")
             self.send_header("Set-Cookie",
@@ -210,10 +209,10 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
         Runs before authentication on the most privileged web page here, so it
         must not raise. A bad Content-Length would otherwise kill the handler
         and make a malformed request distinguishable from a valid one. The
-        length is also capped rather than trusted.
+        length is also capped, not trusted.
 
-        Every failure gets the same answer, because which part was wrong is
-        not the client's business.
+        Every failure gets the same answer, so the client is not told which
+        part was wrong.
         """
         raw = (self.headers.get("Content-Length") or "0").strip() or "0"
         # ASCII digits only. `int()` accepts other numeral systems, and the
@@ -259,12 +258,12 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
             return
 
         if path == "/chat/pair":
-            # Withheld for the same reason as unlinking, and more urgently.
-            # Pairing decides where this person's sign-in links are delivered,
-            # and the code it mints is shown on a page the assistant can read
-            # whenever it holds a link it produced. Unlinking only removes a
-            # channel; pairing points one somewhere new, so if either belongs
-            # behind a link the person asked for themselves, it is this one.
+            # Withheld for the same reason as unlinking. Pairing decides where
+            # this person's sign-in links are delivered, and the code it mints
+            # is shown on a page the assistant can read whenever it holds a
+            # link it produced. Unlinking only removes a channel. Pairing
+            # points one somewhere new, so it is the more important of the two
+            # to keep behind a link the person asked for themselves.
             if not portal.can(session["role"], "connector:pair_chat",
                        session.get("origin", portal.ORIGIN_AGENT)):
                 self._redirect("/connectors?m=" + portal.origin_refusal(
@@ -275,8 +274,8 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
             return
 
         if path == "/chat/unlink":
-            # Withheld from a link the assistant produced, like disconnecting:
-            # moving where somebody's sign-in links arrive is not a convenience.
+            # Withheld from a link the assistant produced, like disconnecting.
+            # Only the person may change where their sign-in links arrive.
             if not portal.can(session["role"], "connector:disconnect_own",
                        session.get("origin", portal.ORIGIN_AGENT)):
                 self._redirect("/connectors?m=" + portal.origin_refusal(

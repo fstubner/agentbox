@@ -1,7 +1,7 @@
-"""Modern professional workspace styling for Agentbox Console.
+"""CSS for the Agentbox Console portal.
 
-Linear/Raycast aesthetic with monochrome SVG icons, slate-charcoal dark mode,
-crisp borders, refined button hierarchy, and responsive layout.
+Monochrome SVG icons, a slate-charcoal dark mode, bordered cards, primary and
+secondary button styles, and a responsive layout.
 """
 
 STYLE = """

@@ -1,8 +1,8 @@
 """Validators for portal settings.
 
 Each one returns a cleaned value or raises InvalidSetting with a reason. None
-of them silently drops part of the input, because a list that quietly loses an
-entry leaves the person believing they configured something they did not.
+of them drops part of the input, because a list that loses an entry without
+warning leaves the person believing they configured something they did not.
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 HOSTNAME = re.compile(r"^[a-zA-Z0-9.-]+$")
 # Discord ids are snowflakes, decimal integers of currently 17 to 20 digits.
 # Only the shape is checked. The approval loop ignores any id not on the
-# operator list, so a mistyped id grants nothing, but it would quietly stop
-# working for you, so the shape is checked here.
+# operator list, so a mistyped id grants nothing. It would stop working with
+# no error, so the shape is checked here.
 SNOWFLAKE = re.compile(r"^[0-9]{15,25}$")
 
 

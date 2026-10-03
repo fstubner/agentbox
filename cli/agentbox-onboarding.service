@@ -5,20 +5,19 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now agentbox-onboarding.path
 #
-# Why this is a separate unit rather than a button in the portal:
+# Why this is a separate unit and not a button in the portal:
 #
 # Completing an invite runs `docker compose up` for a new bridge. The portal is
 # a LAN-reachable page handling untrusted requests, and cli/agentbox-invite
-# argues at length that such a page must never be the thing holding the docker
-# socket. So the portal writes a request and this reads it, the portal gains
-# no capability, and a bug in request handling cannot reach a container.
+# explains why such a page must never hold the docker socket. The portal writes
+# a request and this unit reads it. The portal gains no capability, and a bug
+# in request handling cannot reach a container.
 #
-# That argument is weaker than it sounds and this unit does not fix it.
-# agentbox-portal.service runs as the operator, who is in the `docker`
-# group, so the socket is already reachable to that process. What stops it is
-# the absence of a code path, not a privilege boundary. Taking the portal out
-# of the docker group is the follow-up that makes the claim true; until then
-# this split is real for the code and aspirational for the process.
+# This separation is incomplete. agentbox-portal.service runs as the operator,
+# who is in the `docker` group, so that process can already reach the socket.
+# Only the absence of a code path stops it. There is no privilege boundary.
+# The follow-up is to take the portal out of the docker group. Until then the
+# split separates the code but not the process privileges.
 #
 # No `op run` wrapper, unlike agentbox-portal.service: service_env_values()
 # resolves op:// references itself, sourcing 1password.env from the env

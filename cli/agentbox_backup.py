@@ -106,8 +106,8 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
     # Private memories, so readable by the owner only.
     archive.chmod(0o600)
 
-    # Not ignore_errors: a cleanup that cannot run is the whole defect above,
-    # and it hid for thirteen runs precisely because nothing reported it.
+    # No ignore_errors. A cleanup that cannot run is the defect described
+    # above, and it must be reported when it happens.
     try:
         shutil.rmtree(staging)
     except OSError as exc:
@@ -115,9 +115,9 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
                      f"unencrypted copy of household memory. Delete it by hand.")
         return 1
 
-    # Restore-check the archive we just made before touching the old ones. A
-    # successful prune that deletes the last good archive to make room for a
-    # broken one is the failure mode this prevents.
+    # Restore-check the archive we just made before touching the old ones.
+    # This stops a prune from deleting the last good archive to make room for
+    # a broken one.
     if restore_check(archive.name, report=report) != 0:
         _rep("FAIL", f"archive {archive.name} failed verification; keeping old backups")
         return 1
@@ -135,12 +135,11 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
 
 
 def restore_check(archive_name: str = "", report: Callable[[str, str], None] | None = None) -> int:
-    """Rehearse a restore: unpack an archive and prove it could rebuild state.
+    """Rehearse a restore: unpack an archive and check it could rebuild state.
 
     Checks that the memory store parses and holds data and that Vikunja's data
-    is present, not just that the file opens. It is a rehearsal, not a real
-    restore, which means stopping services and overwriting a volume, and stays
-    the operator's decision.
+    is present. It does not do a real restore. A real restore means stopping
+    services and overwriting a volume, and stays the operator's decision.
     """
     def _rep(level: str, msg: str) -> None:
         if report:
@@ -175,8 +174,8 @@ def restore_check(archive_name: str = "", report: Callable[[str, str], None] | N
             except ValueError as exc:
                 problems.append(f"memory store does not parse: {exc}")
             else:
-                # Shape, not just parseability: an empty dict is valid JSON and
-                # would restore a household that remembers nothing.
+                # Check the shape as well as parsing. An empty dict is valid
+                # JSON and would restore a household that remembers nothing.
                 for key in ("memories", "proposals"):
                     if not isinstance(store.get(key), list):
                         problems.append(f"memory store has no '{key}' list")

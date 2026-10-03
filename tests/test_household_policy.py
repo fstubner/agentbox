@@ -53,7 +53,7 @@ def policy(tmp_path):
 
 
 def test_what_the_portal_writes_is_what_the_bridge_reads(policy, tmp_path):
-    """The whole point. Written by the portal's writer, read by the bridge's."""
+    """Written by the portal's writer and read by the bridge's reader."""
     policy.save("media_player.tv, switch.washer")
     bridge = load_bridge(tmp_path / "household.json")
     assert bridge.controllable_entities() == {"media_player.tv", "switch.washer"}
@@ -71,7 +71,7 @@ def test_the_file_wins_over_the_environment(policy, tmp_path):
 
 
 def test_a_saved_change_is_picked_up_without_a_restart(policy, tmp_path):
-    """A settings page nobody can see the effect of is not a settings page."""
+    """A saved setting must take effect while the bridge is running."""
     policy.save("switch.washer")
     bridge = load_bridge(tmp_path / "household.json")
     assert bridge.is_controllable("switch.washer")
@@ -92,7 +92,7 @@ def test_a_same_length_swap_is_not_missed(policy, tmp_path):
 
 
 def test_removing_an_entity_takes_effect_too(policy, tmp_path):
-    """The direction that matters: revoking has to be as live as granting."""
+    """Revoking has to take effect as quickly as granting."""
     policy.save("switch.washer, media_player.tv")
     bridge = load_bridge(tmp_path / "household.json")
     assert bridge.is_controllable("media_player.tv")
@@ -104,7 +104,7 @@ def test_removing_an_entity_takes_effect_too(policy, tmp_path):
 
 
 def test_a_missing_file_falls_back_rather_than_raising(tmp_path):
-    """This is consulted on the refusal path; raising here breaks the bridge."""
+    """This is read on the refusal path, so raising here breaks the bridge."""
     bridge = load_bridge(tmp_path / "absent.json", env_controllable="switch.washer")
     assert bridge.controllable_entities() == {"switch.washer"}
 
@@ -129,15 +129,15 @@ def test_a_malformed_file_never_widens_permission(tmp_path, content):
 
 def test_the_bridge_refuses_security_domains_whatever_the_file_says(tmp_path):
     """The portal refuses these when typed, but that only guards against typos.
-    The refusal that holds under compromise is in the process holding the
-    credential, and it ignores this list.
+    The refusal that still holds if the portal is compromised is in the
+    process holding the credential, and it ignores this list.
     """
     path = tmp_path / "household.json"
     path.write_text(json.dumps({"controllable_entities": [
         "lock.front_door", "alarm_control_panel.house", "cover.garage",
         "camera.hall", "vacuum.robot"]}), encoding="utf-8")
     bridge = load_bridge(path)
-    # The file is read, so these are refused by the bridge, not merely absent.
+    # The file is read, so these are present and refused by the bridge.
     assert "lock.front_door" in bridge.controllable_entities()
     for entity in ("lock.front_door", "alarm_control_panel.house",
                    "cover.garage", "camera.hall", "vacuum.robot"):
@@ -145,9 +145,9 @@ def test_the_bridge_refuses_security_domains_whatever_the_file_says(tmp_path):
 
 
 def test_the_portal_and_the_bridge_agree_on_what_is_refused(tmp_path):
-    """The portal must not accept a domain the bridge refuses, or someone would
-    grant something that silently does nothing. The reverse is only cautious,
-    so only one direction is checked.
+    """The portal must not accept a domain the bridge refuses, or someone could
+    grant something that does nothing and shows no error. The reverse only
+    makes the portal stricter, so only one direction is checked.
     """
     household = load_household()
     bridge = load_bridge(tmp_path / "absent.json")

@@ -6,10 +6,10 @@ services:
     image: agentbox/memory-bridge:local
     environment:
       # The policy this bridge enforces, read live from the read-only mount like
-      # grants.json, so editing a tier needs no rebuild. Nothing is built into
-      # the image, so with the variable unset no file is found, and every tool
-      # fails closed to approval_required, which is safer than enforcing a
-      # stale policy.
+      # grants.json, so editing a tier needs no rebuild. No policy is built into
+      # the image. With the variable unset no file is found, and every tool
+      # fails closed to approval_required. That is safer than enforcing a stale
+      # policy.
       AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       MEMORY_BRIDGE_TOKEN: "${MEMORY_BRIDGE_TOKEN:-}"
       # Operator credential for approving proposals. Unset = approval
@@ -23,9 +23,9 @@ services:
       - "${LAN_BIND_IP:-127.0.0.1}:3471:8080"
     volumes:
       - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
-      # Grants read-only; spent markers writable. The bridge is the
-      # authoritative gate, so it needs both, but writing a marker can
-      # only remove permission, never create it.
+      # Grants are read-only and spent markers are writable. The bridge is the
+      # authoritative gate, so it needs both. Writing a marker can only remove
+      # permission, never create it.
       - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
       - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
       - memory_data:/data
@@ -48,9 +48,9 @@ services:
     restart: unless-stopped
     labels:
       agentbox.service: memory-bridge
-      # `operator`: published on the host loopback because the memory
-      # review CLI (`agentbox memory approve|reject`) talks to this bridge
-      # directly with the review token, a credential no container holds.
+      # `operator`. Published on the host loopback because the memory review
+      # CLI (`agentbox memory approve|reject`) talks to this bridge directly
+      # with the review token, which no container holds.
       agentbox.exposure: operator
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"
 

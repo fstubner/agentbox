@@ -3,12 +3,12 @@
 Fronts homeassistant-bridge, which holds the token and enforces what may be
 actuated. None of the tools is a general `call_service`.
 
-Writing an automation is the interesting one. An automation is stored code
-that Home Assistant runs later with its own privileges, so the bridge's
-call-time refusals do not cover it, and an assistant that may not unlock a door
-could otherwise schedule one. `automation.py` refuses templates so what an
-automation will do can be decided, and then checks it against the same limits
-as a direct call.
+Writing an automation needs the most care. An automation is stored code that
+Home Assistant runs later with its own privileges, so the bridge's call-time
+refusals do not cover it. Without a check, an assistant that may not unlock a
+door could schedule an unlock. `automation.py` refuses templates, so what an
+automation will do can be determined in advance. It then checks the automation
+against the same limits as a direct call.
 """
 from __future__ import annotations
 

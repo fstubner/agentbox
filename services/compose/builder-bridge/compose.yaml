@@ -6,10 +6,10 @@ services:
     image: agentbox/builder-bridge:local
     environment:
       # The policy this bridge enforces, read live from the read-only mount like
-      # grants.json, so editing a tier needs no rebuild. Nothing is built into
-      # the image, so with the variable unset no file is found, and every tool
-      # fails closed to approval_required, which is safer than enforcing a
-      # stale policy.
+      # grants.json, so editing a tier needs no rebuild. No policy is built into
+      # the image. With the variable unset no file is found, and every tool
+      # fails closed to approval_required. That is safer than enforcing a stale
+      # policy.
       AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       BUILDER_BRIDGE_TOKEN: "${BUILDER_BRIDGE_TOKEN:-}"
       BUILDER_REPO: "/repo"
@@ -17,22 +17,21 @@ services:
       # for its config. /tmp is a tmpfs, so this stays ephemeral.
       HOME: "/tmp"
       BRIDGE_LOG_FILE: "/logs/builder-bridge.jsonl"
-    # No host port. This bridge is reachable only on its compose
-    # network, which the MCP gateway joins, so a leaked bridge token is
-    # unusable by any process on the host. The gateway concentrating five
-    # tokens is only a prize if something outside it can spend them; this is
-    # what makes them unspendable. Operator probes go through the gateway's
-    # /ready, which reports each bridge by name.
+    # No host port. This bridge is reachable only on its compose network,
+    # which the MCP gateway joins, so no process on the host can use a leaked
+    # bridge token. The gateway holds five tokens, and this is what keeps
+    # anything outside the gateway from using them. Operator probes go through
+    # the gateway's /ready, which reports each bridge by name.
     networks:
       builder:
     volumes:
       # The assistant's own clone, NOT the operator's working tree, so a bad
-      # proposal cannot dirty an in-progress edit or a stash. It pushes branches
-      # back to the real repo, which is where the operator reviews them.
+      # proposal cannot change an in-progress edit or a stash. It pushes
+      # branches back to the real repo, where the operator reviews them.
       - "${AGENTBOX_BUILDER_REPO:-${HOME}/.local/state/agentbox/builder-repo}:/repo"
       # The operator's repository, READ-ONLY. The clone fetches from here to
-      # stay current; the read-only mount is what makes "pull, never push"
-      # a property of the filesystem rather than a promise in the code.
+      # stay current. The read-only mount makes "pull, never push" a property
+      # of the filesystem, so it does not depend on the code.
       - "${AGENTBOX_REPO:?set AGENTBOX_REPO to this checkout}:/origin:ro"
       - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
       - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"

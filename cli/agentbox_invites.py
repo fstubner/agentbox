@@ -18,8 +18,8 @@ from agentbox_identity import identity_add
 # an unprivileged page, and this runs as the operator to do what needs real
 # authority: creating a Vikunja user inside its container, issuing an identity
 # token and wiring per-person routing. Vikunja registration is off, so creating
-# an account needs `vikunja user create` in the container, a Docker-socket
-# privilege that must never sit behind a web form.
+# an account needs `vikunja user create` in the container. That needs the
+# Docker socket, which must never be reachable from a web form.
 
 INVITE_DIR = Path(os.environ.get(
     "AGENTBOX_INVITE_DIR",
@@ -124,7 +124,7 @@ def invite_complete(token_id: str) -> int:
 def invite_drain() -> int:
     """Complete the invites an admin approved in the portal.
 
-    The privileged half of onboarding, triggered by a file rather than by
+    The privileged half of onboarding, triggered by a file instead of by
     someone at a shell, so onboarding needs no terminal and the Docker socket
     stays off the web.
 
@@ -133,7 +133,7 @@ def invite_drain() -> int:
     has already checked that against the request's filename.
 
     It runs unattended, so it never retries. A failure is settled with its
-    reason, rather than staying queued and firing again on the next trigger.
+    reason, so it does not stay queued and run again on the next trigger.
     """
     onb = agentbox_onboarding
     requests = onb.pending()
@@ -160,8 +160,8 @@ def invite_drain() -> int:
             report(WARN, f"invite {token_id}: approved before it was filled in")
             continue
         if record.get("completed_at"):
-            # Two admins approving the same invite, or a retrigger, should
-            # converge quietly rather than read as something going wrong.
+            # Two admins approving the same invite, or a retrigger, should end
+            # in the same state and not be reported as an error.
             onb.settle(req, "already_completed", "completed before this ran")
             continue
 

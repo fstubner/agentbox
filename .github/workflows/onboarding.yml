@@ -1,13 +1,13 @@
-# Can somebody who has never seen this repository get it running?
+# Checks that somebody who has never seen this repository can get it running.
 #
 # The test suite runs against a checkout that is already configured, so it
-# cannot answer that. This follows README.md's quickstart literally, in order,
-# on a machine that has never seen Agentbox. A step that only works because of
-# something undocumented in my home directory fails here instead of failing for
-# someone else.
+# cannot check that. This follows README.md's quickstart literally, in order,
+# on a machine that has never had Agentbox installed. A step that only works
+# because of something undocumented in my home directory fails here instead of
+# failing for someone else.
 #
-# Each documented step is its own job step, so the log says which instruction
-# broke rather than that the job broke.
+# Each documented step is its own job step, so the log shows which instruction
+# failed.
 
 name: clean-room onboarding
 
@@ -21,8 +21,8 @@ on:
       - services/compose/**
       - .github/workflows/onboarding.yml
   schedule:
-    # Weekly, because a prerequisite that stops being installed by default on
-    # the runner image goes unnoticed until somebody tries.
+    # Weekly, because a prerequisite can stop being installed by default on the
+    # runner image, and nothing else would detect that.
     - cron: "17 6 * * 1"
 
 jobs:
@@ -56,8 +56,8 @@ jobs:
           check "$HOME/.local/state/agentbox/portal"
           check "$HOME/.local/state/agentbox/invites"
           check cli/agentbox-sandbox
-          # Mode matters: the README claims 0700, and a world-readable config
-          # directory on a shared host is a different product.
+          # The config directory holds secret references, so it must be 0700.
+          # This checks what setup created.
           mode=$(stat -c '%a' "$HOME/.config/agentbox")
           echo "mode of ~/.config/agentbox = $mode"
           [ "$mode" = "700" ] || { echo "expected 700"; fail=1; }
@@ -83,9 +83,8 @@ jobs:
       - name: "README step 5: deploy one service with no secrets configured"
         run: |
           set -uo pipefail
-          # memory-bridge is the right probe: it builds from this repo rather
-          # than pulling a third-party image, and its token is optional and
-          # fails closed, so it should come up unconfigured.
+          # memory-bridge is used because it builds from this repo, and its
+          # token is optional and fails closed, so it starts unconfigured.
           ./cli/agentbox deploy memory-bridge > deploy.log 2>&1
           code=$?
           tail -40 deploy.log

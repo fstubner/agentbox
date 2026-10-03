@@ -78,7 +78,7 @@ def test_an_empty_drive_result_names_the_scope_not_an_empty_drive():
     assert drive["state"] == lib.EMPTY
     assert "drive.file" in drive["needs"]
     assert "drive.readonly" in drive["needs"]
-    # And a real failure still reads as blocked.
+    # A real failure still reads as blocked.
     broken = _fake_gateway({"search_drive": (False, "HTTP 403")})
     outcome = lib.run(broken, "tok")
     drive = next(r for r in outcome["results"] if "Drive" in r["asked"])
@@ -86,7 +86,7 @@ def test_an_empty_drive_result_names_the_scope_not_an_empty_drive():
 
 
 def test_every_scenario_has_a_next_action_or_is_self_evident():
-    """A blocked row without a `needs` is a dead end for the operator."""
+    """A blocked row without a `needs` gives the operator no next step."""
     for s in lib.SCENARIOS:
         assert s.asked.endswith("?") or s.asked.endswith(".")
         assert s.tool
@@ -146,8 +146,8 @@ def test_summarise_prepares_a_real_message_then_reads_it():
 
     def tool_call(service, tool, args, token):
         if tool == "search_gmail":
-            # Gmail's real shape: hits ride under "messages". The first hit
-            # has no readable text, an invite, and must be skipped rather than
+            # Gmail's real shape puts hits under "messages". The first hit is
+            # an invite with no readable text, and must be skipped, not
             # scored as a blocked summary path.
             return True, {"messages": [{"id": "m-invite"}, {"id": "m-123"}],
                           "resultSizeEstimate": 2}
@@ -167,8 +167,8 @@ def test_summarise_prepares_a_real_message_then_reads_it():
 
 
 def test_google_payloads_are_read_at_their_real_keys():
-    """Google nests results, calendar events under "items" and mail under
-    "messages". Reading the wrong level counts dict keys, or misses everything,
+    """Google nests results, with calendar events under "items" and mail under
+    "messages". Reading the wrong level counts dict keys or misses everything,
     so both are checked."""
     gateway = _fake_gateway({
         "list_calendar_events": (True, {"summary": "x", "nextPageToken": "t",
@@ -185,8 +185,8 @@ def test_google_payloads_are_read_at_their_real_keys():
 
 
 def test_an_empty_mailbox_reads_empty_and_a_dead_gmail_reads_blocked():
-    """prepare's three-way contract: nothing to act on is not the same
-    condition as could-not-look."""
+    """prepare has a three-way contract. Nothing to act on is a different
+    result from being unable to look."""
     empty_box = _fake_gateway({"search_gmail": (True, {"messages": [],
                                                        "resultSizeEstimate": 0})})
     outcome = lib.run(empty_box, "tok")
@@ -223,9 +223,8 @@ def _rec(tool, outcome="ok", identity="alex"):
 
 
 def test_usage_separates_household_from_self_management():
-    """The week-one signal, reproduced: lots of successful calls, almost none
-    of them for a person. The summary must make that visible, not average it
-    away."""
+    """Many successful calls, almost none of them for a person. The summary
+    must make that pattern visible and not average it away."""
     records = ([_rec("whoami")] * 70 + [_rec("list_memory_proposals")] * 71
                + [_rec("list_calendar_events")] * 11
                + [_rec("speak_aloud")] * 3
@@ -244,7 +243,7 @@ def test_failed_household_calls_do_not_count_as_help():
 
 
 def test_operator_decision_records_are_skipped():
-    """record_decision rows have no tool field; they are judgements, not
+    """record_decision rows have no tool field. They are decisions, not
     calls, and must not inflate either bucket."""
     summary = lib.usage_summary([
         {"ts": 1, "actor": "operator", "action": "approved", "subject": "x"}])

@@ -28,8 +28,8 @@ class SigninRoutes:
         Authenticated with a token only the assistant holds. The link it makes
         is ORIGIN_AGENT, which cannot approve memories or disconnect accounts,
         so calling this on its own initiative, or because a malicious email
-        asked, gains the assistant nothing. Nothing tries to stop it reading
-        the link, since it delivers over channels it can read.
+        asked, gains the assistant nothing. The assistant can read the link,
+        because it is delivered over channels the assistant can read.
         """
         provided = self.headers.get("X-Agentbox-Portal-Token", "")
         if not portal.AGENT_TOKEN or not provided or not hmac.compare_digest(
@@ -63,8 +63,8 @@ class SigninRoutes:
         """Handle a sign-in request.
 
         The answer is identical whether or not the address is registered, and
-        whether or not delivery succeeded. Anything else turns this form into a
-        way to enumerate who lives here.
+        whether or not delivery succeeded. Otherwise this form could be used to
+        enumerate who lives here.
         """
         identity = portal.identity_for_email(address)
         nonce = secrets.token_urlsafe(24)
@@ -89,7 +89,7 @@ class SigninRoutes:
     def _google_callback(self, session, query) -> None:
         """Receive Google's authorisation code and queue it for the operator.
 
-        The state is checked against this session, not just for presence.
+        The state is checked against this session, not only for presence.
         Otherwise a crafted link could put someone's code into another
         person's connector record, letting an attacker choose whose mail is
         read.

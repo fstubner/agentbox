@@ -20,9 +20,9 @@ except ImportError:  # no policy mounted: the summary omits tiers rather than fa
 #
 # Reads the outcome journals agentbox-mcp writes and returns an aggregate, so
 # reflection works from a record rather than from the model's recollection of a
-# conversation. It returns counts and rates, never journal lines. "archive_gmail
-# was refused six times" is something to act on, and a replay of six refusals
-# is not.
+# conversation. It returns counts and rates, never journal lines. A count such
+# as "archive_gmail was refused six times" can be acted on. A replay of the six
+# refusals adds nothing to it.
 
 LOG_DIR = Path(os.environ.get("BRIDGE_LOG_DIR", "/logs"))
 

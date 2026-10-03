@@ -6,11 +6,12 @@ from typing import Any
 
 # --- memory and feedback ---------------------------------------------------
 #
-# Two different things arrive through one door. "Sam is allergic to peanuts" is
-# a fact and belongs in memory. "Stop asking me to confirm every calendar read"
-# is a complaint about behaviour. Storing that as a memory patches around the
-# problem and spends a line of context every session, so it goes to a backlog
-# to be fixed in the skill, tool description or prompt instead.
+# Two kinds of proposal arrive through the same route. "Sam is allergic to
+# peanuts" is a fact and belongs in memory. "Stop asking me to confirm every
+# calendar read" is a complaint about behaviour. Storing that as a memory
+# patches around the problem and spends a line of context every session, so it
+# goes to a backlog to be fixed in the skill, tool description or prompt
+# instead.
 #
 # The classification is a heuristic and may be wrong. The reviewer sees which
 # way it went and why, and can flip it.

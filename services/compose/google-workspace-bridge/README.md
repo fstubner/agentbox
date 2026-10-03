@@ -86,14 +86,15 @@ server's loopback, not your workstation's.
 ssh -L 8899:127.0.0.1:8899 alex@<host>
 ```
 
-**If the token dies again within a week**, the OAuth consent screen is still in
-"Testing" publishing status, where Google expires refresh tokens after 7 days.
+**If the token expires again within a week**, the OAuth consent screen is
+still in "Testing" publishing status, where Google expires refresh tokens after
+7 days.
 Publish the app (Cloud console → APIs & Services → OAuth consent screen →
-Publish app). Re-minting without changing that only resets the clock.
+Publish app). Minting a new token without publishing the app only restarts
+the 7-day expiry.
 
-Scopes requested are `gmail.modify` and `calendar`, derived from what
-`app/bridge.py` actually calls. Widening them widens what a leaked token
-could do.
+Scopes requested are `gmail.modify` and `calendar`, derived from the calls in
+`app/bridge.py`. Wider scopes would let a leaked token do more.
 
 ## Gmail Search Examples
 

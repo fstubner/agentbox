@@ -4,8 +4,8 @@ Tests that assert on source must not be fooled by comments.
 `assert "x" not in source` fails when a comment explains why x was removed, and
 `assert "x" in source` passes when a comment mentions x even if the code is
 wrong. `code_of()` strips comments and docstrings, so an assertion is about
-code. Prefer testing behaviour, and use `code_of(...)` where the property
-really is structural, such as "this file must not import that".
+code. Prefer testing behaviour, and use `code_of(...)` where the property is
+structural, such as "this file must not import that".
 """
 from __future__ import annotations
 

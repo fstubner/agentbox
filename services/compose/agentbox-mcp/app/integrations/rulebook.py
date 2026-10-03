@@ -1,8 +1,8 @@
 """Proposing rules. The assistant writes them, a person decides, and code runs
 them.
 
-A stored rule runs unattended, indefinitely, as someone. That is a bigger thing
-than a tool call, so it follows the memory pattern. The assistant proposes, the
+A stored rule runs unattended, indefinitely, as someone. That has more effect
+than a single tool call, so it follows the memory pattern. The assistant proposes, the
 proposal does nothing, and an operator activates it.
 
 Rules are validated here, when they are written, so the assistant learns at
@@ -103,8 +103,8 @@ def dispatch(name, args):
         checked = grammar.validate(proposal, _known_tools(),
                                    _known_identities())
     except grammar.RuleInvalid as exc:
-        # A tool error rather than a stored-but-broken rule: the
-        # assistant can read this and try again now.
+        # Return a tool error instead of storing a broken rule. The
+        # assistant can read the error and try again now.
         raise ToolError(str(exc)) from None
 
     checked["proposed_at"] = int(time.time())
@@ -113,8 +113,8 @@ def dispatch(name, args):
         path = STORE / f"{checked['name']}.json"
         # Checked against the operator's approval record. Overwriting an
         # approved rule would grant nothing, because the fingerprint would no
-        # longer match, but it would quietly stop something a person chose to
-        # run.
+        # longer match. It would still stop, without notice, a rule a person
+        # chose to run.
         import evaluator
         if checked["name"] in evaluator.approvals():
             raise ToolError(
@@ -132,9 +132,9 @@ def dispatch(name, args):
               "next": "A person must run `agentbox rules approve "
                       f"{checked['name']}` before this ever fires."}
     if not live:
-        # Honest about the platform's own state, not just the rule's. Tell
-        # the author now, while it can relay that to the person asking,
-        # rather than letting both believe an approved rule is live.
+        # Report the platform's state as well as the rule's. The author
+        # learns now, while it can tell the person asking, that this rule
+        # will not fire even after approval.
         result["caveat"] = (
             f"'{source}' events are not wired up yet (live sources: "
             f"{', '.join(evaluator.LIVE_SOURCES)}). Even once approved, this "

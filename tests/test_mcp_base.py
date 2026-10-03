@@ -73,7 +73,7 @@ def rpc(base, method, params=None, token=None, omit_headers=False):
 
 
 def test_unset_token_refuses_everything():
-    """The motivating bug: an unset token must NOT disable the check."""
+    """An unset token must NOT disable the check."""
     server, base = serve(make(""))
     try:
         rpc(base, "tools/list")
@@ -158,8 +158,8 @@ def test_unexpected_error_does_not_leak_a_traceback():
 
 
 def test_the_gateway_reads_its_tokens_from_env_not_hardcoded():
-    """One gateway now, but the property is unchanged: no credential literal in
-    source. Identity tokens come from the environment too."""
+    """No credential literal in source. Identity tokens come from the
+    environment too."""
     src = code_of(REPO / "services" / "compose" / "agentbox-mcp" / "app" / "server.py")
     assert "shared_token = os.environ.get(" in src
     assert 'os.environ.get("AGENTBOX_IDENTITIES"' in src
@@ -169,8 +169,8 @@ def test_the_gateway_reads_its_tokens_from_env_not_hardcoded():
 
 
 def test_negotiates_rather_than_echoing_the_requested_version():
-    """Echoing claims support for anything the client asks for, including
-    revisions that changed the wire format underneath us."""
+    """Echoing the version would claim support for anything the client asks
+    for, including revisions that changed the wire format."""
     server, base = serve(make("secret"))
     try:
         agreed = rpc(base, "initialize", {"protocolVersion": "2099-01-01"},
@@ -432,8 +432,8 @@ def test_tools_list_is_cacheable():
 
 
 def test_missing_mcp_method_header_is_rejected():
-    """A load balancer routing on the header while we execute on the body is
-    the vulnerability this closes."""
+    """Closes the case where a load balancer routes on the header while the
+    server executes the body."""
     server, base = serve(make("secret"))
     try:
         rpc(base, "tools/list", dict(MODERN_META), token="secret", omit_headers=True)
@@ -534,11 +534,10 @@ def test_unknown_method_is_404():
 
 # --- required-argument validation -------------------------------------------
 #
-# Found by `cli/agentbox smoke`, not by any unit test: every tool published an
-# inputSchema with a `required` list and nothing enforced it, so omitting an
-# argument reached the handler and surfaced as `internal error: KeyError`. That
-# names neither the tool nor the argument, and reads as a server fault, so a
-# model's reasonable next move is to retry the identical broken call.
+# Every tool publishes an inputSchema with a `required` list, and the base
+# enforces it. Without that, an omitted argument reaches the handler and shows
+# up as `internal error: KeyError`. That names neither the tool nor the
+# argument and reads as a server fault, so a model would retry the same call.
 
 
 def with_required(dispatch=None):
@@ -570,7 +569,7 @@ def test_missing_required_argument_names_the_argument(monkeypatch):
 
 
 def test_all_missing_required_arguments_are_reported_at_once(monkeypatch):
-    """One round trip per missing argument is a bad conversation."""
+    """One error lists every missing argument, so the model needs one retry."""
     monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
     server, base = serve(with_required())
     try:
@@ -583,8 +582,8 @@ def test_all_missing_required_arguments_are_reported_at_once(monkeypatch):
 
 
 def test_empty_and_null_do_not_satisfy_a_required_argument(monkeypatch):
-    """`{"title": ""}` is a missing title wearing a disguise, and a model that
-    fills a slot it does not know is a normal failure mode."""
+    """`{"title": ""}` is a missing title. Models often fill a slot they do
+    not know with an empty value."""
     monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
     server, base = serve(with_required())
     try:
@@ -600,9 +599,9 @@ def test_empty_and_null_do_not_satisfy_a_required_argument(monkeypatch):
 
 
 def test_whitespace_is_accepted_and_this_is_deliberate(monkeypatch):
-    """Only empty and null are treated as absent. Trimming would be guessing
-    at each tool's semantics from the base class, and a bridge that cares can
-    reject it with a message about its own domain."""
+    """Only empty and null are treated as absent. Trimming would mean the
+    base class guessing at each tool's semantics. A bridge that needs to can
+    reject whitespace with a message about its own domain."""
     monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
     server, base = serve(with_required())
     try:

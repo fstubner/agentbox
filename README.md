@@ -110,7 +110,7 @@ the tool definitions fit their size budget, and the code passes lint.
 ```
 
 This checks the running machine. It reports which services answer, whether
-the assistant is really cut off from credentials and the Docker socket, and
+the assistant is cut off from credentials and the Docker socket, and
 whether anything is listening on the network that should not be.
 
 ### Deploy
@@ -131,8 +131,8 @@ whether anything is listening on the network that should not be.
 ```
 
 Backups are readable only by you, and each one is restored as a test before
-older ones are pruned. They are not encrypted, so keep them somewhere that
-matters.
+older ones are pruned. They are not encrypted, so store them somewhere
+safe.
 
 ## Licence
 

@@ -1,4 +1,4 @@
-"""Bring the local model stack back up when nothing is deliberately holding it down.
+"""Bring the local model stack back up unless it was stopped on purpose.
 
 ## What this is for
 
@@ -16,16 +16,16 @@ evaluator. This covers what a process cannot handle from inside itself.
 
 ## Why not Restart=always
 
-systemd does not restart a unit that was stopped deliberately, and every one of
-these stops is deliberate. The stop is not the problem, and nothing putting it
-back is.
+systemd does not restart a unit that was stopped on purpose, and each of these
+stops is on purpose. The stop is expected. What is missing is something that
+starts the stack again afterwards.
 
-## Why it cannot fight an evaluation
+## Why it does not interfere with an evaluation
 
 It stands down whenever an evaluation process exists, since a run holds its
 process for its whole duration. It checks before and after starting anything,
-so a run that begins mid-restore is not raced. When in doubt it does nothing,
-because a late restore costs minutes and a corrupted benchmark costs a day.
+so a run that begins mid-restore is not raced. When in doubt it does nothing.
+A late restore loses minutes, while a corrupted benchmark loses a day.
 
 ## Turning it off
 
@@ -50,8 +50,8 @@ DISABLED_FLAG = Path(os.environ.get(
     str(Path("~/.local/state/agentbox/keepalive-disabled").expanduser())))
 
 # The evaluator detector lives in agentbox_status, which the portal also uses.
-# One definition: a watchdog and a status page that disagree about whether a
-# benchmark is running would each be right half the time.
+# With one definition, the watchdog and the status page always agree on
+# whether a benchmark is running.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agentbox_status  # noqa: E402
 
@@ -80,8 +80,8 @@ def inactive_units(units: tuple[str, ...] = PRODUCTION_UNITS) -> list[str]:
         return []
     states = result.stdout.split()
     if len(states) != len(units):
-        # An answer we cannot line up with the question. Doing nothing is
-        # correct: the alternative is starting units based on a guess.
+        # The output does not line up with the units queried. Do nothing, so
+        # no unit is started based on a guess.
         return []
     return [unit for unit, state in zip(units, states, strict=True)
             if state != "active"]
@@ -106,10 +106,10 @@ def main(argv: list[str] | None = None) -> int:
     def say(message: str) -> None:
         """Log a no-op the first time, then stay quiet about it.
 
-        The unit runs every two minutes, so logging every tick would bury the
-        reason in noise, and logging nothing makes a watchdog that is standing
-        down look like one that is working. It logs only when the reason
-        changes.
+        The unit runs every two minutes, so logging every run would bury the
+        reason in noise. Logging nothing would make a watchdog that is standing
+        down look the same as one that is working. It logs only when the
+        reason changes.
         """
         if not quiet:
             print(message, file=sys.stderr)
@@ -141,9 +141,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # Re-check after deciding and before acting. A run that started while the
-    # checks above were in flight must win, because the cost is asymmetric:
-    # a late restore is minutes, a model stealing memory from a benchmark is a
-    # day's numbers quietly wrong.
+    # checks above were in flight takes priority. A late restore costs minutes.
+    # A model using memory a benchmark needs makes a day's results wrong
+    # without any error.
     if evaluation_running():
         say("[..] an evaluation started while checking; leaving it alone")
         return 0

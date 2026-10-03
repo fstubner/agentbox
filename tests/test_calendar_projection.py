@@ -1,9 +1,9 @@
 """Tests for calendar event projection.
 
-Calendar events are the largest payload in the system. These guard what the
-saving depends on: the projection must not invent or alter data, must keep the
-fields a scheduling answer needs, and `full` stays the default so the parameter
-cannot quietly change what the assistant already sees.
+Calendar events are the largest payload in the system. These tests check that
+the projection does not invent or alter data and keeps the fields a scheduling
+answer needs. `full` stays the default, so adding the parameter does not change
+what the assistant already sees.
 """
 from __future__ import annotations
 
@@ -75,8 +75,8 @@ def test_lean_preserves_values_exactly():
 
 
 def test_lean_keeps_status_so_cancelled_events_stay_distinguishable():
-    """Dropping status would make a cancelled event look live, which loses
-    accuracy rather than saving anything."""
+    """Dropping status would make a cancelled event look live. That loses
+    accuracy and saves very little."""
     assert "status" in gb.LEAN_EVENT_FIELDS
     assert gb.calendar_events({"view": "lean"})["items"][0]["status"] == "confirmed"
 
@@ -89,7 +89,7 @@ def test_lean_drops_response_envelope_metadata():
 
 
 def test_lean_keeps_pagination_token():
-    """Dropping this would silently truncate a multi-page calendar."""
+    """Dropping this would truncate a multi-page calendar without warning."""
     assert gb.calendar_events({"view": "lean"})["nextPageToken"] == "PAGE2"
 
 

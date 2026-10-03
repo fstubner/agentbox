@@ -7,8 +7,8 @@ speaker and Home Assistant integrations.
 
 The link is for whoever `CURRENT_IDENTITY` says, which comes from the bearer
 token before any tool runs, never from an argument. If the assistant could name
-the person, an instruction in an email could too. "Who is the link for" looks
-like an ordinary parameter, which is why it is worth saying.
+the person, an instruction in an email could too. This is stated here because
+"who is the link for" would otherwise look like an ordinary parameter.
 
 So `request_signin_link` makes a link for whoever is asking, and nobody can ask
 on someone else's behalf. Adding a new person goes through the invite form on
@@ -19,8 +19,8 @@ the Operations page.
 The link is ORIGIN_AGENT, which can review memories and account status and
 cannot approve a memory, disconnect an account, connect a chat account, invite
 anyone or change a household setting. The assistant can read any link it
-delivers, so the link is built to be worth little to whoever reads it. Rather
-than approving each one, what it can do is limited.
+delivers, so the link has little power for whoever reads it. Links are not
+approved one by one. Instead, what any link can do is limited.
 """
 from __future__ import annotations
 
@@ -83,9 +83,9 @@ def dispatch(name, args):
     identity = CURRENT_IDENTITY.get()
     if not identity:
         # Single-operator deployments authenticate with one shared token and
-        # no identity. Refusing is right: there is no way to know who the link
-        # would be for, and guessing would mint one for whoever is first in a
-        # config file.
+        # no identity. These are refused. There is no way to know who the
+        # link would be for, and guessing would mint one for whoever is first
+        # in a config file.
         raise ToolError(
             "this gateway is not configured with per-person identities, so "
             "there is no way to tell whose link this would be. An operator "
@@ -106,8 +106,8 @@ def dispatch(name, args):
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
-            # The portal caps links per person per hour. Say so plainly, so the
-            # assistant does not keep retrying.
+            # The portal caps links per person per hour. Report the cap
+            # clearly, so the assistant does not keep retrying.
             raise ToolError(
                 "too many sign-in links have been sent to this person in the "
                 "last hour. Wait, or ask an operator to hand one over.") from None
@@ -119,16 +119,15 @@ def dispatch(name, args):
 
 # --- proposing an invitation ---------------------------------------------------
 #
-# This is the one tool here that names somebody other than the caller, and the
-# module docstring above explains why that is normally forbidden: an
+# This is the one tool here that names somebody other than the caller. The
+# module docstring above explains why that is normally forbidden. An
 # instruction embedded in an email could name a person too.
 #
-# It exists anyway because an invitation is *for* somebody who has no session
-# and no identity, so there is nothing to bind it to. What replaces the
-# binding is that this tool does not act. It writes a draft; an admin on the
-# Operations page decides whether anything is sent. So the poisoned-email case
-# ends with a household member reading a request they did not make, which is
-# the outcome the approval step exists to produce.
+# It exists because an invitation is for somebody who has no session and no
+# identity, so there is nothing to bind it to. Instead, this tool does not
+# act. It writes a draft, and an admin on the Operations page decides whether
+# anything is sent. If an email injects an invitation, a household member sees
+# a request they did not make and can reject it at the approval step.
 #
 # Deciding is withheld from the assistant by the same capability that withholds
 # inviting, so a link this assistant minted cannot approve its own draft.
@@ -171,9 +170,9 @@ def _propose_invite(args):
                 "the portal refused that draft. Check the account name is "
                 "lowercase letters, digits, dashes or underscores.") from None
         if exc.code == 429:
-            # A refusal is an answer. Saying so plainly stops the model
-            # retrying into a wall, and the honest thing to relay is that
-            # somebody has to look at the queue, not that this failed.
+            # Report the refusal clearly so the model does not retry. The
+            # message to relay is that somebody has to look at the queue. The
+            # tool has not failed.
             raise ToolError(
                 "there are already several invitations waiting for the "
                 "household to decide on, so this one was not added. Ask them "

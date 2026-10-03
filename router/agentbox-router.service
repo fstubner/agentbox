@@ -9,15 +9,15 @@ Type=simple
 # directory.
 WorkingDirectory=%h/oss/agentbox/router
 
-# Two addresses, because the callers are on opposite sides of a boundary: the
-# evaluator and `doctor` come in on loopback, agentbox-mcp comes in from a
-# container, where loopback is its own. Not 0.0.0.0, because this endpoint is
-# unauthenticated and will run any prompt it is handed, and 172.17.0.1 is
-# reachable from containers while not being routable from the LAN.
+# Two addresses, because the callers are on opposite sides of a boundary. The
+# evaluator and `doctor` connect on loopback. agentbox-mcp connects from a
+# container, where loopback is the container's own. Not 0.0.0.0, because this
+# endpoint is unauthenticated and will run any prompt it is sent. 172.17.0.1 is
+# reachable from containers and not routable from the LAN.
 #
-# Confirm the bridge address with `ip -4 addr show docker0`; it is assigned,
-# not fixed. An address that will not bind is logged and skipped rather than
-# taking the other listener down with it.
+# Confirm the bridge address with `ip -4 addr show docker0`. It is assigned,
+# not fixed. An address that will not bind is logged and skipped, and the other
+# listener keeps running.
 Environment=AGENTBOX_ROUTER_HOST=127.0.0.1,172.17.0.1
 Environment=AGENTBOX_ROUTER_PORT=8765
 ExecStart=/usr/bin/python3 %h/oss/agentbox/router/agentbox_router.py

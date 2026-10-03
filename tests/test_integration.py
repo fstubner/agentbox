@@ -2,14 +2,13 @@
 
 ## Why these are not more unit tests
 
-The bugs worth catching here are at seams, where two components each work and
-disagree with each other, such as a reader and a writer using different names
-for one setting, or two files declaring different Google scopes. A unit test
-with a fixture on each side of a seam passes while the seam is broken. These
-run against the real thing.
+These tests target seams, where two components each work but disagree with
+each other, such as a reader and a writer using different names for one
+setting. A unit test with a fixture on each side of a seam passes while the
+seam is broken. These run against the deployed system.
 
-They skip rather than fail when the system is not up, so CI stays green on a
-machine without containers, and they report that they skipped.
+They skip when the system is not up, so CI passes on a machine without
+containers, and they report that they skipped.
 """
 from __future__ import annotations
 
@@ -36,7 +35,7 @@ def env_value(service: str, key: str) -> str:
 
     The env files hold secret references rather than values, so reading the
     file gives a reference and a 401. The container holds what was resolved at
-    deploy time, which is what the system actually uses.
+    deploy time, which is what the system uses.
     """
     container = {
         "memory-bridge": "memory-bridge-memory-bridge-1",
@@ -110,7 +109,7 @@ def alex(tokens):
     return tokens.get("alex") or next(iter(tokens.values()))
 
 
-# --- the seam that broke first --------------------------------------------------
+# --- declared tools have routes -------------------------------------------------
 
 
 @live
@@ -118,9 +117,9 @@ def test_every_declared_tool_is_callable(alex):
     """A tool can be declared in an integration and have no route behind it.
 
     Unit tests assert the schema and assert the bridge function separately, and
-    both pass while nothing joins them. This calls each read-only tool for real
-    and fails on the ones that answer with a transport error rather than a
-    result or an honest refusal.
+    both pass while nothing joins them. This calls each read-only tool on the
+    running gateway and fails on the ones that answer with a transport error
+    instead of a result or a refusal.
     """
     listed = rpc("tools/list", {}, alex)["result"]["tools"]
     assert listed, "gateway exposed no tools"
@@ -145,9 +144,8 @@ def test_every_declared_tool_is_callable(alex):
 
 @live
 def test_every_tool_resolves_to_a_policy_capability(alex):
-    """Deny-by-default means an unmapped tool is refused, which looks like a
-    broken feature rather than a policy decision. Arriving there by forgetting
-    to map a tool is the bug."""
+    """Deny by default means an unmapped tool is refused, which looks like a
+    broken feature. A tool refused because nobody mapped it is a bug."""
     listed = rpc("tools/list", {}, alex)["result"]["tools"]
     policy = (REPO / "policies" / "approval-policy.yaml").read_text()
     mapped = set(re.findall(r"^  (\w+):\s*\w+", policy, re.M))
@@ -160,7 +158,7 @@ def test_every_tool_resolves_to_a_policy_capability(alex):
 
 @live
 def test_one_identity_cannot_see_another_through_any_tool(tokens):
-    """Checked against the running server rather than a fixture.
+    """Checked against the running server, not a fixture.
 
     Isolation is enforced in three places. The server binds identity to the
     session credential, the bridge filters by scope, and the tool schema offers
@@ -181,8 +179,8 @@ def test_one_identity_cannot_see_another_through_any_tool(tokens):
 
 @live
 def test_identity_cannot_be_changed_by_an_argument(tokens):
-    """The rule the whole multi-account design rests on: identity comes from
-    the session credential, never from anything the model can write."""
+    """The multi-account design depends on this rule. Identity comes from the
+    session credential, never from anything the model can write."""
     if len(tokens) < 2:
         pytest.skip("needs two identities")
     names = sorted(tokens)
@@ -198,8 +196,8 @@ def test_identity_cannot_be_changed_by_an_argument(tokens):
 
 
 def test_components_agree_on_the_memory_bridge_variable():
-    """The portal read AGENTBOX_MEMORY_BRIDGE_URL while everything else wrote
-    AGENTBOX_MEMORY_BRIDGE, so it quietly reached nothing and rendered an
+    """If the portal read AGENTBOX_MEMORY_BRIDGE_URL while everything else
+    wrote AGENTBOX_MEMORY_BRIDGE, it would reach nothing and show an
     unreachable service as an empty queue."""
     sources = [REPO / "cli" / "agentbox", REPO / "cli" / "agentbox-portal"]
     used = set()
@@ -209,8 +207,8 @@ def test_components_agree_on_the_memory_bridge_variable():
 
 
 def test_google_scopes_match_between_onboarding_and_setup():
-    """Two files declare scopes and drift silently, because nothing fails until
-    somebody uses the feature and gets an opaque 403 days later."""
+    """Several files declare scopes and can drift apart. Nothing fails until
+    somebody uses the feature and gets an unexplained 403."""
     setup = (REPO / "services/compose/google-workspace-bridge"
                     "/oauth-setup.py").read_text()
     invite = script_code("agentbox-invite")
@@ -221,12 +219,12 @@ def test_google_scopes_match_between_onboarding_and_setup():
 
 
 def test_bridge_ports_are_not_published_to_the_host():
-    """A bridge token is only unspendable from outside because the bridges have
-    no host ports. A published port turns a leaked token into access."""
+    """A bridge token cannot be used from outside only because the bridges
+    have no host ports. A published port turns a leaked token into access."""
     for compose in (REPO / "services" / "compose").glob("*/compose.yaml"):
         text = code_of(compose)
         if "agentbox.exposure: lan" in text:
-            continue          # Home Assistant, deliberate and labelled
+            continue          # Home Assistant, labelled as LAN-exposed
         for line in text.splitlines():
             stripped = line.strip()
             if stripped.startswith("- ") and re.match(
@@ -239,9 +237,8 @@ def test_bridge_ports_are_not_published_to_the_host():
 
 @live
 def test_a_proposed_memory_reaches_the_operator_queue(alex):
-    """The failure that started all of this: a proposal could be written and
-    then be invisible to the only account able to approve it. Write on one
-    plane, read on the other."""
+    """A proposal must be visible to the only account able to approve it.
+    This writes on one plane and reads on the other."""
     marker = "integration-test marker, safe to reject"
     result = call("propose_memory", {"statement": marker, "kind": "fact"},
                   alex)
@@ -261,9 +258,8 @@ def test_a_proposed_memory_reaches_the_operator_queue(alex):
     matching = [p for p in payload.get("proposals", [])
                 if marker in p.get("statement", "")]
 
-    # Clean up before asserting, so a failure does not also leave litter.
-    # A test that writes to the live system and walks away turns the operator's
-    # review queue into a bin, and the queue is the thing being tested.
+    # Clean up before asserting, so a failure does not leave test proposals
+    # in the operator's live review queue.
     for item in matching:
         try:
             reject = urllib.request.Request(
@@ -280,7 +276,7 @@ def test_a_proposed_memory_reaches_the_operator_queue(alex):
         "a memory the assistant proposed is not visible to the reviewer")
 
 
-# --- services that must actually be running -------------------------------------
+# --- deployed services match the repository -------------------------------------
 
 
 @live

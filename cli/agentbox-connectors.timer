@@ -5,9 +5,9 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now agentbox-connectors.timer
 #
-# Thirty seconds because Google expires authorisation codes at about ten
-# minutes. Anything under a couple of minutes is comfortable; the cost of a
-# tick is one directory listing that is almost always empty.
+# Thirty seconds because Google expires authorisation codes after about ten
+# minutes. Any interval under a couple of minutes is safe. Each run lists one
+# directory, which is almost always empty.
 
 [Unit]
 Description=Finish Agentbox connector requests

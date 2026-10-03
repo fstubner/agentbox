@@ -44,7 +44,7 @@ def write_grant(path, tool, ttl=60, single_use=True):
 
 
 # The gated example throughout is set_home_climate and home_control_climate,
-# which stays gated for lasting reasons (it costs money and can wake people).
+# which stays gated because it costs money and can wake people.
 # These tests are about the gate, not the example.
 
 
@@ -56,8 +56,8 @@ def test_shipped_policy_parses_and_has_all_tiers(tiers):
 
 
 def test_one_policy_covers_operator_and_assistant_actions(tiers, tool_map):
-    """The merge: operator capabilities and assistant tools resolve from the
-    same file, so the two cannot contradict each other."""
+    """Operator capabilities and assistant tools resolve from the same file,
+    so the two cannot contradict each other."""
     assert "host_package_install" in tiers["approval_required"]   # operator
     assert tool_map["set_home_climate"] == "home_control_climate"      # assistant
     assert "home_control_climate" in tiers["approval_required"]
@@ -81,7 +81,7 @@ def test_allowed_tool_passes(tiers, grants, consumed, tool_map):
 
 
 def test_unknown_tool_defaults_to_approval_required(tiers, grants, consumed, tool_map):
-    """Deny-by-default: a tool added without a tier must not run silently."""
+    """Deny by default. A tool added without a tier must not run."""
     with pytest.raises(pg.PolicyDenied):
         pg.check("some_new_tool", tiers, grants, consumed, tool_map)
 
@@ -91,9 +91,9 @@ def test_approval_required_denied_without_grant(tiers, grants, consumed, tool_ma
         pg.check("set_home_climate", tiers, grants, consumed, tool_map)
     message = str(exc.value)
     assert "requires operator approval" in message
-    # The message no longer tells the model a command to suggest. The operator
-    # is notified out of band; naming the command here invited the assistant to
-    # relay an instruction it should not be composing.
+    # The message does not tell the model a command to suggest. The operator
+    # is notified out of band. Naming the command here would invite the
+    # assistant to relay an instruction it should not be composing.
     assert "agentbox grant" not in message
 
 
@@ -124,7 +124,7 @@ def test_expired_grant_does_not_authorise(tiers, grants, consumed, tool_map):
 def test_grant_for_one_tool_does_not_cover_another(tiers, grants, consumed, tool_map):
     write_grant(grants, "set_home_climate")
     with pytest.raises(pg.PolicyDenied):
-        # A different gated tool: a grant is for one capability, not a mood.
+        # A different gated tool. A grant covers one capability only.
         pg.check("create_home_automation", tiers, grants, consumed, tool_map)
 
 
@@ -134,7 +134,7 @@ def test_missing_grants_file_is_not_an_open_door(tiers, tmp_path, consumed, tool
 
 
 def test_corrupt_grants_file_is_not_an_open_door(tiers, grants, consumed, tool_map):
-    """A gate that fails open on malformed input is not a gate."""
+    """The gate must fail closed on malformed input."""
     grants.write_text("{ this is not json")
     with pytest.raises(pg.PolicyDenied):
         pg.check("set_home_climate", tiers, grants, consumed, tool_map)
@@ -149,7 +149,7 @@ def test_always_denied_cannot_be_granted(grants, consumed):
 
 
 def test_read_only_grants_file_does_not_block_consumption(tiers, grants, consumed, tool_map):
-    """Grants are mounted read-only in production; consumption is recorded
+    """Grants are mounted read-only in production. Consumption is recorded
     elsewhere, so a read-only grants file must not break a legitimate call."""
     write_grant(grants, "set_home_climate")
     grants.chmod(0o444)
@@ -160,8 +160,8 @@ def test_read_only_grants_file_does_not_block_consumption(tiers, grants, consume
 
 
 def test_unwritable_consumption_store_refuses_rather_than_allows(tiers, grants, tmp_path, tool_map):
-    """The bug this replaced: a read-only mount silently turned every
-    single-use grant into an unlimited TTL-long window."""
+    """If consumption could not be recorded and the call were allowed, every
+    single-use grant would become unlimited for its whole TTL."""
     write_grant(grants, "set_home_climate")
     blocked = tmp_path / "ro" / "consumed.json"
     blocked.parent.mkdir()
@@ -185,8 +185,8 @@ def test_every_live_mcp_tool_is_mapped(tool_map):
             continue
         src = code_of(module)
 # The live list only. A bare substring search for "TOOLS = [" also
-        # matches RETIRED_TOOLS, and reading on to the next def swallows
-        # whatever list follows, so retired tools were counted as live.
+        # matches RETIRED_TOOLS, and reading on to the next def takes in
+        # whatever list follows, so retired tools would count as live.
         m = re.search(r"^TOOLS\b[^=\n]*=\s*\[", src, re.M)
         if not m:
             continue
@@ -211,16 +211,16 @@ def test_capability_check_denies_without_a_grant(tiers, grants, consumed):
 
 
 def test_grant_named_by_tool_authorises_the_capability(tiers, grants, consumed, tool_map):
-    """The operator grants `set_home_climate`; the bridge asks for
-    `home_control_climate`. One grant, two vocabularies."""
+    """The operator grants `set_home_climate` and the bridge asks for
+    `home_control_climate`. One grant must satisfy both names."""
     write_grant(grants, "set_home_climate")
     pg.check_capability("home_control_climate", tiers, grants, consumed, tool_map=tool_map)
 
 
 def test_non_consuming_check_leaves_the_grant_for_the_bridge(tiers, grants, consumed, tool_map):
     """agentbox-mcp checks without using up a single-use grant, so the bridge
-    still has it. Otherwise every gated call would fail at the layer whose
-    answer counts."""
+    still has it. Otherwise every gated call would fail at the bridge, whose
+    check is the authoritative one."""
     write_grant(grants, "set_home_climate")
     pg.check("set_home_climate", tiers, grants, consumed, tool_map, consume=False)
     pg.check_capability("home_control_climate", tiers, grants, consumed, tool_map=tool_map)
@@ -238,7 +238,7 @@ def test_always_denied_capability_cannot_be_granted(grants, consumed):
 
 def test_google_bridge_declares_its_gated_capabilities():
     """Each bridge must name the capability an action uses, or the second gate
-    means nothing.
+    has nothing to check.
 
     The bridge declares the capability and the policy file decides its tier,
     so moving a capability to `allowed` changes no bridge code.

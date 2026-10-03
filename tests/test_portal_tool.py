@@ -1,9 +1,9 @@
 """The tool that lets the assistant hand somebody their own sign-in link.
 
-The thing most worth protecting here is the absence of an identity parameter.
-"Who is the link for" looks exactly like an ordinary argument, and making it
-one would quietly undo the property the whole gateway is built on: identity is
-the credential, not a value the model can choose.
+The most important property here is that the tool has no identity parameter.
+"Who is the link for" looks like an ordinary argument. Making it one would undo
+the property the gateway is built on. Identity comes from the credential, and
+is not a value the model can choose.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def portal_tool(monkeypatch):
     return module
 
 
-# --- the property that matters -------------------------------------------------
+# --- no identity parameter -----------------------------------------------------
 
 
 def test_the_schema_offers_no_identity(portal_tool):
@@ -71,8 +71,8 @@ def test_the_identity_comes_from_the_credential(portal_tool, monkeypatch):
 
 def test_an_identity_argument_is_ignored_rather_than_honoured(portal_tool,
                                                               monkeypatch):
-    """The injection case, verified live against the running gateway too:
-    sam's token with `identity: alex` produced a link for sam."""
+    """The injection case. Against the running gateway too, sam's token with
+    `identity: alex` produces a link for sam."""
     sent = {}
 
     def fake_urlopen(request, timeout=None):
@@ -112,7 +112,7 @@ def test_the_dispatch_never_reads_identity_from_arguments(portal_tool):
 
 def test_no_identity_refuses_instead_of_picking_somebody(portal_tool):
     """Single-operator gateways have no identity. Guessing would mint a link
-    for whoever happens to be first in a config file."""
+    for whoever is first in a config file."""
     portal_tool.CURRENT_IDENTITY.set("")
     with pytest.raises(Exception) as caught:
         portal_tool.dispatch("request_signin_link", {})
@@ -129,7 +129,7 @@ def test_a_missing_token_says_so_plainly(portal_tool, monkeypatch):
 
 def test_the_rate_cap_is_reported_as_an_answer_not_a_failure(portal_tool,
                                                              monkeypatch):
-    """Otherwise the assistant retries into a wall."""
+    """Otherwise the assistant keeps retrying a call that will fail."""
     import urllib.error
 
     def fake_urlopen(request, timeout=None):
@@ -146,10 +146,10 @@ def test_the_rate_cap_is_reported_as_an_answer_not_a_failure(portal_tool,
 
 
 def test_it_is_allowed_rather_than_gated():
-    """Putting an approval in front of somebody asking for their own sign-in
-    link is the exact everyday prompt that trains people to approve unread.
-    What keeps it safe is that the link is bounded, not that the mint is."""
-    # Read through the gate's own parser rather than PyYAML, which is not in
+    """An approval for somebody asking for their own sign-in link is an
+    everyday prompt, and people learn to approve such prompts without reading.
+    The limits on the link keep this safe, not a gate on minting it."""
+    # Read through the gate's own parser, not PyYAML, which is not in
     # the standard library. It is also the reader that sees this file in
     # production.
     import sys

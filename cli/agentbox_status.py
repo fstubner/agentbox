@@ -8,9 +8,9 @@ is healthy.
 
 Everything here is `docker ps`, an HTTP GET or a stat. Nothing restarts,
 deploys or changes a container. The portal is the most privileged web page on
-the box, and a restart button would make every bug in it much more expensive.
-Seeing that something is broken is useful on a phone, and fixing it can need a
-terminal.
+the box, and a restart button would make every bug in it more damaging. The
+page shows what is broken, which is useful on a phone. Fixing it is done from
+a terminal.
 
 Every subprocess is a fixed argument list with no shell and no interpolated
 input.
@@ -18,8 +18,8 @@ input.
 ## Freshness
 
 Snapshots are cached briefly and stamped with when they were taken. The age is
-shown, because quietly serving a minute-old picture of a box that just fell
-over would be worse than no status at all.
+shown, because a minute-old snapshot of a box that has just failed, shown
+without its age, would be worse than no status.
 """
 from __future__ import annotations
 
@@ -60,9 +60,8 @@ ENDPOINTS: dict[str, tuple[str, str]] = {
     "control plane ui": ("http://127.0.0.1:4321/", WARN),
 }
 
-# Friendlier names for the containers a household might reasonably ask about.
-# Anything not listed keeps its compose service name, which is not pretty but
-# is never wrong.
+# Friendlier names for the containers a household might ask about. Anything
+# not listed keeps its compose service name.
 SERVICE_LABELS = {
     "agentbox-mcp": "Assistant tools",
     "homeassistant": "Home Assistant",
@@ -87,9 +86,9 @@ def probe(url: str, timeout: float = 4) -> bool:
 def endpoint_checks(timeout: float = 4) -> list[Check]:
     """Probe every endpoint at once.
 
-    Serially this is eight timeouts end to end, which on a box with one thing
-    down is most of a minute of somebody staring at a blank page. They are
-    independent, so there is no reason to wait for them in turn.
+    Run one after another, the eight timeouts add up. With one service down
+    the page would take most of a minute to load. The probes are independent,
+    so they run in parallel.
     """
     def one(item):
         name, (url, severity) = item
@@ -139,11 +138,10 @@ class Service:
     running: bool
     stale: bool        # running code older than what is committed
     status: str = ""   # docker's own words, e.g. "Up 3 hours (healthy)"
-    # A compose directory nobody has deployed here is worth listing and is
-    # not a fault: eufy-bridge is a household service this household chose
-    # not to run, and a dashboard permanently red over it is the same
-    # "teaches people to ignore the list" failure the scaffold exclusion
-    # exists to prevent.
+    # A compose directory that is not deployed here is listed but is not a
+    # fault. eufy-bridge is a service this household chose not to run. A
+    # dashboard that is always red over it would lead people to ignore the
+    # list, which the scaffold exclusion also exists to prevent.
     deployed: bool = True
 
 
@@ -207,8 +205,8 @@ def services() -> list[Service]:
             container=container,
             running=status.startswith("Up"),
             # Only claim staleness when both hashes are known. An unlabelled
-            # container predates source hashing; calling that "stale" would
-            # send somebody to redeploy something that is perfectly current.
+            # container predates source hashing. Calling it stale would send
+            # someone to redeploy a service that is current.
             stale=bool(sha and current and sha != current),
             status=status))
 
@@ -226,9 +224,9 @@ def services() -> list[Service]:
     seen = {service.name for service in found}
     for compose in sorted((REPO / "services" / "compose").glob("*/compose.yaml")):
         name = compose.parent.name
-        # `example-service` is the scaffold's fixture, not a household
-        # service; reporting it as down would be the false alarm that teaches
-        # people to ignore this list.
+        # `example-service` is the scaffold's fixture and not a household
+        # service. Reporting it as down would be a false alarm, and false
+        # alarms lead people to ignore this list.
         if name in seen or name == "example-service":
             continue
         chosen = name in opted_out()
@@ -271,7 +269,8 @@ def docker_check() -> Check:
     """Whether container state could be read at all.
 
     When docker cannot be reached, `services()` is empty, and an empty list
-    would read as everything running. Not knowing has to show as a problem.
+    would read as everything running. So an unknown state is shown as a
+    problem.
     """
     try:
         result = subprocess.run(["docker", "ps", "-q"], capture_output=True,
@@ -296,10 +295,10 @@ def take() -> Snapshot:
                     evaluating=evaluation_running())
 
 
-# A page load should not pay for eight probes and a docker call every time
-# somebody clicks between tabs, and two admins looking at once should not
-# double the work. Short enough that a reload after fixing something shows the
-# fix; the age is rendered either way so nobody has to guess.
+# Cached so a page load does not run eight probes and a docker call every time
+# someone clicks between tabs, and two admins looking at once do not double
+# the work. The cache is short enough that a reload after a fix shows the fix.
+# The age is shown either way.
 CACHE_SECONDS = 20
 _cached: Snapshot | None = None
 

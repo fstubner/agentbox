@@ -1,13 +1,12 @@
 # Voice
 
-Speech in and out, entirely on this box. Nothing spoken to the assistant and
-nothing it says back leaves the machine.
+Speech recognition and synthesis run on this box. Nothing spoken to the
+assistant and nothing it says back leaves the machine.
 
-That is a choice rather than a default. The gateway ships with
-`tts.provider: edge`, which synthesises speech through Microsoft's cloud. Every
-spoken reply would leave the box, including anything the assistant had just
-read out of email or a calendar to compose it. Piper sounds noticeably more
-synthetic, and I accept that trade.
+This is not the gateway default. The gateway ships with `tts.provider: edge`,
+which synthesises speech through Microsoft's cloud. Every spoken reply would
+leave the box, including anything the assistant had just read out of email or
+a calendar to compose it. Piper sounds more synthetic, and I accept that.
 
 | Stage | Component | Where it runs |
 |---|---|---|
@@ -33,8 +32,8 @@ sudo -u agentbox $GATEWAY_VENV/bin/pip install faster-whisper piper-tts
 ```
 
 Without `libopus0` the gateway logs `Opus codec not found` on every start and
-Discord voice does not work at all. It reads like a warning, but it means the
-feature is off.
+Discord voice does not work. The message looks like a warning, but it means
+the feature is off.
 
 Models are cached under the gateway's profile, not the operator's home.
 
@@ -77,7 +76,7 @@ Discord voice is off.
 
 ## Microphones and speakers around the house
 
-Home Assistant handles the audio and this box does the thinking. Wake words,
+Home Assistant handles the audio and this box runs the assistant. Wake words,
 streaming, echo cancellation and firmware for cheap boards are what Home
 Assistant's Assist stack already does well, so I don't reimplement them here.
 
@@ -88,10 +87,10 @@ not built yet.
 
 `services/compose/wyoming-whisper` and `services/compose/wyoming-piper`.
 
-Home Assistant here runs as a plain container rather than Home Assistant OS,
-so there is no add-on store. Its Assist pipeline starts with no speech-to-text
-or text-to-speech engine, and a satellite without them wakes up, streams audio
-and gets silence back.
+Home Assistant here runs as a plain container, not Home Assistant OS, so there
+is no add-on store. Its Assist pipeline starts with no speech-to-text or
+text-to-speech engine. A satellite without them wakes up, streams audio and
+gets no reply.
 
 These two services serve the same models the gateway uses, over the Wyoming
 protocol, bound to `127.0.0.1`. Home Assistant uses host networking, so it
@@ -104,7 +103,7 @@ cli/agentbox deploy wyoming-piper
 
 Both use memory all the time, on a box with 16 GB shared with the model
 server. They have limits (1536m and 512m) so a transcriber cannot push the
-machine into swap halfway through somebody's sentence.
+machine into swap while it handles a request.
 
 Then in Home Assistant, go to **Settings > Devices > Add integration > Wyoming
 Protocol** and add it twice, with `127.0.0.1:10300` for speech to text and
@@ -117,22 +116,20 @@ Any Raspberry Pi with a microphone works. Install `wyoming-satellite` on it and
 point it at Home Assistant, and it shows up as a device you can assign a
 pipeline to. It only handles audio and never talks to Agentbox directly.
 
-Use this rather than the option below. A Pi keeps the promise at the top of
-this file.
+Prefer this to the option below. With a Pi, no audio leaves the box.
 
 ### 3. Echo and other smart speakers
 
 Home Assistant can speak a reply through an Alexa device, a Chromecast or a
 smart TV. That works with nothing to buy or wire up.
 
-The cost is the thing this document exists to avoid. Audio played through an
-Echo goes through Amazon. Piper makes the speech locally and then hands it to a
-device that depends on the cloud, so the reply leaves the box. That may be fine
-for a shopping-list confirmation. It is not fine for anything read out of
-email.
+The cost is that the reply leaves the box. Audio played through an Echo
+goes through Amazon. Piper makes the speech locally and then hands it to a device
+that depends on the cloud. That may be acceptable for a shopping-list
+confirmation. It is not acceptable for anything read out of email.
 
-Use them for output where convenience wins. In a room whose only speaker is an
-Echo, "nothing spoken leaves the box" is not true.
+Use them for output where convenience matters more than privacy. In a room
+whose only speaker is an Echo, "nothing spoken leaves the box" is not true.
 
 ### 4. The route back to the assistant
 
@@ -140,19 +137,19 @@ This is not built. Home Assistant's own conversation agent answers today.
 
 Pointing a pipeline at this assistant needs a webhook. `hermes webhook
 subscribe` already provides the entry point, with HMAC secrets and per-target
-delivery, so the Agentbox side is a route and a policy decision rather than a
-new service.
+delivery. The Agentbox side needs a route and a policy decision, not a new
+service.
 
 Two questions need answers first.
 
 - **Which room heard it.** The satellite id has to survive the round trip, or
   every reply plays everywhere at once.
 - **What a spoken request may do.** Nobody reads a spoken request carefully
-  before it runs, so an approval prompt fits voice worse than Discord. Voice
-  should get a narrower set of tools, not the same set behind a prompt. Under
-  the rule that absent beats gated, the voice route simply would not carry the
-  others.
+  before it runs, so an approval prompt works worse for voice than for
+  Discord. Voice should get a smaller set of tools. The other tools would have
+  no route from voice, so a spoken request cannot call them, even with an
+  approval.
 
   `policies/approval-policy.yaml` cannot express that yet. It has tiers and a
   tool map but no per-channel dimension. A policy section that nothing enforces
-  would be worse than none, so that decision gets made with the route.
+  would be misleading, so that decision will be made when the route is built.

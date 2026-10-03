@@ -1,11 +1,11 @@
 """The evaluator: rules firing, and the ways a rule must not fire.
 
-What matters most is where approval lives. Rule files sit on the mount the
-container can write, where writing must never grant anything. So approval is
-an operator-written entry on the read-only mount, pinning a fingerprint of
-what the rule runs. The first tests here are the attacks that split prevents:
-a server writing `"active": true` into a proposal, and a server rewriting an
-approved rule's actions after a person said yes.
+The most important design point is where approval is stored. Rule files sit
+on the mount the container can write, and writing there must never grant
+anything. So approval is an operator-written entry on the read-only mount,
+pinning a fingerprint of what the rule runs. The first tests here cover the
+two attacks that split prevents. A server writes `"active": true` into a
+proposal, or rewrites an approved rule's actions after a person said yes.
 """
 from __future__ import annotations
 
@@ -85,8 +85,8 @@ def test_an_unapproved_proposal_never_fires(tmp_path, monkeypatch):
 
 
 def test_a_flag_written_into_the_rule_file_confers_nothing(tmp_path, monkeypatch):
-    """The attack the design exists for: the rule file is on the mount the
-    gateway can write, so a compromised gateway stamping approval fields into
+    """The main attack this design prevents. The rule file is on the mount the
+    gateway can write, so a compromised gateway writing approval fields into
     its own proposal must change nothing."""
     _reset(monkeypatch)
     record = _rule("self-approved")
@@ -112,7 +112,7 @@ def test_editing_an_approved_rule_voids_the_approval(tmp_path, monkeypatch):
 
 
 def test_an_unreadable_approvals_file_means_nothing_fires(tmp_path, monkeypatch):
-    """Same failure direction as an unreadable grants file."""
+    """Fails closed, like an unreadable grants file."""
     _reset(monkeypatch)
     _store(tmp_path / "rules", _rule("morning"))
     (tmp_path / "policy").mkdir(parents=True)
@@ -145,9 +145,9 @@ def test_a_non_matching_event_fires_nothing(tmp_path, monkeypatch):
 
 
 def test_fingerprints_ignore_display_fields(tmp_path, monkeypatch):
-    """description and proposed_at are display; the gateway rewriting them
-    must not void an approval, or every proposal-time timestamp difference
-    between CLI and gateway would break approval entirely."""
+    """description and proposed_at are display fields. The gateway rewriting
+    them must not void an approval, or any timestamp difference between CLI
+    and gateway at proposal time would break approval."""
     _reset(monkeypatch)
     record = _rule("morning")
     _approve(tmp_path / "policy" / "rules-approved.json", record)
@@ -160,8 +160,8 @@ def test_fingerprints_ignore_display_fields(tmp_path, monkeypatch):
 
 
 def test_cooldown_turns_a_flapping_match_into_one_firing(tmp_path, monkeypatch):
-    """The loop runs twice a minute; the 07:30 tick matches twice. A sensor
-    can flap all day. One mechanism covers both."""
+    """The loop runs twice a minute, so the 07:30 tick matches twice. A sensor
+    can flap all day. One cooldown covers both."""
     _reset(monkeypatch)
     record = _store(tmp_path / "rules", _rule("morning"))
     _approve(tmp_path / "policy" / "rules-approved.json", record)
@@ -204,8 +204,8 @@ def test_every_action_passes_the_policy_gate(tmp_path, monkeypatch):
 
 
 def test_a_denied_action_is_dropped_not_retried(tmp_path, monkeypatch):
-    """A rule needing a grant at 3am does nothing. Recorded, never retried,
-    because nobody reads approval prompts at 3am."""
+    """A rule needing a grant does nothing at 3am. It is recorded and never
+    retried, because nobody reads approval prompts at 3am."""
     _reset(monkeypatch)
 
     def deny(tool, consume, identity):
@@ -316,8 +316,8 @@ def test_cli_and_evaluator_fingerprints_agree():
 
 
 def test_cli_approval_is_readable_by_the_evaluator(tmp_path, monkeypatch):
-    """The whole seam, end to end: approve with the CLI's writer, fire with
-    the evaluator's reader."""
+    """The seam end to end. Approve with the CLI's writer and fire with the
+    evaluator's reader."""
     _reset(monkeypatch)
     cli = _load_cli()
     approved = tmp_path / "policy" / "rules-approved.json"
@@ -336,8 +336,8 @@ def test_cli_approval_is_readable_by_the_evaluator(tmp_path, monkeypatch):
 
 def test_the_cli_warning_agrees_with_the_live_sources():
     """The approve-time message names which sources are live. It is a plain
-    tuple in cli/agentbox (the CLI cannot import the gateway's modules), so
-    this is the check that keeps the two from drifting."""
+    tuple in cli/agentbox, because the CLI cannot import the gateway's
+    modules. This check keeps the two copies in step."""
     source = code_of(REPO / "cli" / "agentbox_rules.py")
     assert f'live = {tuple(evaluator.LIVE_SOURCES)!r}'.replace("'", '"') \
         in source.replace("'", '"')

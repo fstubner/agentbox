@@ -96,7 +96,8 @@ class GoogleWorkspaceBridge(BridgeHandler):
     bridge_token = BRIDGE_TOKEN
 
     # agentbox-mcp checks first for a quick refusal with a clear message. This
-    # is the check that counts, in the process that holds the OAuth token.
+    # check is authoritative, because it runs in the process that holds the
+    # OAuth token.
     def capability_for(self, method, path, body):
         if path == "/v1/drive/create":
             return "drive_write_own_folder"

@@ -1,6 +1,6 @@
 """Tests for the Discord approval loop.
 
-What matters is that the assistant cannot approve itself. It is in the same
+The key property is that the assistant cannot approve itself. It is in the same
 Discord, and an instruction in an email can make it say anything, including
 "approve archive_gmail". So the loop ignores every message from a bot and every
 user it does not recognise, and never sees a grant it can write.
@@ -29,7 +29,7 @@ def message(content, user_id="operator-1", bot=False):
 
 
 def accepts(msg, operators=frozenset({"operator-1"})):
-    """Mirror of the loop's filter, which is the whole security boundary."""
+    """Mirror of the loop's filter, which is the security boundary."""
     author = msg.get("author") or {}
     if author.get("bot"):
         return False

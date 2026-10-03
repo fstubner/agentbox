@@ -102,7 +102,7 @@ def test_wrong_secret_is_refused_and_says_nothing(portal):
     _, link_id = portal.mint_link("sam", "http://x")
     identity, _, reason = portal.redeem_link(link_id, "not-the-secret")
     assert identity == ""
-    # A refusal that named the wrong part would be an oracle.
+    # A refusal that named the wrong part would reveal which part was right.
     assert reason == portal.redeem_link("no-such-link", "x")[2]
 
 
@@ -166,8 +166,8 @@ def test_member_cannot_decide_another_identity_proposal(portal, monkeypatch):
 
 
 def test_admin_decides_household_but_not_another_private_scope(portal, monkeypatch):
-    """A household memory affects everyone, so somebody must decide it. A
-    member's private scope is theirs, and admin is not a master key over it."""
+    """A household memory affects everyone, so somebody must decide it. The
+    admin role cannot override a member's private scope."""
     monkeypatch.setattr(portal, "memory_call", lambda *a, **k: {
         "proposals": [{"id": "h", "scope": "household", "statement": "bins"},
                       {"id": "m", "scope": "sam", "statement": "hers"}]})
@@ -189,8 +189,8 @@ def test_member_sees_only_their_own_scope(portal, monkeypatch):
 
 
 def test_bridge_failure_does_not_report_success(portal, monkeypatch):
-    """A silent no-op here would tell someone their memory was deleted when it
-    was not."""
+    """Reporting success here would tell someone their memory was deleted when
+    it was not."""
     monkeypatch.setattr(portal, "own_proposals",
                         lambda *a: [{"id": "p1", "scope": "sam"}])
     monkeypatch.setattr(portal, "memory_call", lambda *a, **k: None)
@@ -208,7 +208,7 @@ def test_portal_is_not_reachable_as_a_tool(portal):
 
     The gateway is the Discord bot, so a link delivered over the gateway's own
     connection would be readable by a prompt-injected model, which could then
-    approve its own memory proposals and defeat the review gate entirely.
+    approve its own memory proposals and bypass the review gate.
     """
     policy = code_of(REPO / "policies" / "approval-policy.yaml")
     for forbidden in ("portal_link", "mint_link", "portal_login"):
@@ -225,7 +225,7 @@ def test_link_is_bound_to_the_requesting_browser(portal):
     url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc123")
 
     # Someone with the link but not the browser cookie gets a session, as
-    # opening a link on a phone does, but not the capability that matters.
+    # opening a link on a phone does, but cannot approve or disconnect.
     identity, origin, reason = portal.redeem_link(link_id, secret_of(url), "")
     assert identity == "alex" and reason == ""
     assert origin == portal.ORIGIN_CHAT
@@ -245,7 +245,7 @@ def test_a_downgraded_redemption_does_not_burn_the_link(portal):
     """Opening the link first must not lock the real person out, and a new
     link would arrive on the same channel the reader is watching."""
     url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc")
-    # Someone reads the message and opens it: limited session, link survives.
+    # A reader who opens it gets a limited session, and the link stays valid.
     assert portal.redeem_link(link_id, secret_of(url), "wrong")[1] == \
         portal.ORIGIN_CHAT
     identity, origin, _ = portal.redeem_link(link_id, secret_of(url), "abc")
@@ -266,7 +266,7 @@ def test_nonce_is_stored_hashed(portal):
 
 
 def test_operator_issued_links_need_no_nonce(portal):
-    """`portal link` hands the URL over directly; there is no browser to bind."""
+    """`portal link` hands the URL over directly, with no browser to bind."""
     url, link_id = portal.mint_link("sam", "http://x")
     assert portal.redeem_link(link_id, secret_of(url), "")[0] == "sam"
 
@@ -291,9 +291,9 @@ class _CapturingHandler:
 def test_unknown_address_is_indistinguishable(portal, monkeypatch):
     """The sign-in form must not reveal who lives here.
 
-    Exercised rather than grepped: the response to a registered address and an
-    unregistered one must be byte-identical apart from the nonce, and only
-    running both can show that.
+    This runs both requests instead of reading the source. The response to a
+    registered address and an unregistered one must be byte-identical apart
+    from the nonce, and only running both can show that.
     """
     portal.SETTINGS.save({"identity_emails": "alex:alex@example.com"})
     monkeypatch.setattr(portal, "send_link_email", lambda a, u: (True, ""))
@@ -335,7 +335,7 @@ def test_session_cookie_is_httponly_and_samesite(portal):
 
 
 def test_agent_session_cannot_approve_memories(portal):
-    """The one capability that actually matters.
+    """This is the capability that must be withheld.
 
     The review gate is the assistant's only route to durable memory. If a link
     it minted could approve, it would be writing its own long-term memory with
@@ -348,9 +348,9 @@ def test_agent_session_cannot_approve_memories(portal):
 
 
 def test_agent_session_keeps_the_harmless_capabilities(portal):
-    """Withholding everything would make the feature pointless. Reading your
-    own memories and seeing connector status are things the assistant can
-    already do, so a link it made granting them costs nothing."""
+    """Withholding everything would make the link useless. The assistant can
+    already read your memories and see connector status, so a link it made
+    that grants them adds no risk."""
     for cap in ("memory:read_own", "connector:read_own"):
         assert portal.can(portal.MEMBER, cap, portal.ORIGIN_AGENT)
 
@@ -395,7 +395,7 @@ def test_agent_endpoint_is_absent_when_unconfigured(portal):
 
 
 def test_startup_warns_when_links_cannot_be_delivered(portal):
-    """The only place this failure can show.
+    """Startup is the only place this failure can be shown.
 
     The sign-in page answers the same for known and unknown addresses, so it
     cannot report that delivery failed. Someone is told a link is coming and
@@ -407,13 +407,13 @@ def test_startup_warns_when_links_cannot_be_delivered(portal):
     assert 'SETTINGS.value("identity_emails")' in source
     assert 'not config.SETTINGS.value("smtp_host")' in source
     assert "never sent" in source
-    # And it names the two ways out, since the page cannot.
+    # It names the two alternatives, since the page cannot.
     assert "Discord" in source
 
 
 def test_delivery_failure_is_never_revealed_to_the_browser(portal, monkeypatch):
-    """The other half of the same design: the operator learns, the visitor
-    does not."""
+    """The other half of the same design. The operator is told and the
+    visitor is not."""
     import inspect
     portal.SETTINGS.save({"identity_emails": "alex:alex@example.com"})
     assert "sys.stderr.write" in inspect.getsource(
@@ -433,7 +433,7 @@ def test_delivery_failure_is_never_revealed_to_the_browser(portal, monkeypatch):
 
 
 def test_the_edit_box_carries_the_current_wording(portal):
-    """The reviewer edits what the assistant actually proposed, not a blank."""
+    """The reviewer edits what the assistant proposed, not a blank box."""
     portal.own_proposals = lambda identity, role: [
         {"id": "p1", "scope": "alex", "statement": "Alex hates meetings",
          "kind": "memory"}]
@@ -452,7 +452,7 @@ def test_a_feedback_proposal_says_why_and_offers_the_split(portal):
 
 
 def test_filing_as_feedback_sends_the_kind_to_the_bridge(portal, monkeypatch):
-    """One path for both verbs: the bridge routes anything marked feedback to
+    """Both verbs use one path. The bridge routes anything marked feedback to
     the backlog, so the two cannot disagree about where it lands."""
     sent = {}
     portal.own_proposals = lambda identity, role: [
@@ -502,8 +502,8 @@ def _memories_payload(rows):
 
 
 def test_the_page_shows_what_is_actually_stored(portal, monkeypatch):
-    """Without this the portal could only ever add memories, never show or
-    correct them."""
+    """Without this the portal could only add memories, never show or correct
+    them."""
     portal.own_proposals = lambda identity, role: []
     monkeypatch.setattr(portal, "memory_call", lambda m, p, payload=None:
                         _memories_payload([
@@ -557,8 +557,8 @@ def test_forgetting_out_of_scope_is_refused(portal, monkeypatch):
 
 
 def test_an_agent_session_cannot_forget(portal, monkeypatch):
-    """Deleting the inconvenient parts is the same capability as writing
-    memory, in reverse."""
+    """Deleting memories is the same capability as writing them, in
+    reverse."""
     monkeypatch.setattr(portal, "memory_call", lambda m, p, payload=None:
                         _memories_payload([]))
     with pytest.raises(PermissionError):
@@ -572,7 +572,7 @@ def test_the_signed_out_page_never_echoes_the_url(portal):
     body = portal.render_signin(sent=False).decode()
     assert "Google consent" not in body
     assert "class=flash" not in body
-    # The one message that does belong there is fixed text, not from the URL.
+    # The one message that belongs there is fixed text, not from the URL.
     sent = portal.render_signin(sent=True).decode()
     assert "a sign-in link is on its way" in sent
 
@@ -617,7 +617,7 @@ def test_every_key_the_portal_redirects_to_actually_exists(portal):
 
 
 def test_messages_are_not_truncated(portal):
-    """The whole point: the text lives in code, so it is whole."""
+    """The text lives in code, so it is never cut off."""
     assert portal.flash_text("consent_received").endswith("if you can.")
     for key, text in portal.FLASHES.items():
         assert text.strip(), key

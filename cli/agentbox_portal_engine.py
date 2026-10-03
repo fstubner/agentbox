@@ -22,7 +22,7 @@ def bind(portal_mod: Any) -> None:
 
 
 def _hardware_summary() -> str:
-    """CPU model and memory, read from this machine rather than written down."""
+    """CPU model and memory, read from this machine."""
     cpu, mem_gb = "Unknown CPU", 0
     try:
         for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
@@ -53,7 +53,7 @@ def _latest_backup() -> tuple[str, str]:
 
 def render_capabilities(identity: str, role: str, flash: str = "",
                         origin: str = "email") -> bytes:
-    """Unified Capabilities & Integrations surface."""
+    """Capabilities & Integrations page."""
     parts = [
         "<h1>Capabilities & Integrations</h1>",
         "<p class=sub>External accounts, smart home services, and reasoning skills.</p>",
@@ -113,7 +113,7 @@ def render_capabilities(identity: str, role: str, flash: str = "",
 
     # 2. Smart Home & Household Services
     parts.append("<h2>Smart Home & Core Services</h2>")
-    # Each dot is a live probe rather than a claim.
+    # Each dot is the result of a live probe.
     for title, blurb, port, health in (
             ("Vikunja Tasks & Projects", "Household shared task lists and todo items.",
              3456, "/api/v1/info"),

@@ -31,7 +31,7 @@ def portal_email_delivery() -> int:
 
     The sign-in page answers the same way for known and unknown addresses, so
     it cannot say delivery failed. Someone is told a link is on its way and
-    nothing arrives. This is the only place that problem shows.
+    nothing arrives. This check is the only place that problem is reported.
     """
     unit_env = {}
     result = subprocess.run(
@@ -87,9 +87,10 @@ def portal_redirect_uri() -> int:
 def connector_credentials() -> int:
     """Check each person's Google credential still works.
 
-    A token revoked at Google leaves the container healthy and the first sign
-    is an unexplained 403 days later. A disconnected account is a legitimate
-    state, so this warns rather than fails.
+    A token revoked at Google leaves the container healthy. Otherwise the
+    problem only shows as a 403 on a later request, possibly days later. A
+    disconnected account is a legitimate state, so this warns rather than
+    fails.
     """
     directory = Path(env_dir())
     for env_path in sorted(directory.glob("*-google-bridge.env")):

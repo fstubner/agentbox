@@ -35,7 +35,7 @@ def test_policy_approval_required_action(cli, capsys):
 
 
 def test_policy_always_denied_action_is_blocked(cli, capsys):
-    """The core enforcement guarantee: a denied action never returns success."""
+    """A denied action never returns success."""
     code = cli.policy_check("merge_own_pr")
     out = capsys.readouterr().out
     assert code == 2, "always_denied actions must return a non-zero, distinct exit code"
@@ -43,7 +43,7 @@ def test_policy_always_denied_action_is_blocked(cli, capsys):
 
 
 def test_policy_unknown_action_defaults_to_approval_required(cli, capsys):
-    """Deny-by-default: anything not explicitly allowed requires approval."""
+    """Deny by default. Anything not listed as allowed requires approval."""
     code = cli.policy_check("some_action_nobody_declared")
     assert code == 0
     assert '"tier": "approval_required"' in capsys.readouterr().out
@@ -74,9 +74,8 @@ def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
 
     import agentbox_doctor as cli
 
-    # The portal stands in for the router here. The router was the service
-    # this check was written for, and it is retired now, but the distinction
-    # between stopped and wedged still matters for everything that remains.
+    # The portal is the example unit here. The router is retired, and the
+    # difference between stopped and wedged applies to every remaining unit.
     state = {"value": "inactive"}
 
     def fake(cmd, **kwargs):
@@ -95,38 +94,38 @@ def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
 
 
 def test_the_tool_schema_budget_is_enforced_and_current():
-    """The tool schemas are sent on every turn, and their cost is held to a
-    budget so it cannot drift unnoticed."""
+    """The tool schemas are sent on every turn. Their cost is held to a budget
+    so that growth fails validate."""
     import agentbox_validate as cli
 
     count, tokens, worst = cli.tool_schema_cost()
     assert count > 0, "could not assemble the tool surface"
     assert tokens <= cli.TOOL_SCHEMA_TOKEN_BUDGET, (
         f"{tokens} tokens over budget; biggest: {worst}")
-    # And the stale figure is gone from the shared base.
+    # The old hard-coded figure is not in the shared base.
     base = code_of("services/templates/mcp/mcp_base.py")
     assert "~2,250 tokens per turn" not in base
 
 
 def test_validate_gates_on_lint(monkeypatch):
-    """Lint is a gate, not advice.
+    """A lint failure fails validate.
 
-    A NameError in the Google bridge was on screen from `ruff check` and got
-    deployed anyway, crash-looping the container that holds the OAuth
-    credential. validate runs before every deploy, so that is where a
-    known-bad change has to stop.
+    A NameError that `ruff check` reports can still be deployed if lint only
+    warns, and in the Google bridge that crash-loops the container holding the
+    OAuth credential. validate runs before every deploy, so it stops the
+    change there.
     """
     from conftest import code_of
     source = code_of("cli/agentbox_validate.py")
     block = source.split("def validate(")[1].split("\ndef ")[0]
     assert 'shutil.which("ruff")' in block
     assert '"ruff", "check"' in block
-    # An absent linter warns rather than passing silently.
+    # A missing linter produces a warning, not a silent pass.
     assert "ruff not installed" in block
 
 
 def test_a_missing_linter_does_not_read_as_a_pass():
-    """A check that cannot run must not masquerade as one that passed."""
+    """A check that cannot run must not be reported as passed."""
     from conftest import code_of
     block = code_of("cli/agentbox_validate.py").split("def validate(")[1].split("\ndef ")[0]
     lint = block[block.index('shutil.which("ruff")'):]
@@ -135,7 +134,7 @@ def test_a_missing_linter_does_not_read_as_a_pass():
 
 
 def test_floating_tags_are_reported_as_they_age():
-    """A floating tag does not float.
+    """A floating tag does not update by itself.
 
     Third-party images use tags such as `stable` or `latest`, and `deploy`
     reuses whatever is cached, so they stay at whatever was first pulled.
@@ -153,7 +152,7 @@ def test_floating_tags_are_reported_as_they_age():
 def test_update_is_separate_from_deploy():
     """`deploy` must ship your change and nothing else.
 
-    If it silently pulled upstream too, a one-line config fix could also jump
+    If deploy pulled upstream images, a one-line config fix could also move
     Home Assistant a minor version, and a failure afterwards would have two
     candidate causes instead of one.
     """
@@ -188,7 +187,7 @@ def test_update_resolves_service_aliases():
 
 
 def test_third_party_images_reports_compose_service_name():
-    """Doctor's update hint must name the actual compose service directory,
+    """Doctor's update hint must name the compose service directory, and
     not guess from the image tag where hyphens differ."""
     from conftest import code_of
     source = code_of("cli/agentbox_doctor.py")
@@ -197,10 +196,11 @@ def test_third_party_images_reports_compose_service_name():
 
 
 def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
-    """A household is not a list of names: it is who may do what, and whether
-    each person can actually get in. Those four facts lived in four
-    environment variables across two systemd units, so answering "can Sam sign
-    in?" meant looking in four places and reasoning about it.
+    """The list shows each person's role and whether they can sign in.
+
+    These facts are spread over four environment variables in two systemd
+    units. The command gathers them, so answering "can Sam sign in?" does not
+    mean looking in four places.
     """
     import agentbox_identity as cli
 
@@ -220,9 +220,9 @@ def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
     # longest name happening to be five characters.
     assert re.search(r"alex\s+admin", out)
     assert re.search(r"sam\s+member", out)
-    # Each person's actual route in, not a global claim about SMTP.
+    # Each person's own route in, not a global claim about SMTP.
     assert "email" in out and "Discord DM" in out
-    # And the one who has neither is named rather than left to be discovered.
+    # A person with neither route is named.
     # A third, distinct name: this assertion needs somebody with no route at
     # all, and both of the others have one.
     assert "taylor cannot request a link themselves" in out

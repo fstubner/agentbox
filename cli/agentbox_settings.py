@@ -1,10 +1,10 @@
 """Household settings that belong to the household, not to a config file.
 
 Who is an admin, where sign-in links go and how mail is sent are decisions for
-the people who live here, so they are edited on the portal rather than in a
+the people who live here, so they are edited on the portal, not in a
 systemd unit. None of these values is safer for being in a unit file.
 
-## One table rather than a page per setting
+## One table for all settings
 
 A setting is declared once, in SETTINGS, with a validator, and the portal
 renders and saves it generically. There is no per-setting page code to forget
@@ -13,7 +13,8 @@ to guard.
 ## Where the values live
 
 `~/.local/state/agentbox/portal/settings.json`, mode 600, owned by the
-operator and mounted into no container. That is the security property.
+operator and mounted into no container. The settings are safe because of
+this.
 `admins` decides who may approve a memory, and `identity_emails` decides where
 a sign-in link goes. If the assistant could write either, it could make itself
 an admin or redirect someone's link to a mailbox it reads. No tool reaches this
@@ -57,8 +58,8 @@ class Setting:
     """One household setting: how to store it, show it and check it.
 
     `clean` is all of the validation. It returns the value to store, or raises
-    InvalidSetting with a sentence a person can act on. It never coerces a
-    near miss into something nobody chose.
+    InvalidSetting with a sentence a person can act on. It never converts a
+    near-valid value into a different value.
     """
 
     key: str
@@ -215,13 +216,12 @@ GROUPS = tuple(dict.fromkeys(setting.group for setting in SETTINGS))
 class SettingsStore:
     """Reads and writes the settings file. One instance per process is enough.
 
-    Not cached: the portal is a threaded HTTP server and the file
-    is small, so re-reading is cheaper than reasoning about invalidation after
-    a write.
+    Not cached. The portal is a threaded HTTP server and the file is small,
+    so re-reading is simpler than invalidating a cache after a write.
     """
 
     directory: Path
-    # None means read os.environ when asked, rather than freezing the fallback
+    # None means read os.environ when asked, instead of fixing the fallback
     # when the store is built at startup.
     environ: dict | None = None
 
@@ -258,7 +258,7 @@ class SettingsStore:
         """Validate and store. Returns the keys that changed.
 
         Every value is checked before anything is written, so a form with one
-        bad field changes nothing, rather than applying half of it.
+        bad field changes nothing.
         """
         stored = self._stored()
         cleaned: dict[str, str] = {}
@@ -269,7 +269,7 @@ class SettingsStore:
             if setting.secret and raw == "" and key not in clear:
                 # Blank means keep what is there, because a password field is
                 # never shown back and every save would otherwise wipe it.
-                # `clear` is how a caller says it really meant empty.
+                # A caller passes `clear` to store an empty value.
                 continue
             try:
                 cleaned[key] = setting.clean(raw)

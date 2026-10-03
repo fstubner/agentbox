@@ -81,8 +81,8 @@ class ToolError(Exception):
 
 
 def tool_result(payload: Any, is_error: bool = False) -> dict[str, Any]:
-    """Serialise compactly. Pretty-printing added about 17% to every result and
-    gives a model nothing."""
+    """Serialise compactly. Pretty-printing adds about 17% to every result and
+    gives a model no extra information."""
     text = payload if isinstance(payload, str) else json.dumps(
         payload, sort_keys=True, separators=(",", ":"))
     return {

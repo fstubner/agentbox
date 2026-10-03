@@ -68,7 +68,7 @@ def records(path):
 
 
 def test_argument_values_are_not_recorded(journal):
-    """The whole reason this is safe to run against real accounts."""
+    """This is what makes the journal safe to run against real accounts."""
     log = load_outcome_log(journal)
     log.record("google-mcp", "search_gmail", log.OK,
                arguments={"query": "invoice from acme legal counsel",
@@ -76,13 +76,13 @@ def test_argument_values_are_not_recorded(journal):
     entry = records(journal)[0]
     serialised = json.dumps(entry)
     assert "acme" not in serialised and "invoice" not in serialised
-    # Names are kept: which parameters the model uses is the useful part.
+    # Names are kept, because which parameters the model uses is useful.
     assert entry["args"] == ["max_results", "query"]
 
 
 def test_allowlisted_shape_values_are_recorded(journal):
-    """`view` is bounded and carries no personal data, and whether the model
-    ever chooses lean is one of the questions this log exists to answer."""
+    """`view` is bounded and carries no personal data. Whether the model ever
+    chooses lean is one of the questions this log answers."""
     log = load_outcome_log(journal)
     log.record("vikunja-mcp", "list_tasks", log.OK,
                arguments={"view": "lean", "search": "dentist appointment"})
@@ -194,8 +194,8 @@ def test_records_outside_the_window_are_excluded(tmp_path, monkeypatch):
 
 
 def test_an_empty_window_says_so_rather_than_looking_clean(tmp_path, monkeypatch):
-    """A model reading an empty result will otherwise treat it as evidence of
-    good behaviour rather than of no data."""
+    """Otherwise a model reading an empty result treats it as evidence of good
+    behaviour, when it means there is no data."""
     bridge = load_memory_bridge()
     monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
@@ -203,7 +203,7 @@ def test_an_empty_window_says_so_rather_than_looking_clean(tmp_path, monkeypatch
 
 
 def test_a_torn_line_does_not_break_the_read(tmp_path, monkeypatch):
-    """Append logs get truncated mid-write; one bad line must not lose the file."""
+    """A write can be cut off mid-line. One bad line must not lose the file."""
     bridge = load_memory_bridge()
     now = int(time.time())
     directory = tmp_path
@@ -241,15 +241,15 @@ class FakeHandler:
 
 
 def test_the_tool_is_mapped_to_a_capability():
-    """Unmapped tools fail closed, which is right but silent."""
+    """Unmapped tools fail closed without saying why, so check it here."""
     import policy_gate as pg
     mapping = pg.load_tool_map(REPO / "policies" / "approval-policy.yaml")
     assert mapping.get("review_own_activity") == "inspect_service_logs"
 
 
 def test_reflection_is_allowed_without_approval():
-    """Reading counts about its own behaviour grants nothing, and a reflection
-    that needs an approval per run will not happen."""
+    """Reading counts about its own behaviour grants nothing. If each run
+    needed an approval, reflection would not run."""
     import policy_gate as pg
     policy = REPO / "policies" / "approval-policy.yaml"
     tiers = pg.load_tiers(policy)
@@ -257,13 +257,13 @@ def test_reflection_is_allowed_without_approval():
 
 
 def test_the_bridge_declares_the_capability():
-    """Or the authoritative gate is decorative."""
+    """Otherwise the authoritative gate has nothing to check."""
     src = code_of(REPO / "services" / "compose" / "memory-bridge" / "app" / "bridge.py")
     assert "inspect_service_logs" in src and "def capability_for" in src
 
 
 def test_the_skill_tells_it_to_propose_rather_than_act():
-    """The permission model is only as good as the instructions that meet it."""
+    """The skill must direct the model to propose changes, not make them."""
     skill = code_of(REPO / "skills" / "self-reflection" / "SKILL.md")
     assert "propose_memory" in skill
     assert "review_own_activity" in skill
@@ -293,7 +293,7 @@ def test_summary_labels_each_tool_with_its_tier(tmp_path, monkeypatch):
 
 
 def test_an_approvable_refusal_says_it_can_be_approved(tmp_path, monkeypatch):
-    """The note is what stops a reflecting model reading a refusal as final."""
+    """The note stops a reflecting model reading a refusal as final."""
     bridge = load_memory_bridge()
     write_journal(tmp_path, "a-outcomes.jsonl", [
         {"ts": int(time.time()), "tool": "set_home_climate", "outcome": "denied"}])
@@ -320,7 +320,7 @@ def test_the_skill_warns_against_writing_off_an_approvable_tool():
     assert "how to ask" in skill
 
 
-# --- a refusal is not a fault --------------------------------------------------
+# --- refusals are recorded as denials ------------------------------------------
 #
 # A bridge refusing an entity nobody configured, or the smoke suite checking
 # that protected files cannot be edited, is a guardrail working. Recorded as an
@@ -336,7 +336,7 @@ def test_a_bridge_refusal_is_recorded_as_denied_not_error():
     block = source.split("except ToolError as exc:")[1].split("except Exception")[0]
     assert '"HTTP 403" in text' in block
     assert "outcome_log.DENIED, detail=\"upstream_refused\"" in block
-    # And it must still be distinguishable from a policy-gate denial.
+    # It must still be distinguishable from a policy-gate denial.
     assert "upstream_refused" != "denied"
 
 

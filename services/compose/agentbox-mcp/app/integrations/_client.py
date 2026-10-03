@@ -3,18 +3,18 @@
 - **Identity travels with each call.** The server resolves the caller's
   identity during auth and sets it here in a context variable, and every
   bridge request carries it as `X-Agentbox-Identity`. A bridge trusts the
-  header because only agentbox-mcp holds its token, so the header is the
-  server's statement of who it is acting for, not something the model claims.
+  header because only agentbox-mcp holds its token. The header states who the
+  server is acting for, and the model cannot set it.
 
 - **Per-person routing.** `GOOGLE_BRIDGE_URL_<NAME>` and `_TOKEN_<NAME>`
   override the shared `GOOGLE_BRIDGE_URL` and `_TOKEN` for that person. Each
-  person's Google bridge is a separate container holding only their token,
-  and the routing table, not the model, decides which bridge a session
-  reaches. Without an override, calls go to the shared bridge, which is right
-  for shared services like tasks.
+  person's Google bridge is a separate container holding only their token.
+  The routing table selects which bridge a session reaches, and the model
+  cannot change it. Without an override, calls go to the shared bridge, which
+  is right for shared services like tasks.
 
-A context variable rather than a parameter, so the integrations' dispatch
-functions need no identity argument. Each request runs in its own thread, so
+Identity is a context variable instead of a parameter, so the integrations'
+dispatch functions need no identity argument. Each request runs in its own thread, so
 concurrent requests cannot see each other's identity.
 """
 from __future__ import annotations

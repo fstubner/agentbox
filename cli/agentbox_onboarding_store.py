@@ -30,23 +30,23 @@ def proposals_dir() -> Path:
 # --- keeping the spool from growing forever ------------------------------------
 
 # How long a settled request is kept. It holds no secret, only who approved
-# what and how it went, and "who let this person in" is worth answering months
-# later.
+# what and how it went. It is kept so an operator can see who let a person in,
+# months later.
 SETTLED_RETENTION = 90 * 24 * 3600
 
 
 def reap(now: int | None = None) -> tuple[int, int]:
     """Remove settled requests past their window, and dead invites.
 
-    Two separate reasons. A settled request is history and ages out. An invite
-    that expired unused still holds its secret, and although it can no longer
-    be used, there is no reason to keep a credential that authorises nothing.
+    These are removed for different reasons. A settled request is history and
+    ages out. An invite that expired unused still holds its secret. It can no
+    longer be used, so the secret is deleted.
 
     A submitted invite stays however old, because it still waits on an admin.
     A completed one has already dropped its secret and records someone joining
     the household, so it stays permanently.
 
-    It never raises, so an unreadable file is skipped rather than stopping the
+    It never raises, so an unreadable file is skipped and does not stop the
     portal starting.
     """
     now = int(time.time()) if now is None else now

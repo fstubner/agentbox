@@ -1,4 +1,4 @@
-# Puts the local model stack back when nothing is deliberately holding it down.
+# Restarts the local model stack when nothing is intentionally holding it down.
 #
 # Install:
 #   cp cli/agentbox-keepalive.{service,timer} ~/.config/systemd/user/
@@ -8,10 +8,10 @@
 # To keep the stack down on purpose (maintenance, a hand-run benchmark):
 #   touch ~/.local/state/agentbox/keepalive-disabled
 #
-# See cli/agentbox_keepalive.py for why this exists rather than Restart=always:
-# every one of these stops is deliberate, and systemd does not restart a unit
-# somebody stopped on purpose. The stop is fine. Nobody putting it back
-# afterwards is the problem.
+# See cli/agentbox_keepalive.py for why this is used instead of
+# Restart=always. Every one of these stops is intentional, and systemd does not
+# restart a unit somebody stopped on purpose. This timer restarts the stack
+# after the stop is over.
 
 [Unit]
 Description=Restore the Agentbox model stack if an evaluation left it down

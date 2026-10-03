@@ -1,7 +1,7 @@
 """Tests for memory scopes: a private scope per person, plus the household.
 
-Two scopes rather than sharing between named people. Per-item sharing makes
-"what can Sam see?" impossible to answer without reading every row.
+There are two scopes and no sharing between named people. With per-item
+sharing, "what can Sam see?" could only be answered by reading every row.
 """
 from __future__ import annotations
 
@@ -44,8 +44,8 @@ def mem(tmp_path):
 
 
 def test_memories_are_private_by_default(mem):
-    """A memory that lands in the shared plane because nobody said otherwise is
-    a disclosure nobody chose."""
+    """A memory placed in the shared plane only because no scope was given
+    would be disclosed without anyone choosing to."""
     assert mem.resolve_scope({}, "alex") == "alex"
     assert mem.resolve_scope({"scope": ""}, "alex") == "alex"
 
@@ -93,16 +93,16 @@ def test_visible_scopes_are_own_plus_household(mem):
 
 
 def test_pre_scope_memories_read_as_household(mem):
-    """Written when there was one user. Losing them silently would be worse
-    than sharing them between two people who already share a house."""
+    """These were written by a single user. Hiding them without notice would
+    be worse than sharing them between two people who already share a house."""
     items = [{"statement": "legacy", "id": "1"}]
     assert len(mem.visible_to(items, "alex")) == 1
     assert len(mem.visible_to(items, "sam")) == 1
 
 
 def test_filtering_happens_in_the_bridge_not_the_caller(mem):
-    """A gateway that asked politely for only its own memories would leak the
-    moment anything upstream got confused about who it was serving."""
+    """If the gateway only asked for its own memories, any upstream mistake
+    about who it was serving would leak another person's memories."""
     import inspect
     # Both list endpoints must filter, not just one.
     for endpoint in (mem.list_proposals, mem.list_memories):
@@ -154,14 +154,14 @@ def test_whoami_reports_the_session_identity(mem):
 
 
 def test_whoami_says_the_identity_cannot_be_changed(mem):
-    """The assistant needs to know this, or it will try."""
+    """The assistant needs to know this, or it will try to change it."""
     _, payload = mem.whoami(Handler("alex"), None)
     assert "cannot act as anyone else" in payload["note"]
 
 
 def test_whoami_needs_no_approval(mem):
-    """Being unsure who you are acting for is what causes the mistakes this
-    tool exists to prevent."""
+    """The tool prevents mistakes caused by the assistant being unsure who it
+    is acting for, so it must always be available."""
     handler = Handler("alex")
     assert mem.MemoryBridge.capability_for(handler, "GET", "/v1/whoami", None) is None
 

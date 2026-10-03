@@ -1,9 +1,9 @@
 """Tests for invite-based onboarding.
 
 An invite link authorises creating an identity on someone's home server, which
-is worth more than a bridge token. So the tests that matter are about refusing
-it, whether expired, used, wrong or unknown, and about the collecting page
-having no authority of its own.
+is worth more than a bridge token. So most tests check that it is refused when
+expired, used, wrong or unknown, and that the collecting page has no authority
+of its own.
 """
 from __future__ import annotations
 
@@ -65,8 +65,8 @@ def test_an_unknown_invite_is_refused(inv):
 
 
 def test_refusals_do_not_say_which_part_was_wrong(inv):
-    """A wrong secret and a nonexistent id must be indistinguishable, or the
-    page becomes an oracle for which invite ids exist."""
+    """A wrong secret and a nonexistent id must get the same answer, or the
+    page would reveal which invite ids exist."""
     make(inv)
     _, wrong_secret = inv.valid_invite("abc123", "wrong")
     _, wrong_id = inv.valid_invite("nosuchid", "s3cret")
@@ -82,8 +82,8 @@ def test_an_expired_invite_is_refused(inv):
 def test_a_spent_invite_is_refused(inv):
     """Single use, or a forwarded link would create a second identity.
 
-    The message must not tell them to ask for a new link. They already did the
-    one thing asked of them, and the next step is the admin's.
+    The message must not tell them to ask for a new link. They have already
+    done the one thing asked of them, and the next step is the admin's.
     """
     make(inv, used_at=inv.now())
     record, reason = inv.valid_invite("abc123", "s3cret")
@@ -116,7 +116,7 @@ def test_the_page_cannot_provision_anything(inv):
     tree = ast.parse(source)
 
     # Imported modules, not source text, because the module docstring explains
-    # at length why Docker is absent.
+    # why Docker is absent.
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -126,7 +126,7 @@ def test_the_page_cannot_provision_anything(inv):
     for forbidden in ("subprocess", "shutil", "ctypes"):
         assert forbidden not in imported, f"imports {forbidden}"
 
-    # And no credential names anywhere outside comments.
+    # No credential names anywhere outside comments.
     code = "\n".join(line for line in source.splitlines()
                      if not line.lstrip().startswith("#"))
     code = code.split('"""', 2)[-1]          # drop the module docstring
@@ -135,8 +135,8 @@ def test_the_page_cannot_provision_anything(inv):
 
 
 def test_the_page_never_logs_the_secret(inv):
-    """The invite secret travels in the query string, which is exactly what a
-    default HTTP log line prints."""
+    """The invite secret travels in the query string, which a default HTTP
+    log line prints."""
     source = script_code("agentbox-invite")
     assert "def log_message" in source
     block = source.split("def log_message", 1)[1].split("\n    def ", 1)[0]
@@ -144,8 +144,8 @@ def test_the_page_never_logs_the_secret(inv):
 
 
 def test_shared_services_are_stated_not_offered(inv):
-    """One house has one Home Assistant. Offering it as a choice would imply a
-    decision that does not exist."""
+    """One house has one Home Assistant, so there is nothing to choose and it
+    is not offered as a choice."""
     assert inv.CONNECTORS["homeassistant"]["personal"] is False
     assert inv.CONNECTORS["memory"]["personal"] is False
     assert inv.CONNECTORS["google"]["personal"] is True
@@ -153,14 +153,14 @@ def test_shared_services_are_stated_not_offered(inv):
 
 
 def test_google_is_marked_external(inv):
-    """The one thing nobody can set up for the person. They must consent."""
+    """Nobody can set this up for the person, because they must consent."""
     assert inv.CONNECTORS["google"]["external"] is True
     assert inv.CONNECTORS["vikunja"]["external"] is False
 
 
 def test_only_personal_connectors_can_be_chosen(inv):
-    """A submitted form naming a shared service must not create a per-identity
-    anything."""
+    """A submitted form naming a shared service must not create anything per
+    identity."""
     source = script_code("agentbox-invite")
     assert 'CONNECTORS[c]["personal"]' in source
 
@@ -199,20 +199,20 @@ def test_consent_is_the_only_part_that_is_not_automated():
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert "exchange_oauth_code" in block
     assert "provision_google_bridge" in block
-    # And the old homework is gone.
+    # The manual OAuth instructions are gone.
     assert "Run the OAuth flow signed in as HER" not in source
 
 
 # --- automatic connector provisioning -------------------------------------------
 #
-# Picking Gmail and having it work is the point of onboarding. Everything that
-# can be automated is, and consent happens in the page.
+# Picking Gmail during onboarding should be enough to make it work. Everything
+# that can be automated is, and consent happens in the page.
 
 
 def test_the_page_can_start_google_consent_but_not_finish_it(inv):
-    """The privilege split, stated in code: a client id is public and lives
-    here, a client secret is not and does not. So the page can send her to
-    Google and receive a code, and a code without the secret is inert."""
+    """A client id is public and lives here. A client secret is not public
+    and does not. So the page can send the person to Google and receive a
+    code, and a code without the secret cannot be used."""
     source = script_code("agentbox-invite")
     assert "AGENTBOX_GOOGLE_CLIENT_ID" in source
     assert "CLIENT_SECRET" not in source
@@ -222,7 +222,7 @@ def test_the_page_can_start_google_consent_but_not_finish_it(inv):
 def test_consent_asks_for_a_refresh_token_explicitly(inv):
     """access_type=offline plus prompt=consent are what make Google return a
     refresh token. Without them a returning user gets none, and the failure
-    surfaces minutes later on the operator side instead of here."""
+    shows up minutes later on the operator side instead of here."""
     source = script_code("agentbox-invite")
     block = source.split("def google_auth_url", 1)[1].split("\ndef ", 1)[0]
     assert '"access_type": "offline"' in block
@@ -245,8 +245,8 @@ def test_the_exchange_lives_on_the_operator_side():
 
 
 def test_a_provisioned_bridge_holds_only_that_persons_token():
-    """The reason for a second container rather than a second credential in the
-    first one."""
+    """Each person gets a second container, not a second credential in the
+    first one, so a bridge holds one person's token."""
     source = code_of(REPO / "cli" / "agentbox_accounts.py")
     block = source.split("def provision_google_bridge", 1)[1].split("\ndef ", 1)[0]
     assert "GOOGLE_REFRESH_TOKEN={refresh_token}" in block
@@ -255,7 +255,7 @@ def test_a_provisioned_bridge_holds_only_that_persons_token():
 
 
 def test_a_new_identity_gets_no_writable_calendar():
-    """Inheriting the operator's would let her assistant write to his."""
+    """Inheriting the operator's would let the newcomer write to that one."""
     source = code_of(REPO / "cli" / "agentbox_accounts.py")
     block = source.split("def provision_google_bridge", 1)[1].split("\ndef ", 1)[0]
     assert '"GOOGLE_ALLOWED_WRITE_CALENDAR_ID="' in block
@@ -263,8 +263,8 @@ def test_a_new_identity_gets_no_writable_calendar():
 
 def test_the_identity_bridge_joins_the_existing_network():
     """A network per person would mean editing the gateway's compose file every
-    time someone joins, and a file the onboarding flow rewrites will eventually
-    be rewritten wrongly."""
+    time someone joins. A file the onboarding flow rewrites is likely to be
+    rewritten wrongly at some point."""
     compose = (REPO / "services" / "compose" / "google-workspace-bridge"
                / "identity.compose.yaml").read_text()
     assert "google-workspace-bridge_default" in compose
@@ -280,7 +280,7 @@ def test_the_identity_bridge_publishes_no_host_port():
 
 def test_missing_consent_is_reported_rather_than_silently_shared():
     """Skipping the Google step falls back to the shared bridge, which is right
-    for shared services and wrong for mail, so it must be said."""
+    for shared services and wrong for mail, so the CLI says so."""
     source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert "did not finish the consent" in block

@@ -9,10 +9,10 @@
 # the capability it uses, so a tool call lands in the same tier as the matching
 # operator action. Each capability lives in exactly one place.
 #
-# Narrowing a capability is preferred to gating it. A constraint holds even when
-# the model is compromised, and an approval only helps if a person reads it
-# carefully. Several tools below are `allowed` because the bridge already limits
-# them.
+# Narrowing a capability is preferred to gating it. A constraint holds even
+# when the model is compromised, and an approval only helps if a person reads
+# it carefully. Several tools below are `allowed` because the bridge already
+# limits them.
 version: 2
 
 tiers:
@@ -30,7 +30,7 @@ tiers:
     - task_management                # the assistant's own workspace; reversible, nothing deletes
     - personal_data_read             # Gmail and Calendar reads, see the note below
     - propose_memory_for_review      # inert until an operator approves it
-    - local_only                     # thinking out loud on this box; reaches nothing
+    - local_only                     # local reasoning on this box; reaches nothing
     - propose_rule_for_review        # inert until an operator activates it
     - home_read_state                # sensor/entity state from Home Assistant
     - home_control_comfort           # lights, scenes, media, allowlisted entities only
@@ -41,51 +41,48 @@ tiers:
     - drive_read                     # see the note below on which scope was granted
     - drive_write_own_folder         # the agent's own Drive folder only
     - speak_aloud                    # quiet hours enforced in the speaker service
-    - request_signin_link            # what it mints is bounded, not the minting
+    - request_signin_link            # the minted link is limited; minting is not gated
     - propose_invite                 # writes a draft; sending is a human act
     - email_state_change             # archive / mark read; reversible, stays in the account
 
     # drive_read is `allowed` for the same reason as personal_data_read. The
-    # real control is which OAuth scope was granted at consent, which limits the
-    # credential itself in a way an approval on a tool call cannot.
+    # control is which OAuth scope was granted at consent. That limits the
+    # credential itself, which an approval on a tool call cannot do.
     #
     # With drive.readonly the assistant can read anything the person can. It
     # still cannot write outside its own folder, delete or share, because those
-    # do not exist. A permission change is how a private document becomes a
-    # public link.
+    # tools do not exist. A permission change is how a private document becomes
+    # a public link.
     #
-    # drive_write_own_folder works like create_agent_calendar_event, confined by
-    # design. Writes go to one folder, in text formats only, with no delete and
-    # no sharing.
+    # drive_write_own_folder works like create_agent_calendar_event and is
+    # confined by the bridge. Writes go to one folder, in text formats only,
+    # with no delete and no sharing.
 
-    # email_state_change is allowed because, as an approval, it was refused
-    # often and never granted, which only taught the assistant to work around
-    # it. It covers archiving and marking read, both reversible in one click and
-    # both staying in the account. Archived mail is in All Mail, and unread is a
-    # flag. Sending and deleting do not exist, and labels stay in the
-    # assistant's own namespace.
+    # email_state_change is allowed. It covers archiving and marking read.
+    # Both are reversible in one click and both keep the mail in the
+    # account. Archived mail is in All Mail, and unread is a flag. Sending
+    # and deleting do not exist, and labels stay in the assistant's own
+    # namespace.
     #
-    # The real control is the bridge, which accepts exactly two verbs for
-    # `modify`.
+    # The bridge enforces this. It accepts exactly two verbs for `modify`.
 
-    # request_signin_link is `allowed` for the same reason, and is the clearest
-    # case of it. Gating it would put an approval in front of someone asking for
-    # their own sign-in link, the everyday request that trains people to approve
-    # without reading. What
-    # keeps it safe is that the link is ORIGIN_AGENT and the portal refuses
-    # every consequential action from one: no approving a memory, no
-    # disconnecting or connecting an account, no inviting, no settings. The
-    # thing minted is bounded, so the minting need not be gated.
+    # request_signin_link is `allowed` for the same reason. Gating it would put
+    # an approval in front of someone asking for their own sign-in link. That
+    # request is so common that people would approve it without reading. The
+    # link is ORIGIN_AGENT, and the portal refuses every consequential action
+    # from an ORIGIN_AGENT session: approving a memory, connecting or
+    # disconnecting an account, inviting, and changing settings. The minted link
+    # is limited, so minting it does not need an approval.
     #
-    # It also cannot be aimed: there is no identity parameter, the person
-    # comes from the bearer token, and the portal caps links per person per
-    # hour.
+    # It also cannot target another person. There is no identity parameter, the
+    # person comes from the bearer token, and the portal caps links per person
+    # per hour.
 
-    # speak_aloud is `allowed` because the thing that makes 3am speech
-    # impossible is a clamp in the process holding the speaker, not this tier.
-    # Gating it here would be the weaker half of the pair: an approval only
-    # helps if a human reads carefully, and the whole point is that nobody is
-    # reading carefully at 3am.
+    # speak_aloud is `allowed` because a clamp in the process holding the
+    # speaker prevents speech during quiet hours, such as 3am. This tier does
+    # not. An approval here would be the weaker control, because an approval
+    # only helps if a person reads it carefully, and nobody reads carefully at
+    # 3am.
 
   approval_required:
     # Operator / development
@@ -116,8 +113,8 @@ tiers:
 
 # Assistant tool -> capability. A tool absent from this map resolves to no
 # capability and therefore to approval_required, so a tool added without being
-# mapped fails closed. `cli/agentbox validate` fails on an unmapped tool rather
-# than letting it fail closed silently at runtime.
+# mapped fails closed. `cli/agentbox validate` also fails on an unmapped tool,
+# so the gap is reported before runtime.
 tools:
   # vikunja-mcp
   list_projects: task_management
@@ -142,7 +139,7 @@ tools:
   # triage_email and check_reasoning are retired with the router, and
   # look_at_camera with the vision model. They are no longer registered, so
   # they have no mapping. If one is re-registered without its mapping,
-  # test_every_live_mcp_tool_is_mapped fails, which is the reminder to add it.
+  # test_every_live_mcp_tool_is_mapped fails until the mapping is added.
   # They were personal_data_read, local_only and home_view_camera respectively.
 
   # google-workspace (drive)
@@ -158,37 +155,37 @@ tools:
   propose_memory: propose_memory_for_review
   list_memory_proposals: propose_memory_for_review
   search_memories: propose_memory_for_review
-  # Knowing which identity you are acting for. Allowed because being
-  # unsure is what causes cross-account mistakes.
+  # Reports which identity the assistant is acting for. Allowed because
+  # uncertainty about the identity causes cross-account mistakes.
   whoami: propose_memory_for_review
-  # Reading its own outcome journal. inspect_service_logs was already `allowed`
-  # and had no tool behind it; this is the tool. Reading counts about its own
-  # behaviour grants nothing and is the precondition for reflecting on evidence
-  # rather than on recollection.
+  # Reads the assistant's own outcome journal. inspect_service_logs is
+  # `allowed`, and this is the tool for it. Reading counts about its own
+  # behaviour grants no access. It lets the assistant review what it did from
+  # the record instead of from memory.
   review_own_activity: inspect_service_logs
 
-  # Home Assistant. Control is constrained rather than gated: the bridge
-  # refuses any entity outside an operator-configured allowlist, and refuses
-  # the security domains outright regardless of the allowlist. An approval on
-  # "turn on a light" would be asked so often it would be granted unread.
+  # Home Assistant. Control is constrained, not gated. The bridge refuses any
+  # entity outside an operator-configured allowlist, and refuses the security
+  # domains regardless of the allowlist. An approval on "turn on a light" would
+  # be asked so often that people would grant it without reading.
   list_home_entities: home_read_state
   get_home_entity: home_read_state
   set_home_light: home_control_comfort
   activate_home_scene: home_control_comfort
   set_home_climate: home_control_climate
   list_home_automations: home_read_state
-  # Static validation proves an automation cannot reach a lock or a template;
-  # it cannot say whether the automation is a good idea. Code that runs
-  # unattended at 3am deserves a human reading it once.
+  # Static validation proves an automation cannot reach a lock or a template.
+  # It cannot say whether the automation is a good idea. Code that runs
+  # unattended, for example at 3am, needs a person to read it once.
   create_home_automation: home_write_automation
   cast_to_screen: home_control_comfort
 
   # Builder: the assistant reads the repo and proposes changes as git branches.
   # All `allowed` because none of them ships anything. A proposal is a branch a
-  # human must merge, and merge_own_pr stays always_denied. The containment that
-  # matters is not this tier list but the builder bridge's protected-path check,
-  # which refuses edits to the policy, both gates, the operator CLI and CI. A
-  # tier cannot express "may edit any file except the ones that govern it".
+  # person must merge, and merge_own_pr stays always_denied. The main
+  # containment is the builder bridge's protected-path check, which refuses
+  # edits to the policy, both gates, the operator CLI and CI. A tier cannot
+  # express "may edit any file except the ones that govern it".
   list_repo_files: read_repo_files
   read_repo_file: read_repo_files
   list_proposals: read_repo_files
@@ -213,14 +210,14 @@ tools:
   mark_gmail_read: email_state_change
 
 # Why reads are allowed. Whether a read goes beyond what the current task needs
-# is a judgement for each call, which a tier cannot express, and gating every
-# read would make an assistant whose job is your mail and calendar unusable. The
-# real risk, data leaving the account, is contained elsewhere. No tool sends
-# mail, and calendar invites are refused at the bridge.
+# is a judgement for each call, which a tier cannot express. Gating every read
+# would make an assistant that works on your mail and calendar unusable. The
+# main risk is data leaving the account, and other controls contain it. No
+# tool sends mail, and calendar invites are refused at the bridge.
 #
 # Labelling is separate from archiving and marking read, because the bridge
 # keeps labels inside the agentbox/ namespace.
 #
-# store_sensitive_memory stays approval_required and stays unmapped: no tool
-# reaches it, because durable writes require the operator review token that the
-# assistant does not hold.
+# store_sensitive_memory stays approval_required and stays unmapped. No tool
+# reaches it, because durable writes require the operator review token, which
+# the assistant does not hold.

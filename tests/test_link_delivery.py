@@ -1,9 +1,9 @@
 """Getting a sign-in link to someone without an SMTP credential.
 
-The link is bound to the browser that asked for it, which makes delivery over a
-channel the assistant can read safe, because reading the link is not enough to
-use it. That property belongs to the portal, and if it were ever relaxed,
-Discord delivery would have to stop.
+The link is bound to the browser that asked for it, so reading the link is not
+enough to use it with full privilege. That makes delivery over a channel the
+assistant can read safe. The portal enforces the binding, and if it were ever
+relaxed, Discord delivery would have to stop.
 """
 from __future__ import annotations
 
@@ -32,9 +32,9 @@ def _load(name: str, filename: str):
 def portal(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTBOX_PORTAL_DIR", str(tmp_path / "portal"))
     monkeypatch.setenv("AGENTBOX_IDENTITY_EMAILS", "sam:sam@example.com")
-    # Deliberately no AGENTBOX_DISCORD_IDENTITIES: the env var is the legacy
-    # path, and a fixture that sets it globally hides whether the pairing
-    # store actually works.
+    # No AGENTBOX_DISCORD_IDENTITIES. The env var is the legacy path, and a
+    # fixture that sets it globally would hide whether the pairing store
+    # works.
     monkeypatch.delenv("AGENTBOX_DISCORD_IDENTITIES", raising=False)
     monkeypatch.delenv("AGENTBOX_SMTP_HOST", raising=False)
     return _load("portal_delivery", "agentbox-portal")
@@ -58,8 +58,7 @@ def link_account(portal, identity="sam", user_id="99887766"):
 
 
 def test_a_link_is_spooled_for_discord_when_no_smtp_exists(portal):
-    """The whole point: a household with no mail credential can still invite
-    somebody."""
+    """A household with no mail credential can still send somebody a link."""
     link_account(portal)
     assert portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     spooled = portal.pending_requests("sam")
@@ -69,8 +68,8 @@ def test_a_link_is_spooled_for_discord_when_no_smtp_exists(portal):
 
 
 def test_the_portal_never_holds_the_discord_token(portal):
-    """Same split as the OAuth code: a LAN-reachable page must not hold a
-    credential that can message the household."""
+    """The same split as for the OAuth code. A page reachable on the LAN must
+    not hold a credential that can message the household."""
     from conftest import portal_code
     source = portal_code()
     assert "DISCORD_BOT_TOKEN" not in source
@@ -119,8 +118,8 @@ def test_the_operator_process_delivers_and_spends_the_link(approvals, portal):
 
 
 def test_the_dm_states_the_limit_accurately(approvals, portal):
-    """The message goes where the assistant can read it, so it must say what
-    opening it there gives, a session that can read but not change anything."""
+    """The message goes where the assistant can read it. So it must say that
+    opening it there gives a session that can read but not change anything."""
     link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     sent = []
@@ -162,7 +161,7 @@ def test_a_completed_request_is_not_delivered_twice(approvals, portal):
 
 def test_operations_shows_which_channels_will_actually_deliver(portal):
     """The sign-in page answers the same for known and unknown addresses, so it
-    cannot say a link went nowhere. Operations is the only place to find out."""
+    cannot say a link went nowhere. Only Operations shows that."""
     link_account(portal)
     body = portal.render_admin("alex", "").decode()
     assert "How sign-in links are delivered" in body
@@ -190,12 +189,12 @@ def test_email_is_listed_when_smtp_is_set(portal, monkeypatch):
 
 
 def test_a_link_opened_in_another_browser_still_signs_you_in(portal):
-    """The ordinary case on a phone, not an attack.
+    """This is the normal case on a phone.
 
     Discord and most mail apps open links in their own in-app browser, which
     has its own cookie jar, so the nonce set when the link was requested is
-    not there. Refusing outright made delivery useless to anyone not sitting
-    at the desktop browser they started from.
+    not there. Refusing the link would make delivery useless to anyone not at
+    the desktop browser they started from.
     """
     url, link_id = portal.mint_link("sam", "http://box", request_nonce="asked-here")
     identity, origin, reason = portal.redeem_link(
@@ -206,8 +205,8 @@ def test_a_link_opened_in_another_browser_still_signs_you_in(portal):
 
 
 def test_but_it_cannot_approve_a_memory(portal):
-    """The binding decides the privilege, not the access. Whoever merely read
-    the message could be the one opening it."""
+    """The binding sets the privilege, not whether the link works. Whoever
+    only read the message could be the one opening it."""
     assert not portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_CHAT)
     assert not portal.can(portal.MEMBER, "connector:disconnect_own",
                           portal.ORIGIN_CHAT)
@@ -236,15 +235,15 @@ def test_the_page_explains_the_limit_and_how_to_lift_it(portal):
 
 # --- pairing a chat account from the page --------------------------------------
 #
-# Who receives a sign-in link by DM was an environment variable, so adding a
-# person meant an operator editing a unit file and restarting a service. That
-# put the household's job in the operator's hands for no security benefit.
+# A person pairs their own chat account from the page. With only the
+# environment variable, adding a person needs an operator to edit a unit file
+# and restart a service, which gives no security benefit.
 
 
 def test_a_person_can_start_pairing_themselves(portal):
     code = portal.start_pairing("sam")
     assert len(code) == 6
-    # Read off a screen and typed into a phone: no 0/O or 1/I.
+    # The code is read off a screen and typed into a phone, so no 0/O or 1/I.
     assert not (set(code) & set("01OI"))
     pending = portal.load_chat_links()["pending"]
     assert pending[code]["identity"] == "sam"
@@ -263,7 +262,7 @@ def test_the_mapping_is_not_world_readable(portal):
 
 
 def test_an_env_var_configured_box_still_works(portal, monkeypatch):
-    """Boxes set up before pairing existed must not break."""
+    """Boxes configured with the environment variable must keep working."""
     monkeypatch.setenv("AGENTBOX_DISCORD_IDENTITIES", "sam:555")
     assert portal.chat_account_for("sam") == "555"
     assert "sam" in portal.discord_identities()
@@ -280,8 +279,9 @@ def test_a_paired_account_beats_nothing_and_survives_unlink(portal):
 
 
 def test_the_bot_completes_a_pairing_from_a_dm(approvals, portal):
-    """Receiving the code from that account is the proof. Anyone can type a
-    user id into a form; only its holder can send a message from it."""
+    """Receiving the code from that account proves who holds it. Anyone can
+    type a user id into a form, but only its holder can send a message
+    from it."""
     code = portal.start_pairing("sam")
     sent = []
 

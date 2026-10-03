@@ -1,9 +1,9 @@
 """Tests for agentbox-mcp and its identity model.
 
-Identity is the credential, not an argument. Whoever presents alex's token is
-alex, and there is no way to ask to be someone else, so an instruction in an
-email cannot switch accounts. If that regressed, one compromised conversation
-could reach everyone's mail.
+Identity comes from the credential, never from an argument. Whoever presents
+alex's token is alex, and there is no way to ask to be someone else, so an
+instruction in an email cannot switch accounts. If that regressed, one
+compromised conversation could reach everyone's mail.
 """
 from __future__ import annotations
 
@@ -51,8 +51,8 @@ def open_gate(monkeypatch):
     """Neutralise the policy gate for tests about identity resolution.
 
     policy_gate binds its paths at import, and another test module imports it
-    first with the container defaults, so every tool would be denied and these
-    tests would be about a gate they do not cover. test_policy_gate does.
+    first with the container defaults. Every tool would then be denied, and
+    these tests would test the gate instead. test_policy_gate covers the gate.
     """
     import mcp_base
     monkeypatch.setattr(mcp_base.policy_gate, "check", lambda *a, **k: None)
@@ -80,9 +80,8 @@ def rpc(base, method, params=None, token=None):
 
 
 def test_every_integration_contributes_tools(gw):
-    """Checked against the registry rather than a fixed list, which would
-    break on every new integration and be fixed by pasting in the name. What
-    matters is that every registered integration contributes tools.
+    """Checked against the registry. A fixed list would break on every new
+    integration and be fixed by pasting in the name, which checks nothing.
     """
     owners = set(gw.TOOL_OWNER.values())
     assert owners == set(gw.INTEGRATIONS)
@@ -92,7 +91,7 @@ def test_every_integration_contributes_tools(gw):
 
 def test_tool_names_are_unique_across_integrations(gw):
     """Two integrations claiming one name would make dispatch depend on dict
-    ordering, silently routing a call to the wrong bridge."""
+    ordering and could route a call to the wrong bridge without an error."""
     names = [t["name"] for t in gw.TOOLS]
     assert len(names) == len(set(names))
 
@@ -112,8 +111,8 @@ def test_a_collision_refuses_to_start(gw, monkeypatch):
 
 
 def test_tools_are_ordered_deterministically(gw):
-    """Prefix caching: the tool block sits at the front of every prompt and
-    must be byte-identical between turns."""
+    """For prefix caching. The tool block sits at the front of every prompt
+    and must be byte-identical between turns."""
     assert [t["name"] for t in gw.TOOLS] == sorted(t["name"] for t in gw.TOOLS)
 
 
@@ -153,8 +152,8 @@ def test_an_unknown_token_is_refused(gw):
 
 
 def test_the_shared_token_does_not_work_once_identities_exist(gw):
-    """Otherwise the single-operator token would be an unnamed sixth identity
-    that every per-identity check silently ignores."""
+    """Otherwise the single-operator token would be an extra unnamed identity
+    that every per-identity check ignores."""
     server, base = serve(gw.AgentboxMcp)
     try:
         with pytest.raises(urllib.error.HTTPError) as exc:
@@ -181,8 +180,8 @@ def test_no_argument_can_set_the_identity(gw, open_gate):
 
 
 def test_single_operator_still_works_with_no_identities(open_gate):
-    """Every existing deployment has no identities configured and must keep
-    behaving exactly as before."""
+    """A deployment with no identities configured must keep working in
+    single-operator mode."""
     gw = load_gateway("")
     server, base = serve(gw.AgentboxMcp)
     try:
@@ -224,8 +223,8 @@ def test_an_identity_with_an_empty_token_cannot_authenticate():
 
 
 def test_identity_routes_to_a_per_identity_bridge(gw, monkeypatch):
-    """Sam's mail must reach a bridge holding only her credential. The
-    routing table decides, never the model."""
+    """Sam's mail must reach a bridge holding only their credential. The
+    routing table chooses the bridge, never the model."""
     monkeypatch.setenv("GOOGLE_BRIDGE_URL_SAM", "http://sam-google:8080")
     monkeypatch.setenv("GOOGLE_BRIDGE_TOKEN_SAM", "sam-bridge-token")
     monkeypatch.setenv("GOOGLE_BRIDGE_URL", "http://shared-google:8080")
@@ -270,7 +269,7 @@ def test_identity_routes_to_a_per_identity_bridge(gw, monkeypatch):
 
 def test_the_identity_header_reaches_the_bridge(gw, monkeypatch):
     """The bridge's authoritative gate matches identity-scoped grants against
-    this header, so it must actually be sent."""
+    this header, so it must be sent."""
     monkeypatch.setenv("VIKUNJA_BRIDGE_TOKEN", "t")
     client = gw._client.bridge_client("VIKUNJA", "vikunja-bridge")
     captured = {}
@@ -338,8 +337,9 @@ def test_a_missing_bridge_token_refuses_rather_than_calling_anonymously(gw, monk
 
 
 def test_the_gateway_holds_no_upstream_credentials():
-    """The reason consolidating MCPs is safe while consolidating bridges is
-    not. A leak here costs a scoped local token, not a handle on real mail."""
+    """This is why one gateway for all MCP tools is safe, while one bridge for
+    all upstreams would not be. A leak here exposes a scoped local token, not
+    access to real mail."""
     source = code_of(APP / "server.py")
     for module in APP.glob("integrations/*.py"):
         source += module.read_text()
@@ -377,8 +377,8 @@ def test_identity_scoped_grants_only_match_their_identity():
 
 
 def test_the_journal_records_who_acted(tmp_path):
-    """Reflection and tier arguments both need to know whose calls they are
-    reading, or a two-person journal is unusable for either."""
+    """Reflection and tier decisions both need to know whose calls they are
+    reading. Without it a two-person journal is unusable for either."""
     os.environ["MCP_OUTCOME_FILE"] = str(tmp_path / "o.jsonl")
     spec = importlib.util.spec_from_file_location(
         "ol_identity", REPO / "services" / "templates" / "mcp" / "outcome_log.py")

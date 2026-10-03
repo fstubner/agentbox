@@ -30,8 +30,8 @@ IMAGE_STALE_DAYS = int(os.environ.get("AGENTBOX_IMAGE_STALE_DAYS", "14"))
 # --- doctor / status --------------------------------------------------------
 
 
-# Endpoints served by a user unit we can name. Knowing the unit turns "not
-# responding" into an instruction.
+# Endpoints served by a user unit we can name. Knowing the unit lets the
+# report say how to start it, instead of only "not responding".
 ENDPOINT_UNITS = {"portal": "agentbox-portal"}
 
 
@@ -40,7 +40,7 @@ def third_party_images() -> list[tuple[str, str, str, int]]:
 
     These use floating tags such as `stable` or `latest`, but `deploy` reuses
     whatever is cached, so a floating tag stays at whatever was first pulled.
-    Reporting the age is what prompts `agentbox update`.
+    The reported age tells the operator when to run `agentbox update`.
     """
     import datetime
     out = []
@@ -91,8 +91,8 @@ def stopped_hint(name: str) -> str:
 
 # The endpoints `doctor` and `status` probe. FAIL is for what the assistant
 # needs to answer a request, which is the main model and agentbox-mcp.
-# Everything else warns. A check that is red during normal operation is one
-# people stop reading.
+# Everything else warns. A check that fails during normal operation gets
+# ignored, so only those two fail.
 ENDPOINTS = {
     "main model": (os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models", FAIL),
     "agentbox-mcp": ("http://127.0.0.1:3465/health", FAIL),
@@ -105,7 +105,7 @@ ENDPOINTS = {
 # The gateway config can list which tools the assistant sees, and a tool left
 # off that list is invisible, with no error anywhere. This warns about it. The
 # config belongs to the gateway user and holds its tokens, so the operator
-# usually cannot read it, and that is reported quietly rather than as a fault.
+# usually cannot read it. An unreadable config is a warning, not a fault.
 GATEWAY_CONFIG = os.environ.get("AGENTBOX_GATEWAY_CONFIG",
                                 os.path.expanduser("~agentbox/agentbox/config.yaml"))
 

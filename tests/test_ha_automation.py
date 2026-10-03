@@ -6,8 +6,8 @@ call, so without validation an assistant that may not unlock a door could
 write an automation that unlocks it at 3am.
 
 Most of these try to reach a lock. The most important is the template test.
-Templates are refused outright, because `service: "{{ ... }}"` decides at
-runtime and would make every other check a guess.
+Templates are always refused, because `service: "{{ ... }}"` is resolved at
+runtime and no static check could say what it does.
 """
 from __future__ import annotations
 
@@ -50,8 +50,8 @@ def test_an_ordinary_automation_passes():
     summary = check("alias: x", GOOD)
     assert summary["services"] == ["light.turn_on"]
     assert summary["acts_on"] == ["light.hall"]
-    # The motion sensor is read, not acted on, so the assistant not being able
-    # to control it must not make the automation invalid.
+    # The motion sensor is read, not acted on, so it does not need to be
+    # controllable for the automation to be valid.
     assert "binary_sensor.hall_motion" in summary["reads"]
 
 
@@ -64,9 +64,9 @@ def test_an_ordinary_automation_passes():
     "alias: '{{ 1 + 1 }}'",
 ])
 def test_templates_are_refused(text):
-    """The single decision that makes every other check here sound. A templated
-    automation computes its service at runtime, so no static check can say what
-    it will do."""
+    """Every other check here depends on this one. A templated automation
+    computes its service at runtime, so no static check can say what it will
+    do."""
     with pytest.raises(auto.AutomationRefused) as exc:
         check(text, {"trigger": {}, "action": {"service": "light.turn_on",
                                                "entity_id": "light.hall"}})
@@ -115,8 +115,8 @@ def test_an_automation_cannot_reach_a_security_domain(label, body):
 
 
 def test_nesting_depth_does_not_hide_a_lock():
-    """`choose` inside `repeat` inside `if` is legal HA and a fixed-shape check
-    would walk right past it."""
+    """`choose` inside `repeat` inside `if` is valid in HA, and a check that
+    expects a fixed shape would miss it."""
     body = {"trigger": {}, "action": {
         "if": [{"condition": "state"}],
         "then": [{"repeat": {"count": 2, "sequence": [
@@ -168,8 +168,8 @@ def test_an_automation_cannot_act_on_a_non_allowlisted_entity():
 
 def test_triggers_may_reference_uncontrollable_entities():
     """"When the motion sensor fires" is the normal case, and the assistant can
-    never control a motion sensor. Refusing this would make the feature
-    useless."""
+    never control a motion sensor. Refusing this would leave few automations
+    that could be written."""
     summary = check("alias: x", GOOD)
     assert "binary_sensor.hall_motion" in summary["reads"]
 
@@ -204,8 +204,8 @@ def test_the_summary_separates_what_it_reads_from_what_it_changes():
 
 
 def test_forbidden_domains_match_the_bridge():
-    """Duplicated deliberately so this module fails closed on its own, but the
-    two must not drift apart."""
+    """The list is duplicated so this module fails closed on its own. The two
+    copies must not drift apart."""
     import os
     os.environ.setdefault("HA_CONTROLLABLE_ENTITIES", "")
     spec = importlib.util.spec_from_file_location("ha_bridge_for_domains",
@@ -250,8 +250,7 @@ def test_the_apparmor_profile_permits_bluetooth_device_discovery():
 
 def test_the_discovery_rule_is_scoped_to_one_interface():
     """A bare `dbus receive bus=system path=/` would permit receiving signals
-    from anything on the bus, which is a much wider grant than the problem
-    needed."""
+    from anything on the bus, which is much wider than discovery needs."""
     from pathlib import Path
     profile = (Path(__file__).resolve().parents[1]
                / "services/apparmor/agentbox-homeassistant").read_text()

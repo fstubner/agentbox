@@ -220,9 +220,9 @@ def main() -> None:
             sys.exit(identity_reconnect(args.name))
         if args.identity_cmd == "disconnect":
             sys.exit(identity_disconnect(args.name))
-        # Explicit rather than a fallthrough. `remove` deletes an identity, and
-        # reaching it by default meant any subcommand added later without a
-        # branch here would silently delete instead of erroring.
+        # `remove` has its own branch with no fallthrough. It deletes an
+        # identity. As a default, any subcommand added later without a branch
+        # here would delete an identity instead of erroring.
         if args.identity_cmd == "remove":
             sys.exit(agentbox_identity.identity_remove(args.name))
         report(FAIL, f"unknown identity subcommand: {args.identity_cmd}")

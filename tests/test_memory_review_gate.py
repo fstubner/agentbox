@@ -91,8 +91,8 @@ def test_approval_with_wrong_review_token_is_forbidden(gated):
 
 
 def test_direct_write_to_memory_is_forbidden(gated):
-    """Skipping the queue matters as much as approving, because a queue that
-    can be skipped is not a queue."""
+    """Skipping the queue must be refused as firmly as approving, or the
+    review step protects nothing."""
     _, base = gated
     with pytest.raises(urllib.error.HTTPError) as exc:
         call(base, "/v1/memories", body={"statement": "sneaky"})
@@ -122,7 +122,7 @@ def test_operator_can_reject_and_queue_shrinks(gated):
 
 def test_unset_review_token_fails_closed(tmp_path):
     """With no operator token configured, nothing can be approved, so durable
-    memory stops accepting writes rather than accepting them from anyone."""
+    memory stops accepting writes instead of accepting them from anyone."""
     module = load_bridge(tmp_path, "")
     server, base = serve(module)
     try:

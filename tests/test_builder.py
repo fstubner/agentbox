@@ -2,11 +2,11 @@
 
 It can write the source of the system that constrains it, which makes it the
 most dangerous service here. A proposal touching the policy, either gate, the
-operator CLI or CI is refused outright, so the operator is never handed that
-diff at all.
+operator CLI or CI is refused, so the operator is never asked to approve that
+diff.
 
 Most of these try to get around that check. If one passed, an assistant could
-grant itself more authority with one distracted approval.
+grant itself more authority with one careless approval.
 """
 from __future__ import annotations
 
@@ -107,14 +107,14 @@ def test_ordinary_paths_are_allowed(builder):
 
 
 def test_a_service_named_to_look_protected_is_still_allowed(builder):
-    """The check is on real path prefixes, not on the word 'policy'. A bridge
-    for an insurance API should not be unbuildable."""
+    """The check matches path prefixes, not the word 'policy', so a bridge
+    for an insurance API can still be built."""
     builder.refuse_if_protected("services/compose/policy-quotes-bridge/app/bridge.py")
 
 
 def test_the_protected_list_covers_both_gates(builder):
-    """Named explicitly: these two files are the entire runtime enforcement, and
-    a proposal that edits either one disables the system silently."""
+    """Named explicitly. These two files hold all runtime enforcement, and a
+    proposal that edits either one disables it without any visible error."""
     joined = " ".join(builder.PROTECTED)
     assert "policy_gate.py" in joined
     assert "bridge_base.py" in joined
@@ -145,9 +145,9 @@ def test_git_is_never_invoked_through_a_shell():
 
 def test_the_bridge_never_pushes():
     """Proposals stay in the clone and the operator fetches them, so this
-    container never needs write access to the operator's repository. The
-    alternative was letting a service the assistant drives write refs into the
-    real .git directory, to save the operator one fetch."""
+    container never needs write access to the operator's repository. Pushing
+    would let a service the assistant drives write refs into the real .git
+    directory, only to save the operator one fetch."""
     import re
     src = (REPO / "services" / "compose" / "builder-bridge" / "app"
            / "bridge.py").read_text()
@@ -158,7 +158,7 @@ def test_the_bridge_cannot_merge_or_deploy():
     """merge_own_pr is always_denied. A builder that could merge would get
     around that, and one that could deploy would make review optional.
 
-    Checks the git subcommands actually run, not the source text, which also
+    Checks the git subcommands the code runs, not the source text, which also
     contains the schema string listing what the service cannot do.
     """
     import re
@@ -177,8 +177,8 @@ def test_the_bridge_cannot_merge_or_deploy():
 
 def test_checks_run_a_fixed_command_not_a_supplied_one():
     """`run_validators_and_tests` is `allowed`, which is only safe while what
-    runs is fixed. A generic 'run this' endpoint under that tier would be shell
-    access with extra steps."""
+    runs is fixed. A generic 'run this' endpoint under that tier would give
+    the assistant shell access."""
     src = (REPO / "services" / "compose" / "builder-bridge" / "app"
            / "bridge.py").read_text()
     block = src.split("def run_checks", 1)[1].split("\ndef ", 1)[0]
@@ -209,7 +209,7 @@ def test_merging_stays_denied():
     tiers = pg.load_tiers(policy)
     assert "merge_own_pr" in tiers["always_denied"]
     assert "modify_upstream_agent_source" in tiers["always_denied"]
-    # And no tool maps to either, so there is no route to them at all.
+    # No tool maps to either, so there is no route to them.
     mapping = pg.load_tool_map(policy)
     assert "merge_own_pr" not in mapping.values()
     assert "modify_upstream_agent_source" not in mapping.values()
@@ -226,7 +226,7 @@ def test_the_bridge_declares_its_capabilities():
 
 def test_tool_descriptions_say_proposals_do_not_ship():
     """A model that believes it has shipped will tell the operator the work is
-    done, and the operator will believe it."""
+    done, and the operator may trust that."""
     src = (REPO / "services" / "compose" / "agentbox-mcp" / "app"
            / "integrations" / "builder.py").read_text()
     assert "does NOT merge" in src and "does NOT deploy" in src
@@ -337,7 +337,7 @@ def test_a_second_proposal_does_not_inherit_the_first(git_repo):
 
 def test_the_commit_is_attributed_to_the_assistant(git_repo):
     """`git log` should show who wrote it. A proposal committed as the operator
-    is a proposal nobody can tell apart from the operator's own work."""
+    cannot be told apart from the operator's own work."""
     builder = load_builder(git_repo)
     builder.propose(FakeHandler(), {
         "branch": "attributed", "message": "docs: who wrote this",
@@ -386,7 +386,7 @@ def test_the_code_that_enforces_the_policy_is_protected_too():
         "services/compose/memory-bridge/app/bridge.py",
         "services/compose/agentbox-mcp/app/evaluator.py",
         "router/agentbox_router.py",
-        # the ones that already worked, so a reordering cannot lose them
+        # previously protected paths, so a reordering cannot lose them
         "policies/approval-policy.yaml",
         "services/templates/mcp/policy_gate.py",
         "cli/agentbox",

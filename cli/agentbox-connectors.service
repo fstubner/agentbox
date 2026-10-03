@@ -1,14 +1,13 @@
 # Finishes what the portal spooled: reconnects and disconnects.
 #
-# Runs as the OPERATOR's user instance and holds what the portal
-# does not, the Google client secret, write access to the env directory, and
-# the docker socket. That is the whole reason the two are separate processes:
-# a LAN-reachable page that could run containers is the worst thing that could
-# exist on this box, and `docker run -v /:/host` is a root shell.
+# Runs as the OPERATOR's user instance. It holds what the portal does not:
+# the Google client secret, write access to the env directory, and the docker
+# socket. The two are separate processes so that the LAN-reachable page cannot
+# run containers. Docker socket access is root access, because
+# `docker run -v /:/host` is a root shell.
 #
-# The portal spools a request and this unit completes it, so people can fix
-# their own accounts without asking the operator while the privilege stays
-# here.
+# The portal spools a request and this unit completes it. People can fix their
+# own accounts without asking the operator, and the privilege stays here.
 
 [Unit]
 Description=Complete Agentbox connector requests

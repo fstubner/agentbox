@@ -1,8 +1,8 @@
 """Speech output: quiet hours, speaker naming, and what cannot be said.
 
-Quiet hours are the interesting part. They are a constraint in the process that
-owns the speaker rather than a policy tier, because a tier can be granted and
-an approval only helps if a human reads carefully at 3am.
+Quiet hours are enforced in the process that owns the speaker, not as a policy
+tier. A tier can be granted, and an approval only helps if a human reads it
+carefully at 3am.
 """
 from __future__ import annotations
 
@@ -44,8 +44,8 @@ def at(hour, minute=0):
 
 
 def test_window_crossing_midnight_is_handled(spk):
-    """The bug this test exists for: `start <= now <= end` makes 22:00-07:00
-    quiet for exactly no minutes of the day, and nobody notices until 3am."""
+    """A plain `start <= now <= end` check makes 22:00-07:00 quiet for no
+    minutes of the day, and nobody would notice until 3am."""
     assert spk.in_quiet_hours(at(23)) is True
     assert spk.in_quiet_hours(at(3)) is True
     assert spk.in_quiet_hours(at(22)) is True
@@ -71,15 +71,15 @@ def test_unset_quiet_hours_never_refuses(monkeypatch):
 
 def test_malformed_window_does_not_silently_block_everything(monkeypatch):
     """A typo in config should not make the assistant permanently mute with no
-    explanation. Failing open is right here: the cost is speech at a bad hour,
-    not a safety property."""
+    explanation. Failing open is correct here, because the cost is speech at a
+    bad hour, not a safety property."""
     spk = load(monkeypatch, quiet="10pm to 7am")
     assert spk.in_quiet_hours(at(3)) is False
 
 
 def test_quiet_hours_refuse_rather_than_queue(spk, monkeypatch):
-    """A message deferred to 7am ambushes someone making coffee with
-    yesterday's reminder."""
+    """A message deferred to 7am would play yesterday's reminder to someone
+    making coffee."""
     monkeypatch.setattr(spk, "in_quiet_hours", lambda *a: True)
     spoken, detail = spk.say("the bins go out")
     assert spoken is False
@@ -125,8 +125,8 @@ def test_empty_text_is_refused(spk):
 
 
 def test_there_is_no_route_that_plays_a_file_or_url():
-    """Speaking is how an injected email reaches someone who is not looking at
-    a screen. The tool takes composed text, never a document to read back."""
+    """Speech can carry an injected email to someone who is not looking at a
+    screen. The tool takes composed text, never a document to read back."""
     source = code_of(REPO / "cli" / "agentbox-speaker")
     for forbidden in ("urlopen", "urlretrieve", '"file"', "def play_file"):
         assert forbidden not in source
@@ -140,8 +140,8 @@ def test_quiet_hours_are_enforced_where_the_speaker_lives(spk):
 
 
 def test_playback_failure_is_reported_not_swallowed(spk, monkeypatch):
-    """Reporting success for speech nobody heard is how a person learns to
-    distrust the whole feature."""
+    """Reporting success for speech nobody heard would make people distrust
+    the feature."""
     monkeypatch.setattr(spk, "in_quiet_hours", lambda *a: False)
     monkeypatch.setattr(spk.os.path, "exists", lambda p: True)
 

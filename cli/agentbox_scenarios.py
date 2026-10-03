@@ -1,13 +1,12 @@
-"""Household scenarios: does the assistant actually help, and how much of it works?
+"""Household scenarios: how many everyday requests the assistant can answer.
 
 `smoke` checks the plumbing: every seam, refusal and guardrail. It passes on a
-box that helps nobody, because a house with no devices and no Drive consent
-still has intact seams. This answers a different question. If a person asked
-the ten things they would actually ask, how many could the assistant answer
-today?
+house with no devices and no Drive consent, because the seams are still
+intact. This module asks the ten things a person would ask and counts how many
+the assistant can answer today.
 
-An empty allowlist or a Drive 403 is not a bug in the plumbing. It is the
-difference between installed and useful, and this measures that.
+An empty allowlist or a Drive 403 is not a bug in the plumbing. It means the
+system is installed but not yet useful, and this module measures that.
 
 Each scenario is something a household member might say, the tool that would
 answer it, and a verdict on the live result.
@@ -47,7 +46,7 @@ class Scenario:
         self.args = args
         self.verdict = verdict
         # What closes the gap when this is blocked or empty. Printed as the
-        # next action, so the report doubles as a to-do list.
+        # next action, so the report lists what to do next.
         self.needs = needs
         # Optional prepare(tool_call, token) returns args, or None. For
         # scenarios that need a real object to act on, such as a real message
@@ -112,14 +111,14 @@ def _recent_message_id(tool_call, token):
     return f"searched {len(messages)} recent messages, none had readable text"
 
 
-# The set. Framed in the household's words, not the tool's. Ordered roughly by
-# how often a person would reach for each.
+# The scenarios, phrased in the household's words instead of tool names.
+# Ordered roughly by how often a person would ask each.
 SCENARIOS = [
     Scenario(
         "What's on my calendar today?",
         "list_calendar_events", {"view": "lean"},
-        # Google's shape: the events ride under "items". The first run of
-        # this suite reported "3 events" that were three dict keys.
+        # Google returns the events under "items". Counting the dict itself
+        # would count its keys as events.
         _has_items("events", key="items",
                    needs="a busier day, or check the calendar is shared"),
         needs="Google connected (it is), this one is live"),
@@ -136,9 +135,8 @@ SCENARIOS = [
     Scenario(
         "Did anything important land in my inbox?",
         "search_gmail", {"query": "is:unread newer_than:2d", "max_results": 5},
-        # Gmail's shape: hits ride under "messages". Both earlier runs of
-        # this suite read the raw dict, never matched, and reported an empty
-        # inbox they had not actually looked inside.
+        # Gmail returns hits under "messages". Reading the raw dict never
+        # matches and reports an empty inbox without looking inside it.
         _has_items("recent unread", key="messages",
                    needs="quiet inbox, that is the good case"),
         needs="Google connected"),
@@ -194,10 +192,10 @@ SCENARIOS = [
     Scenario(
         "Find that lease PDF in my Drive.",
         "search_drive", {"query": "lease", "max_results": 5},
-        # "no match" was a lie. With the drive.file scope the assistant can
-        # only see files it created itself, so a person with a full Drive gets
-        # zero results and a report that reads like an empty Drive. The
-        # scenario has to name the scope or it teaches the wrong lesson.
+        # With the drive.file scope the assistant can only see files it
+        # created itself. A person with a full Drive gets zero results, which
+        # reads like an empty Drive. So the verdict names the scope instead of
+        # reporting "no match".
         _has_items("files", key="files",
                    needs="nothing is visible under the drive.file scope. See "
                          "below"),
@@ -212,10 +210,10 @@ def _run_one(scenario, tool_call, token: str) -> tuple[str, str]:
     """One scenario to a (state, detail) verdict. Never raises.
 
     prepare's three-way contract: a dict is the arguments to use; None means
-    the house has nothing to act on (empty, honestly); a string is why
-    preparation itself failed (blocked, with the reason). The distinction
-    matters because "no mail to summarise" and "Gmail is down" demand
-    different actions from different people.
+    the house has nothing to act on (empty); a string is why preparation
+    itself failed (blocked, with the reason). The distinction matters because
+    "no mail to summarise" and "Gmail is down" need different actions from
+    different people.
     """
     args = scenario.args
     if scenario.prepare is not None:
@@ -250,13 +248,13 @@ def run(tool_call, token: str) -> dict:
             "blocked": sum(1 for r in results if r["state"] == BLOCKED)}
 
 
-# --- the journal side: what actually got used --------------------------------
+# --- the journal side: what got used -----------------------------------------
 
 # Tools that answer a household question, as opposed to the assistant managing
-# itself. The split is the whole point of the usage read: 400 calls that are
-# all whoami and propose_change is a system talking to itself, not a household
-# being helped. Kept here beside the scenarios so the two notions of "useful"
-# cannot drift.
+# itself. The usage read depends on this split. Calls such as whoami and
+# propose_change are the system managing itself and do not count as helping
+# the household. Kept here beside the scenarios so the two definitions of
+# "useful" stay in step.
 HOUSEHOLD_TOOLS = frozenset({
     "search_gmail", "read_gmail", "clean_gmail",
     "list_calendar_events", "calendar_freebusy", "create_gmail_draft",

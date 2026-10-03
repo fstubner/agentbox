@@ -53,11 +53,10 @@ def parse_identities(raw: str) -> dict[str, str]:
 
 
 def unit_environment(unit: str) -> dict:
-    """Environment of a user unit, as systemd actually has it.
+    """Environment of a user unit, as systemd has it loaded.
 
-    Read from systemd rather than the repo copy: what is installed and what is
-    checked in drift, and the question being answered here is about the running
-    household, not the intended one.
+    Read from systemd, not the repo copy. The installed and checked-in units
+    can drift, and this reports on the running household.
     """
     out = {}
     try:

@@ -36,14 +36,14 @@ __all__ = [
 
 # --- connectors ----------------------------------------------------------------
 #
-# Reconnecting is the same two-phase split as onboarding, for the same reason:
-# a LAN-reachable page must not hold the credential that mints refresh tokens.
-# This half collects consent and writes a request; `agentbox identity
-# reconnect` has the secret and is run by a human who chose to.
+# Reconnecting uses the same two-phase split as onboarding. A LAN-reachable
+# page must not hold the credential that mints refresh tokens. This half
+# collects consent and writes a request. `agentbox identity reconnect` has the
+# secret and is run by a person.
 #
-# Why anyone needs this at all: scopes change. Drive, Drive activity and
-# contacts were all added after Alex consented, and every one of them returns
-# ACCESS_TOKEN_SCOPE_INSUFFICIENT against a token minted before they existed.
+# A reconnect is needed when scopes change. A scope added after a person
+# consented, such as Drive, Drive activity or contacts, returns
+# ACCESS_TOKEN_SCOPE_INSUFFICIENT against a token minted before it existed.
 # Without a reconnect path the only fix is deleting an identity and starting
 # over, which also orphans their memories.
 
@@ -78,8 +78,8 @@ def google_redirect_acceptable(url: str) -> tuple[bool, str]:
     """Whether Google will accept this as a redirect URI.
 
     Google accepts loopback over http, or a real public domain over https. A
-    .local name is refused as "must end with a public top-level domain". Better
-    to know now than halfway through someone's consent.
+    .local name is refused as "must end with a public top-level domain". This
+    check catches that before someone starts consent.
     """
     parsed = urllib.parse.urlparse(url)
     host = (parsed.hostname or "").lower()
@@ -120,11 +120,10 @@ def google_consent_url(state: str) -> str:
 def connector_status(identity: str) -> list[dict]:
     """What this person has connected, from configuration on disk.
 
-    Not a live probe: the bridges have no host ports, so nothing
-    on this side of the socket can reach them. Whether the *credential* still
-    works is a different question, answered by `agentbox doctor`, which can
-    reach the containers. Saying "configured" here and meaning "healthy" would
-    be the kind of confident-but-wrong status this system keeps having to fix.
+    This is not a live probe. The bridges have no host ports, so nothing on
+    this side of the socket can reach them. Whether the *credential* still
+    works is checked by `agentbox doctor`, which can reach the containers.
+    This reports "configured" and must not be read as "healthy".
     """
     env_dir = Path(os.environ.get(
         "AGENTBOX_ENV_DIR",
@@ -143,8 +142,8 @@ def connector_status(identity: str) -> list[dict]:
 
 # --- pairing a chat account from the page --------------------------------------
 #
-# A person connects their own Discord here rather than an operator editing a
-# unit file.
+# A person connects their own Discord account here, so an operator does not
+# have to edit a unit file.
 #
 # The pairing decides where sign-in links are sent, so it lives in the
 # portal's state directory, which no container mounts. If the assistant could
@@ -177,8 +176,8 @@ def save_chat_links(data: dict) -> None:
 def start_pairing(identity: str) -> str:
     """Mint a short code for this person to send from their chat account."""
     data = load_chat_links()
-    # Unambiguous characters only: this gets read off a screen and typed into
-    # a phone, and 0/O and 1/I are where that goes wrong.
+    # Unambiguous characters only, because this is read off a screen and typed
+    # into a phone. 0/O and 1/I are easy to confuse.
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     code = "".join(secrets.choice(alphabet) for _ in range(6))
     data["pending"] = {k: v for k, v in data["pending"].items()

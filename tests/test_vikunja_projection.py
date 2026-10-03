@@ -1,8 +1,8 @@
 """Tests for vikunja-bridge projection pushdown.
 
-These guard the two properties the projection measurement depends on:
-the lean view must never invent or alter data, and `full` must stay the default
-so enabling the parameter cannot silently change live gateway behaviour.
+These guard the two properties the projection measurement depends on.
+The lean view must never invent or alter data, and `full` must stay the default
+so adding the parameter does not change live gateway behaviour.
 """
 from __future__ import annotations
 

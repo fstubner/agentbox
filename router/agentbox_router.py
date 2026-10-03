@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Small local router for agentbox model roles.
 
-This intentionally does not make model decisions with an LLM. It exposes
+This does not use an LLM to make model decisions. It exposes
 stable role endpoints so Hermes or another controller can ask for the right
 kind of help without knowing which backend is currently assigned.
 """
@@ -145,11 +145,11 @@ def decide_orchestrate(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(messages, list):
         text = user_text(payload)
         # Honour `instruction` the same way context/extract and reason/check do.
-        # Without this the field is silently dropped, which broke harness
-        # escalation: the extractor's schema demand ("return JSON with these
-        # keys") travels in `instruction`, so escalating here handed the main
-        # model a raw email with no contract and every retry failed validation.
-        # A caller that passes its own `messages` is untouched.
+        # Harness escalation depends on it. The extractor's schema demand
+        # ("return JSON with these keys") travels in `instruction`. If the
+        # field were dropped, the main model would get a raw email with no
+        # contract and every retry would fail validation. A caller that passes
+        # its own `messages` is untouched.
         instruction = payload.get("instruction")
         user_content = f"{instruction}\n\n--- INPUT ---\n{text}" if instruction else text
         messages = [
@@ -216,9 +216,9 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     """Listen on every address named in AGENTBOX_ROUTER_HOST.
 
-    A list, not a single address, because the two callers live on opposite
-    sides of a boundary: the evaluator and `doctor` reach this on loopback,
-    while agentbox-mcp reaches it from a container, where loopback is the
+    It takes a list because the two callers are on opposite sides of a
+    network boundary. The evaluator and `doctor` reach this on loopback.
+    agentbox-mcp reaches it from a container, where loopback is the
     container's own. `0.0.0.0` would serve both and also serve the LAN, and
     this endpoint is unauthenticated and will run any prompt it is given.
 

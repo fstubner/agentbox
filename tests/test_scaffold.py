@@ -1,13 +1,13 @@
 """Tests for `agentbox scaffold`.
 
-The scaffold generates a new bridge and stops. What matters is what it refuses
-and what it guarantees.
+The scaffold generates a new bridge and stops. These test what it refuses and
+what it guarantees.
 
 - It never deploys or merges. merge_own_pr is always_denied, and a generated
   service that deployed itself would get around that.
 - The output has every guardrail already, so review is about whether the
   service should exist, not whether it forgot one.
-- It refuses rather than overwrites, and refuses rather than collides.
+- It refuses to overwrite an existing service or collide with one.
 
 These run against a throwaway copy of the repository, so no test leaves a
 service behind.

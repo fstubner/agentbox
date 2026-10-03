@@ -64,8 +64,8 @@ def exchange_oauth_code(code: str, redirect_uri: str) -> str:
 def provision_google_bridge(identity: str, refresh_token: str) -> bool:
     """Stand up a Google bridge holding only this person's credential.
 
-    Their mail is then reached with their token and nobody else's, which is the
-    whole reason for a second container rather than a second credential in the
+    Their mail is then reached with their token and nobody else's. This is
+    why each person gets a second container, not a second credential in the
     first one.
     """
     import secrets as _secrets
@@ -174,7 +174,7 @@ def _mark_request_done(record: dict) -> None:
     if not path:
         return
     record["completed_at"] = int(time.time())
-    record.pop("code", None)          # spent, and no reason to keep it on disk
+    record.pop("code", None)          # spent, so removed from disk
     try:
         path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     except OSError:
@@ -184,9 +184,9 @@ def _mark_request_done(record: dict) -> None:
 def revoke_google_token(refresh_token: str) -> bool:
     """Tell Google to invalidate the credential.
 
-    Deleting our copy is not disconnecting: the grant would still be listed in
-    the person's Google account, and anyone who had captured the token could
-    still spend it. Revoking upstream is the part that actually ends access.
+    Deleting the local copy does not disconnect the account. The grant would
+    still be listed in the person's Google account, and anyone who had
+    captured the token could still use it. Revoking it at Google ends access.
     """
     if not refresh_token:
         return False
@@ -198,7 +198,7 @@ def revoke_google_token(refresh_token: str) -> bool:
         with urllib.request.urlopen(request, timeout=20):
             return True
     except urllib.error.HTTPError as exc:
-        # 400 invalid_token means it was already dead, which is the goal.
+        # 400 invalid_token means it was already revoked.
         return exc.code == 400
     except Exception:  # noqa: BLE001
         return False
@@ -239,7 +239,7 @@ def connectors_sync(quiet: bool = False) -> int:
 def identity_reconnect(name: str) -> int:
     """Finish a reconnect the portal started.
 
-    The portal captured an authorisation code; this exchanges it with the
+    The portal captured an authorisation code. This exchanges it with the
     client secret, which is why the two halves exist. Codes expire in about
     ten minutes.
     """

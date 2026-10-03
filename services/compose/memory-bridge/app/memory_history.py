@@ -10,9 +10,9 @@ from memory_store import STORE_LOCK, load_store, now, require_review, save_store
 
 # --- supersession -----------------------------------------------------------
 #
-# Facts change, and deleting the old one loses the shape of the change. Bin day
-# was Tuesday and is now Wednesday, and the useful record is that this replaced
-# that on this date. So there are three end states.
+# Facts change, and deleting the old fact loses the record of the change. If
+# bin day moves from Tuesday to Wednesday, the useful record is that the new
+# fact replaced the old one on a given date. So there are three end states.
 #
 #   approved    current, and read by the assistant
 #   superseded  was true until something replaced it, readable as history
@@ -45,7 +45,7 @@ def _same_subject(a: str, b: str) -> bool:
 
     A cheap stand-in for "are these about the same thing". "Bin day is
     Tuesday" and "Bin day is Wednesday" share only one content word, because
-    the words that differ are the point, but statements about the same subject
+    the words that differ carry the change. Statements about the same subject
     nearly always start with it.
     """
     first_a = _ordered_content_words(a)[:1]

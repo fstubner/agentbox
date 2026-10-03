@@ -54,10 +54,10 @@ def _triage(args):
     if not message_id:
         raise ToolError("message_id is required")
 
-    # `clean` rather than `read`: the bridge already normalises a message to
-    # compact text, which is what the worker wants and is where PII stripping
-    # happens. Fetched here rather than by the caller so the body has no route
-    # into this context even if the dispatch fails.
+    # This uses the `clean` route, not `read`. The bridge normalises a message
+    # to compact text there, which is what the worker wants, and PII stripping
+    # happens there. The body is fetched here, not by the caller, so it has no
+    # route into this context even if the dispatch fails.
     message = bridge_post("/v1/gmail/clean", {"message_id": message_id})
     # The clean route returns `clean_text`, with the subject under `headers`.
     # The other keys are fallbacks for older bridges.
@@ -67,9 +67,9 @@ def _triage(args):
     if not body.strip():
         raise ToolError(f"message {message_id} has no readable body")
 
-    # Subject is quoted straight from the message rather than asked of the
-    # worker: the worker could get it wrong, and this one field is cheap to
-    # carry exactly. Bounded by the same rule as any other quoted line.
+    # The subject is quoted from the message instead of asked of the worker.
+    # The worker could get it wrong, and this one field is cheap to carry
+    # unchanged. It is bounded by the same rule as any other quoted line.
     headers = message.get("headers") if isinstance(message.get("headers"), dict) else {}
     subject = str(headers.get("subject") or message.get("subject") or "")
 

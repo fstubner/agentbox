@@ -64,9 +64,10 @@ def now() -> str:
 
 
 # Raised whenever a field is added that older records will not have. The
-# upgrade below runs on load, so an old record never quietly takes a new field's
-# default. Without it, proposals written before `kind` existed read as "not
-# feedback" and were approved into memory when they were feedback.
+# upgrade below runs on load, so an old record never silently takes a new
+# field's default. Without it, proposals written before `kind` existed would
+# read as "not feedback" and could be approved into memory when they are
+# feedback.
 STORE_VERSION = 1
 
 

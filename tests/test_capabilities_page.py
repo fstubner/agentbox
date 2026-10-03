@@ -19,8 +19,8 @@ def _engine():
 
 
 def test_no_private_skills_are_read_unless_configured(monkeypatch):
-    """Private skills are a household's own business. Guessing a location
-    would put them on a page for anyone running this code."""
+    """Private skills belong to one household. Guessing a location would put
+    them on a page for anyone running this code."""
     monkeypatch.delenv("AGENTBOX_PERSONAL_PATH", raising=False)
     import agentbox_skills
     personal, platform = agentbox_skills.load_all_skills()
@@ -41,7 +41,7 @@ def test_configured_skills_show_a_relative_path(tmp_path, monkeypatch):
 
 
 def test_service_status_is_probed_not_assumed():
-    """Both cards once showed a green dot whatever the service was doing."""
+    """A card's dot must come from a probe, not a fixed green class."""
     source = code_of(ENGINE)
     assert "class='dot ok'" not in source
     assert "agentbox_status.probe(" in source

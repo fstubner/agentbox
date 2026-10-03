@@ -4,9 +4,9 @@ It advertises tools, checks every call against the approval policy, and hands
 allowed calls to `dispatch`, which forwards them to the bridge holding the
 credential.
 
-Auth lives here so no server writes its own. An earlier hand-written check was
-`if MCP_SHARED_TOKEN and token != MCP_SHARED_TOKEN: reject`, which skips the
-check entirely when the token is unset. The rules here are:
+Auth lives here so no server writes its own. A hand-written check such as
+`if MCP_SHARED_TOKEN and token != MCP_SHARED_TOKEN: reject` skips the check
+when the token is unset. The rules here are:
 
 - **Auth fails closed.** With no token configured, every /mcp request is
   refused. Tokens are compared in constant time.
@@ -244,7 +244,7 @@ class McpHandler(BaseHTTPRequestHandler):
 
             try:
                 # Check without using up a single-use grant. The bridge checks
-                # again and consumes it, and its answer is the one that counts.
+                # again and consumes it, and its answer is authoritative.
                 policy_gate.check(name, consume=False, identity=self.identity)
                 self._validate_arguments(name, arguments)
                 payload = self.dispatch(name, arguments)

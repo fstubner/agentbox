@@ -6,10 +6,10 @@ services:
     image: agentbox/vikunja-bridge:local
     environment:
       # The policy this bridge enforces, read live from the read-only mount like
-      # grants.json, so editing a tier needs no rebuild. Nothing is built into
-      # the image, so with the variable unset no file is found, and every tool
-      # fails closed to approval_required, which is safer than enforcing a
-      # stale policy.
+      # grants.json, so editing a tier needs no rebuild. No policy is built into
+      # the image. With the variable unset no file is found, and every tool
+      # fails closed to approval_required. That is safer than enforcing a stale
+      # policy.
       AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       VIKUNJA_URL: "${VIKUNJA_URL:-http://vikunja:3456}"
       VIKUNJA_API_TOKEN: "${VIKUNJA_API_TOKEN:-}"
@@ -17,20 +17,19 @@ services:
       BRIDGE_HOST: "0.0.0.0"
       BRIDGE_PORT: "8080"
       BRIDGE_LOG_FILE: "/logs/vikunja-bridge.jsonl"
-    # No host port. This bridge is reachable only on its compose
-    # network, which the MCP gateway joins, so a leaked bridge token is
-    # unusable by any process on the host. The gateway concentrating five
-    # tokens is only a prize if something outside it can spend them; this is
-    # what makes them unspendable. Operator probes go through the gateway's
-    # /ready, which reports each bridge by name.
+    # No host port. This bridge is reachable only on its compose network,
+    # which the MCP gateway joins, so no process on the host can use a leaked
+    # bridge token. The gateway holds five tokens, and this is what keeps
+    # anything outside the gateway from using them. Operator probes go through
+    # the gateway's /ready, which reports each bridge by name.
     networks:
       vikunja:
     volumes:
       # Request log that survives container recreate; `docker logs` does not.
       - "${AGENTBOX_LOG_DIR:-${HOME}/.local/state/agentbox/logs}:/logs"
-      # Grants read-only; spent markers writable. The bridge is the
-      # authoritative gate, so it needs both, but writing a marker can
-      # only remove permission, never create it.
+      # Grants are read-only and spent markers are writable. The bridge is the
+      # authoritative gate, so it needs both. Writing a marker can only remove
+      # permission, never create it.
       - "${AGENTBOX_POLICY_DIR:-${HOME}/.local/state/agentbox/policy}:/policy:ro"
       - "${AGENTBOX_POLICY_STATE_DIR:-${HOME}/.local/state/agentbox/policy-state}:/policy-state"
     cpus: "0.50"

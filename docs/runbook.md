@@ -26,10 +26,10 @@ endpoint.
 cli/agentbox smoke
 ```
 
-`doctor` answers "is everything up". `smoke` answers "does anything work". It
-drives real workflows through agentbox-mcp, the same path the assistant uses.
-Its first run found that every tool published a list of required arguments
-that nothing enforced, so a missing argument came back as
+`doctor` checks that services are up. `smoke` checks that they work. It drives
+real workflows through agentbox-mcp, the same path the assistant uses. It
+catches faults the fixture tests miss. One example is a tool that publishes
+required arguments without enforcing them, so a missing argument returns
 `internal error: KeyError`.
 
 It is safe to run against live accounts.
@@ -41,7 +41,7 @@ It is safe to run against live accounts.
   operator. That also exercises the half of the review gate the assistant
   cannot reach.
 - The **policy gate** check passes when the call is refused. A success there
-  is the bug.
+  means the gate is broken.
 
 Run it after every deploy. Everything in `tests/` runs against fixtures, so
 this is the only check that would notice a service that starts, passes
@@ -62,8 +62,8 @@ Without `/ready`, a bridge that is up but cannot reach what it fronts looks
 healthy, and `doctor` stays green while nothing works.
 
 Bridges publish no host ports, except the memory bridge's review port, so they
-cannot be probed from the host. That is part of keeping their tokens useless
-outside the container network. Ask agentbox-mcp instead, which probes them all
+cannot be probed from the host. This keeps their tokens unusable outside the
+container network. Ask agentbox-mcp instead, which probes them all
 over the container networks.
 
 ```
@@ -104,8 +104,8 @@ for l in sys.stdin:
 for k,v in b.most_common(15): print(f'{v:9d} B  {n[k]:4d} calls  {k}')"
 ```
 
-`bytes` is the response size, so this shows where the model's context actually
-goes, from real traffic.
+`bytes` is the response size, so this shows where the model's context goes in
+real traffic.
 
 The logs never contain the Authorization header, request or response bodies,
 or any query parameter outside `bridge_base.LOGGED_QUERY_PARAMS`. A free-text
@@ -216,8 +216,8 @@ their own bridge.
 
 With `AGENTBOX_IDENTITIES` empty, the gateway uses `AGENTBOX_MCP_SHARED_TOKEN`
 with no identity, which is single-operator mode. Once identities exist the
-shared token stops working on purpose. Otherwise it would be an unnamed extra
-identity that every per-person check ignores.
+shared token is rejected. Otherwise it would be an unnamed extra identity that
+every per-person check ignores.
 
 ### Onboarding someone
 
@@ -246,11 +246,11 @@ hours, and a refusal never says whether the id or the secret was wrong. Send it
 to the person directly, not to a group chat.
 
 The Google step in the invite form only appears when `AGENTBOX_INVITE_ORIGIN`
-is set. Google will not redirect to a private IP or a `.local` name, and
-loopback on someone's phone means their phone. If it is not set, they finish
-onboarding and connect Google afterwards from their own portal under "Your
-accounts", which sets up the same bridge. Set it if people will fill the form
-in on the box itself, where `http://127.0.0.1:8770` works.
+is set. Google will not redirect to a private IP or a `.local` name, and a
+loopback address on someone's phone points at their phone. If it is not set,
+they finish onboarding and connect Google afterwards from their own portal
+under "Your accounts", which sets up the same bridge. Set it if people will
+fill the form in on the box itself, where `http://127.0.0.1:8770` works.
 
 The same thing works from a terminal.
 
@@ -269,7 +269,7 @@ The invite page has no privileges. It has no Docker socket, no secret manager
 token and no bridge tokens, and it writes one spool file. The worker does the
 privileged work as the operator.
 
-That split is forced. Registration is off in Vikunja
+The split is required. Registration is off in Vikunja
 (`VIKUNJA_SERVICE_ENABLEREGISTRATION=false`), so creating an account needs
 `vikunja user create` inside the container, which needs the Docker socket. A
 web page on the LAN holding the Docker socket could read every bridge
@@ -305,25 +305,26 @@ shared services and wrong for mail. `invite complete` warns about it.
 
 ### Memory scopes
 
-There are two levels rather than per-item sharing.
+There are two levels. There is no per-item sharing.
 
 | scope | who reads it |
 |---|---|
 | `<identity>` | only that person, and the default |
 | `household` | everyone |
 
-Memories are private by default. A memory that ends up shared because nobody
-said otherwise is a disclosure nobody chose. Filtering happens inside the
-memory bridge, not in agentbox-mcp, so a confused caller cannot leak another
-person's memories by asking the wrong way.
+Memories are private by default. If memories were shared by default, a memory
+would be disclosed without anyone choosing to share it. Filtering happens
+inside the memory bridge and not in agentbox-mcp. A confused caller therefore
+cannot leak another person's memories by asking the wrong way.
 
 I rejected per-item sharing. "Sam can see this one thing of Alex's" makes
 "what can Sam see?" impossible to answer without reading every row.
 
 The assistant calls `whoami` to find out which person it is acting for and
-which scopes it can read. The tool is `allowed`, because uncertainty about who
-it is serving causes the cross-account mistakes it prevents. Memories
-from before scopes existed have no scope and count as household.
+which scopes it can read. The tool is `allowed`, because an assistant that is
+unsure who it is serving makes cross-account mistakes, and `whoami` prevents
+them. Memories from before scopes existed have no scope and count as
+household.
 
 #### What a private scope protects
 
@@ -332,8 +333,8 @@ Alex's private memories, which stops one person's context leaking into
 another's conversation.
 
 A scope does not hide anything from the operator. Whoever runs the box can
-read `/data/memory.json` with one `docker exec`, so a review screen that hid
-rows from them would only be for show. The operator's review token lists every
+read `/data/memory.json` with one `docker exec`, so hiding rows from them in a
+review screen would protect nothing. The operator's review token lists every
 scope, which also means the one account that can approve a private proposal
 can see it.
 
@@ -365,8 +366,8 @@ There are two roles, `admin` and `member`, taken from `AGENTBOX_ADMINS`. The
 capability table is in the portal source. It is not a general
 role system, because a second policy vocabulary next to
 `approval-policy.yaml` would mean two systems that can disagree about who may
-do what. An empty `AGENTBOX_ADMINS` makes nobody an admin, which is the safe
-way for a misread env file to fail.
+do what. An empty `AGENTBOX_ADMINS` makes nobody an admin, so a misread env
+file fails safe.
 
 An admin decides `household` proposals, because those affect everyone. An
 admin does not decide another member's private proposals.
@@ -378,18 +379,19 @@ has to hand them over.
 
 #### Why a sign-in link only works in one browser
 
-A magic link is usually a bearer token, so whoever holds it is you. That fits
-badly here, because the assistant can read the inbox the link is sent to. A
-model following an injected instruction could search for the email, open the
-link, and approve its own memory proposals. That would defeat the review gate,
-which is its only route to lasting memory.
+A magic link is usually a bearer token, so whoever holds it is signed in as
+you. That is unsafe here, because the assistant can read the inbox the link is
+sent to. A model following an injected instruction could search for the email,
+open the link, and approve its own memory proposals. That would defeat the
+review gate, which is its only route to lasting memory.
 
-Hiding the email from the assistant's searches would be an allowlist the model
-could reason its way around. So requesting a link sets a nonce cookie, and
-using the link requires it.
+Hiding the email from the assistant's searches would need an allowlist, and the
+model could work around it. So requesting a link sets a nonce cookie, and using
+the link requires it.
 
 On a phone, Discord and most mail apps open links in their own browser, which
-has different cookies. So the binding decides privilege rather than access.
+has different cookies. So the cookie decides what a sign-in can do. It does not
+decide whether the sign-in succeeds.
 
 | where you open it | what you get |
 |---|---|
@@ -415,9 +417,9 @@ request, and `cli/agentbox-approvals` sends the DM. That process runs as the
 operator, holds the bot token, never passes anything through the model, and
 drops the URL once it is sent. The portal never holds the bot token.
 
-The Operations tab lists which channels will actually deliver. It is the only
-place to find out, because the sign-in form answers the same way for a known
-and an unknown address. Anything else would let strangers find out who lives
+The Operations tab lists which channels will deliver. It is the only place to
+find out, because the sign-in form answers the same way for a known and an
+unknown address. A different answer would let strangers find out who lives
 here.
 
 `cli/agentbox identity list` shows each person's role, how they can sign in,
@@ -427,8 +429,8 @@ and which services they reach through their own bridge.
 
 On the Accounts tab, *Connect Discord* shows a six-character code. Send
 `link ABC123` to the Agentbox bot as a direct message and the account is
-paired. Sending from that account is the proof, since anyone can type a user id
-into a form but only its owner can send a message from it. Messages from bots
+paired. Sending from that account proves ownership. Anyone can type a user id
+into a form, but only its owner can send a message from it. Messages from bots
 are ignored, so the assistant cannot pair an identity to itself.
 
 The pairing is stored in the portal's state directory, which no container
@@ -472,15 +474,15 @@ the box.
 **A Cloudflare tunnel**, if they cannot. A named tunnel on a domain you own
 gives a stable HTTPS name with no port forwarding. A quick tunnel
 (`cloudflared tunnel --url http://127.0.0.1:8771`) gives one in seconds, but
-the name changes on every restart. That is fine for one consent and useless as
-a registered redirect URI.
+the name changes on every restart. That works for one consent but not as a
+registered redirect URI.
 
-**Or neither.** For people who live together, consent at the box means
-sitting down at it once.
+**Neither.** For people who live together, each person can sit down at the box
+once to consent.
 
 ### Reconnecting or switching a Google account
 
-Scopes change. A token issued before a scope was added returns
+A token issued before a scope was added returns
 `ACCESS_TOKEN_SCOPE_INSUFFICIENT` for it, and the person has to consent again.
 
 They start it themselves in the portal under **Your accounts > Reconnect or
@@ -495,9 +497,8 @@ cli/agentbox connectors sync          # or do it now, by hand
 
 It takes two processes because the portal must not hold the Google client
 secret, write access to the env directory, or the Docker socket. A web page on
-the LAN that can run containers is the worst thing that could exist on this
-box. The timer means nobody has to wait for the operator to fix their own
-account.
+the LAN that can run containers could read every credential on the box. The
+timer lets a person fix their own account without waiting for the operator.
 
 Authorisation codes expire after about ten minutes. The timer runs well within
 that, and a stale code is refused with a plain message.
@@ -513,14 +514,14 @@ cli/agentbox identity disconnect sam
 ```
 
 This revokes the credential at Google before removing the local copy. Deleting
-only the local copy is not disconnecting, because the grant stays listed in
-their Google account and anyone who copied the token could still use it. If
+only the local copy leaves the grant listed in their Google account, and anyone
+who copied the token could still use it. If
 revocation cannot be confirmed, the command says so and tells you to check the
 account's connected apps by hand.
 
 `doctor` checks each person's Google credential and warns when one looks
-revoked. Otherwise the container stays healthy and the first sign is an
-unexplained 403 days later.
+revoked. A revoked credential does not make the container unhealthy. Without
+this check the first sign is an unexplained 403 days later.
 
 ## Approvals and grants
 
@@ -540,8 +541,7 @@ Add `--repeatable` for a grant that can be used until it expires.
 
 ### Approving from Discord
 
-A refused call is recorded, so you are told about it rather than having to
-notice.
+A refused call is recorded, so you are told about it.
 
 ```
 cli/agentbox approvals list      # what the assistant is waiting on
@@ -564,8 +564,8 @@ convincing request for its own approval. So the process ignores every message
 written by a bot and every user not on the list, and it never writes grants
 itself. It calls `agentbox grant`, which the assistant cannot run.
 
-Two directories back this, and the split between them is the security
-property.
+Two directories back this. The security property depends on the split between
+them.
 
 - `~/.local/state/agentbox/policy` is mounted read-only at `/policy` and holds
   the grants. The assistant's side must never be able to give itself
@@ -585,13 +585,13 @@ sudo install -d -o "$USER" -g 65532 -m 2775 ~/.local/state/agentbox/policy-state
 Create `pending` yourself, with setgid. If the container creates it first it
 is owned by uid 65532, and you cannot remove requests from it, because
 deleting a file needs write access to its directory. If this step is missed,
-single-use grants are refused with a clear message rather than quietly
-becoming unlimited until they expire.
+single-use grants are refused with a clear message. They do not become
+unlimited until they expire.
 
 ### Reviewing memories from Discord
 
-The same process handles memory proposals, so the protections are shared
-rather than reimplemented. Pending proposals are posted as they appear.
+The same process handles memory proposals, so it applies the same
+protections. Pending proposals are posted as they appear.
 
 ```
 Memory proposal `520a4fcf`
@@ -608,14 +608,15 @@ are ignored before any command is read. The assistant reads the same channel
 and still cannot approve its own memory, even if an injected instruction makes
 it type the words.
 
-A grant is about a tool and is nobody's secret, but a memory proposal can be
-private to one person. Household proposals go to the channel. Private ones go
+A grant names a tool and is not private. A memory proposal can be private to
+one person. Household proposals go to the channel. Private ones go
 only to that person's DM, which needs their Discord account paired. Without a
 pairing a private proposal is not posted anywhere and stays in the portal.
 
 ### When a fact changes
 
-Deleting an old fact loses the shape of the change, so there are three states.
+Deleting an old fact loses the record of what changed, so there are three
+states.
 
 | status | meaning | assistant reads it |
 |---|---|---|
@@ -628,13 +629,13 @@ cli/agentbox memory add "Bin day is Wednesday" --supersedes <old-id>
 cli/agentbox memory history <any-id-in-the-chain>
 ```
 
-`history` works from any id in the chain, because the one you have is usually
-from an old answer rather than the current one.
+`history` works from any id in the chain, because the id you have is usually
+from an old answer.
 
 `search_memories` returns the current version of each fact, with the versions
 it replaced nested under it as `previously`, each with the date it stopped
-being true. Nesting costs a sentence and a date per old version and leaves no
-doubt about which one is current. It keeps at most
+being true. Nesting adds a sentence and a date per old version and makes clear
+which one is current. It keeps at most
 `MEMORY_MAX_PRIOR_VERSIONS` (default 3), so a fact revised fifty times does not
 add fifty lines to every search.
 
@@ -645,13 +646,13 @@ remember <id> replaces <old-id>    approve it, retiring what it replaces
 replaces <new-id> <old-id>         link two that are already stored
 ```
 
-The second form is for memories stored before anyone noticed they were
-related.
+The second form links two related memories that were stored separately.
 
 The portal's Memories tab lists what is stored under **What I remember**, with
 earlier versions folded under each one and a Forget button. Sessions the
 assistant created cannot forget, for the same reason they cannot approve.
-Deleting the inconvenient parts is the same power as writing memory.
+Choosing which memories to delete changes what the assistant remembers as much
+as writing them does.
 
 Adding a memory that looks like it replaces an existing one prints a
 suggestion instead of acting on it. A wrong automatic replacement hides a true
@@ -667,8 +668,8 @@ It reads a rolling seven-day window, so it sees mostly the same activity each
 day. The skill has it check `search_memories` and `list_memory_proposals`
 before looking at the evidence, and most days end with no proposal. A queue
 filling up with near-identical lessons means that step is being skipped. Watch
-for it, because a review queue nobody reads closes the assistant's only route
-to lasting memory.
+for it. If nobody reads the review queue, the assistant has no route to lasting
+memory.
 
 ```
 cli/agentbox memory list          # proposals waiting for review
@@ -684,12 +685,12 @@ because that needs a credential no container holds.
 The journal records tool names, outcomes, timings, argument names and a short
 list of shape values such as `view` and `limit`. It never records argument
 values, results or exception messages, because an upstream error often quotes
-the input that caused it. `review_own_activity` returns counts only. That is
-what makes it safe to run unattended against real accounts.
+the input that caused it. `review_own_activity` returns counts only. This makes
+it safe to run unattended against real accounts.
 
 The schedule lives in the gateway's own scheduler, not cron. It runs as the
-`agentbox` user under the gateway's profile, and `HERMES_HOME` matters. A job
-created without it lands in a different profile and never runs.
+`agentbox` user under the gateway's profile, so `HERMES_HOME` must be set. A
+job created without it lands in a different profile and never runs.
 
 ```
 sudo -u agentbox env HERMES_HOME=$HERMES_HOME HOME=$GATEWAY_USER_HOME \
@@ -719,8 +720,8 @@ the gateway starts, and any of them can exit 1.
 
 ### Containment
 
-`doctor` checks five things the assistant's confinement depends on. Each of
-them would fail without any error if broken.
+`doctor` checks five things the assistant's confinement depends on. If any of
+them broke, nothing else would report an error.
 
 ```
 modify_production_gateway_config enforced (config.yaml not writable)
@@ -731,9 +732,9 @@ operator credential directory unreadable to the assistant
 ```
 
 The first three keep the assistant from rewriting its own config, skills or
-source. The last two keep credentials out of reach even if a shell were ever
-turned back on. **Never add `agentbox` to the `docker` group.** That is
-equivalent to root and undoes the whole model.
+source. The last two keep credentials out of reach even if a shell were
+enabled. **Never add `agentbox` to the `docker` group.** Membership is
+equivalent to root and removes this containment.
 
 ### Adding a skill
 
@@ -764,8 +765,8 @@ main would make approval one keystroke on an unread diff. Test it, run
 
 Some paths are refused whatever the proposal says it is for. These are
 `policies/`, both policy gates, `cli/`, `.github/`, and the builder's own
-source. That is a path check rather than a policy tier, because a tier cannot
-say "may edit any file except the ones that govern it". `cli/agentbox smoke`
+source. This is a path check, because a policy tier cannot express "may edit
+any file except the ones that govern it". `cli/agentbox smoke`
 checks the refusals on every run.
 
 ### First-time setup
@@ -783,9 +784,9 @@ git -C ~/.local/state/agentbox/builder-repo remote set-url origin /origin
 ```
 
 `origin` is `/origin` because that is where this repository is mounted,
-read-only, inside the container. Giving the clone to the container's uid looks
-simpler but breaks. Git refuses to read a repository it does not own, and
-`-c safe.directory` cannot override that from the command line, by design.
+read-only, inside the container. Making the container's uid own the clone does
+not work. Git refuses to read a repository it does not own, and
+`-c safe.directory` cannot override that from the command line.
 
 ## Home Assistant
 
@@ -803,8 +804,8 @@ may change.
 HA_CONTROLLABLE_ENTITIES=light.kitchen,light.hall,scene.evening
 ```
 
-**Empty means it can read the house and change nothing.** That is the default
-and the right place to start. Add entities one at a time.
+**Empty means it can read the house and change nothing.** That is the default.
+Start there and add entities one at a time.
 
 Put the same `HA_BRIDGE_TOKEN` in `agentbox-mcp.env`, then deploy both.
 
@@ -817,14 +818,14 @@ cli/agentbox deploy agentbox-mcp
 
 ### What it will not do
 
-- **No general service calls.** There is no `call_service` tool. Home
-  Assistant's REST API is one endpoint away from full control of the house, and
-  an approval in front of that would be asked so often it would get granted
-  without reading.
+- **No general service calls.** There is no `call_service` tool. One endpoint
+  of Home Assistant's REST API gives full control of the house. An approval in
+  front of it would be requested so often that it would be granted without
+  reading.
 - **Locks, alarms, covers, garage doors and cameras are never actuated**, even
   if they are in `HA_CONTROLLABLE_ENTITIES`. That check runs first and ignores
   the list, because `lock.front_door` and `light.front_door` differ by two
-  characters and the list is edited by a tired person.
+  characters and a person editing the list can confuse them.
 - **Climate stays between 5 and 30 °C** whatever is granted.
 
 Setting a temperature is `approval_required`, so it goes through Discord
@@ -835,22 +836,24 @@ them.
 
 Presence needs no setup. Reading `binary_sensor.*` is an ordinary read, so once
 Home Assistant has occupancy sensors the assistant can tell which room someone
-is in and answer there. That beats a camera for "know where I am". There is no
-video, nobody else's privacy is involved, and there is nothing to inject.
+is in and answer there. This is preferred over a camera for "know where I am".
+There is no video, nobody else's privacy is involved, and there is no content
+that could carry an injected instruction.
 
 ### Cameras
 
 `look_at_camera` is retired along with the local vision model, and its code
-is kept in `RETIRED_TOOLS`. The design is worth keeping. Cameras were opt-in
+is kept in `RETIRED_TOOLS`. The design is recorded here. Cameras were opt-in
 one at a time through `HA_VIEWABLE_CAMERAS`, separately from control, and both
 ends were fixed vocabularies.
 
-- The question was an enum (`occupancy` or `activity`), not free text. A
-  free-text question is one an injected instruction can write, and "transcribe
-  everything you can see" would turn the camera into a reader.
+- The question was an enum (`occupancy` or `activity`). An injected
+  instruction can write a free-text question, and "transcribe everything you
+  can see" would make the camera read out any text in view.
 - The answer was `{people, posture, text_visible}`, with `posture` checked
-  against a fixed list. Unknown keys were dropped, and a reply that was not
-  valid JSON, which is what a successful injection looks like, was discarded.
+  against a fixed list. Unknown keys were dropped. A reply that was not valid
+  JSON was discarded, because that is the usual result of a successful
+  injection.
 
 Text in the room was reported as `text_visible: true` and never transcribed.
 
@@ -863,9 +866,9 @@ HA_PRIVATE_SCREENS=media_player.office_monitor
 ```
 
 A private screen gets the summary and the detail. Every other screen, including
-any you have not classified, gets only the summary, and the bridge drops the
-detail rather than leaving it to the assistant. A summary over 80 characters is
-refused, so it cannot become a second detail field.
+any you have not classified, gets only the summary. The bridge drops the
+detail itself and does not rely on the assistant to omit it. A summary over 80
+characters is refused, so it cannot become a second detail field.
 
 ### Speakers
 
@@ -879,8 +882,8 @@ and two things reach it.
   `script.announce_*` wrappers in `docs/reference/ha-announce-scripts.yaml`
 
 Both go through the same quiet-hours limit, so an automation at 3am is refused
-just like a tool call. That is why the limit lives in the service rather than
-in `approval-policy.yaml`, which only governs one of the two callers.
+just like a tool call. The limit lives in the service because
+`approval-policy.yaml` only governs one of the two callers.
 
 Each per-room script can be given a Home Assistant area, which is the only
 place a room name can live for a device Home Assistant cannot see. Assign them

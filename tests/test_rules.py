@@ -1,9 +1,9 @@
 """The rules grammar.
 
-The whole argument for giving up expressiveness is that a rule which passes
-validation cannot fail at fire time for a reason somebody has to debug at 3am.
-These test that claim: everything wrong is caught at authoring time, and
-evaluation is total.
+The grammar gives up expressiveness so that a rule which passes validation
+cannot fail at fire time for a reason somebody has to debug at 3am. These test
+that everything wrong is caught at authoring time, and that evaluation is
+total.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def test_a_well_formed_rule_validates(r):
 
 
 def test_templates_are_not_part_of_the_grammar(r):
-    """Templates are not filtered but impossible, because there is no syntax for
+    """Templates cannot be written at all, because there is no syntax for
     them."""
     for bad in ("{{ state }}", "${state}", "<% state %>"):
         rule = good()
@@ -97,8 +97,8 @@ def test_a_rule_cannot_call_a_tool_the_assistant_lacks(r):
 
 
 def test_missing_required_arguments_are_caught_at_authoring_time(r):
-    """The failure this replaces: a rule that stores fine and does nothing at
-    3am because a required field was never there."""
+    """Otherwise a rule could store without error and do nothing at 3am
+    because a required field is missing."""
     rule = good()
     rule["do"] = [{"tool": "set_home_light", "args": {"entity_id": "light.x"}}]
     with pytest.raises(r.RuleInvalid) as exc:
@@ -146,8 +146,8 @@ def test_a_rule_is_bounded(r):
 
 
 def test_capability_is_surfaced_to_the_author(r):
-    """So they learn a rule needs a grant now, rather than finding out when it
-    silently does nothing."""
+    """The author learns now that a rule needs a grant, and does not find out
+    later when it does nothing."""
     out = r.validate(good(), TOOLS, WHO, capability_of=lambda t: "speak_aloud")
     assert out["do"][0]["_capability"] == "speak_aloud"
 
@@ -195,13 +195,13 @@ def test_evaluation_is_total(r):
 def test_comparisons_do_not_coerce_surprisingly(r):
     assert r.OPERATORS["greater_than"]("10", "9") is True
     assert r.OPERATORS["greater_than"]("abc", "9") is False
-    # A bool is not a number here; True > 0 would be a nasty way to fire.
+    # A bool is not a number here, so True > 0 cannot make a rule fire.
     assert r.OPERATORS["greater_than"](True, 0) is False
 
 
 def test_actions_are_taken_literally(r):
-    """Nothing from the event is interpolated, because the grammar cannot say
-    that. A rule does the same thing every time, so reading it is enough."""
+    """Nothing from the event is interpolated, since the grammar cannot express
+    it. A rule does the same thing every time, so reading it is enough."""
     rule = r.validate(good(), TOOLS, WHO)
     actions = r.actions_for(rule)
     assert actions == [{"tool": "speak_aloud",
@@ -212,7 +212,7 @@ def test_actions_are_taken_literally(r):
 
 
 def test_the_grammar_is_shipped_in_the_gateway_image():
-    """It was not, first time: the container crash-looped on ModuleNotFoundError
-    because a new top-level module was written but never COPYed."""
+    """A new top-level module that is not COPYed into the image makes the
+    container crash-loop on ModuleNotFoundError."""
     dockerfile = code_of(REPO / "services/compose/agentbox-mcp/Dockerfile")
     assert "app/rules.py" in dockerfile

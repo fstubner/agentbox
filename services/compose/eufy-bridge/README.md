@@ -2,13 +2,14 @@
 
 A bridge for Eufy cameras. It is built and tested (`tests/test_eufy_bridge.py`)
 but the assistant cannot reach it. No integration in agentbox-mcp exposes its
-routes, and this household never deployed it.
+routes, and it is not deployed.
 
-The design is worth keeping. Eufy has no public API, so every route to these
-cameras is reverse-engineered. The usual one is a Home Assistant add-on, which
-would put unreviewed code inside the most privileged container on the box.
-Instead `eufy-security-ws` runs in its own container on a private network with
-no host ports, and this bridge is the only thing that talks to it. The bridge
+It is kept for its design. Eufy has no public API, so every integration with
+these cameras is reverse-engineered. The common one is a Home Assistant
+add-on, which would run unreviewed code inside the most privileged container
+on the box. Here `eufy-security-ws` runs in its own container on a private
+network with no host ports, and this bridge is the only thing that talks to
+it. The bridge
 has two routes, a device list and a single snapshot from an allowlisted camera,
 and nothing that moves, arms or records.
 

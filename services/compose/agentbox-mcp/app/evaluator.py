@@ -1,7 +1,7 @@
 """The rules evaluator, which makes approved rules fire.
 
 `rules.py` defines and validates rules. This feeds them events and runs their
-actions, so an approved rule actually fires for the sources fed here.
+actions, so an approved rule fires for the sources fed here.
 
 ## Sources
 
@@ -9,22 +9,22 @@ Two are live, because both can be observed from inside agentbox-mcp without
 new credentials.
 
 - **schedule** sends one tick per pass, `{"source": "schedule", "kind":
-  "tick", "at": "HH:MM"}`. A rule matching `at: "07:30"` fires once that
-  minute, with the cooldown making "once" true.
+  "tick", "at": "HH:MM"}`. A rule matching `at: "07:30"` fires in that
+  minute, and the cooldown stops it firing more than once.
 - **homeassistant** sends entity state changes, polled through the same bridge
   and lean view the assistant uses, `{"source": "homeassistant", "kind":
   "state_change", "entity_id", "state", "previous_state"}`. The first poll
   only records a baseline, so a restart cannot replay the whole house.
 
 gmail, calendar and vikunja are valid in the grammar but have no feed. `rules
-approve` says which sources are live, so nobody believes a mail rule will
+approve` says which sources are live, so it is clear that a mail rule will not
 fire.
 
 ## Firing
 
 Each `do` is an ordinary tool call. It passes the same `policy_gate.check` as
 the assistant's own calls, without using up a grant, so the bridge's check is
-the one that counts. It runs as the rule's identity through the same context
+authoritative. It runs as the rule's identity through the same context
 variable a session uses, and is written to the outcome journal under
 `service: "agentbox-rules"` with the rule's name in `detail`. A refusal is
 recorded, not retried.
@@ -76,9 +76,9 @@ INTERVAL_SECONDS = int(os.environ.get("AGENTBOX_RULES_INTERVAL", "30"))
 COOLDOWN_SECONDS = int(os.environ.get("AGENTBOX_RULES_COOLDOWN", "300"))
 SERVICE = "agentbox-rules"
 
-# The sources this evaluator actually feeds. Exported so the CLI and the
-# rulebook tool can say honestly which rules are live rather than repeating a
-# blanket claim that goes stale.
+# The sources this evaluator feeds. Exported so the CLI and the rulebook tool
+# can report which rules are live from this list, instead of a fixed statement
+# that can go out of date.
 LIVE_SOURCES = ("schedule", "homeassistant")
 
 # entity_id -> state from the previous poll. Module-level so tests can reset.
@@ -149,8 +149,8 @@ def _poll_entities() -> dict[str, str]:
     time, and tests exercise this module without a gateway around it.
     """
     from integrations import _client, homeassistant
-    # The HA bridge is shared, not per-identity; make sure a poll never rides
-    # on whatever identity the serving thread last set.
+    # The HA bridge is shared, not per-identity. Clear the identity so a poll
+    # never uses the one the serving thread last set.
     _client.CURRENT_IDENTITY.set("")
     payload = homeassistant.bridge_request(
         "GET", "/v1/entities", query={"view": "lean", "limit": 1000})
@@ -180,8 +180,8 @@ def fire(rule: dict, dispatch, now: float | None = None) -> None:
     """Run one rule's actions as its identity, one policy check per action.
 
     `dispatch` is the gateway's own dispatch function, injected rather than
-    imported so tests can watch it and so this module never imports server
-    (which imports the world).
+    imported so tests can watch it and so this module never imports server,
+    which imports every integration.
     """
     from integrations import _client
 
@@ -208,9 +208,9 @@ def fire(rule: dict, dispatch, now: float | None = None) -> None:
             dispatch(tool, args)
             note(outcome_log.OK)
         except policy_gate.PolicyDenied:
-            # Recorded and dropped, never retried. A rule needing a grant
-            # nobody issued does nothing, because 3am is when nobody is
-            # reading approval prompts.
+            # Recorded and dropped, never retried. A rule that needs a grant
+            # nobody issued does nothing. Rules run unattended, when nobody
+            # is reading approval prompts.
             note(outcome_log.DENIED)
         except Exception as exc:  # noqa: BLE001 (one bad action, not a dead loop)
             note(outcome_log.ERROR, detail=type(exc).__name__)

@@ -14,8 +14,8 @@ STATE = Path(os.environ.get(
 DEFAULT_TTL_HOURS = int(os.environ.get("AGENTBOX_INVITE_TTL_HOURS", "24"))
 # A client id is public. The secret stays on the operator side, so this page
 # can start Google's consent but not finish it. It receives an authorisation
-# code, which is useless without the secret. That is why onboarding has two
-# halves.
+# code, which is useless without the secret. Onboarding has two halves for
+# this reason.
 GOOGLE_CLIENT_ID = os.environ.get("AGENTBOX_GOOGLE_CLIENT_ID", "").strip()
 # Must stay in step with google-workspace-bridge/oauth-setup.py. A member
 # onboarded with fewer scopes than the bridge calls gets a token that fails at
@@ -31,7 +31,7 @@ GOOGLE_SCOPES = os.environ.get(
 PUBLIC_ORIGIN = os.environ.get("AGENTBOX_INVITE_ORIGIN", "").rstrip("/")
 
 # What a person can have their own account for. Shared services, such as the
-# one Home Assistant, are stated rather than offered.
+# one Home Assistant, are listed for information and are not a choice.
 CONNECTORS = {
     "vikunja": {
         "label": "Tasks and lists",
@@ -115,7 +115,7 @@ def valid_invite(token_id: str, secret: str) -> tuple[dict | None, str]:
     if not hmac.compare_digest(str(record.get("secret", "")), secret):
         return None, generic
     if record.get("used_at"):
-        # Not an error. They already did what was asked. The confirmation page
+        # Not an error, because they already submitted. The confirmation page
         # is the POST response, so a refresh or a second tap on the link lands
         # here.
         return None, ("You have already filled this in \u2014 thank you. "

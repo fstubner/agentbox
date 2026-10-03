@@ -7,10 +7,10 @@ privilege stays with a separate worker.
 
 ## Two gates
 
-The portal writes one file naming an invite. It runs no Docker command, holds
-no bridge token, and gains nothing, because writing into a directory is a
-request, not authority. A separate unit reads the file, re-derives everything
-itself, and acts.
+The portal writes one file naming an invite. It runs no Docker command and
+holds no bridge token. Writing a file into a directory is only a request, so
+the portal has no authority of its own here. A separate unit reads the file,
+re-derives everything itself, and acts.
 
 The worker trusts one field of what the portal wrote, which invite is meant,
 and re-reads that invite to decide everything else. The approver, time and
@@ -19,7 +19,7 @@ origin are recorded for auditing and never treated as permission.
 ## What this limits
 
 A request can only name an invite an operator created and the invitee filled
-in. Nothing here can conjure an identity, so the most a compromised portal
+in. Nothing here can create an identity, so the most a compromised portal
 could do is complete an onboarding a person had already started.
 
 Approvals expire. A request left in the spool while the worker was down for a
@@ -47,16 +47,16 @@ from agentbox_onboarding_store import (  # noqa: F401
 # string comes from an HTTP form and will become a filename.
 TOKEN_ID = re.compile(r"^[0-9a-f]{16}$")
 
-# An approval is a decision made at a moment. A week later it is a stale file,
-# not a decision, and should be re-made by a person rather than honoured.
+# An approval is only valid for a limited time. After a week the file is
+# stale, and a person should approve again.
 MAX_REQUEST_AGE = 24 * 3600
 
 
 def request_path(token_id: str) -> Path:
     """Where a request for this invite lives.
 
-    Raises rather than sanitising: a token id that is not one is a bug or an
-    attack, and quietly rewriting it into something safe would hide both.
+    Raises instead of sanitising. A malformed token id is a bug or an attack,
+    and rewriting it into something safe would hide either.
     """
     if not TOKEN_ID.match(token_id or ""):
         raise ValueError("not an invite id")
@@ -67,9 +67,8 @@ def request(token_id: str, requested_by: str, origin: str = "") -> Path:
     """Record that an admin asked for this invite to be completed.
 
     Does not check whether the invite exists or is completable.
-    That judgement belongs to the side holding the privilege; making it here
-    too would mean two implementations that can disagree, and the portal's
-    copy would be the one nobody re-reads when the rules change.
+    That check belongs to the side holding the privilege. A second check here
+    could disagree with it, and would be easy to miss when the rules change.
     """
     path = request_path(token_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,8 +89,8 @@ def pending() -> list[dict]:
     """Requests waiting for the worker, oldest first.
 
     A file that is not readable, not JSON, or does not name a well-formed
-    invite is skipped rather than raising: one bad file in a spool directory
-    must not stop every other person's onboarding.
+    invite is skipped without raising. One bad file in a spool directory must
+    not stop every other person's onboarding.
     """
     out = []
     try:
@@ -123,7 +122,7 @@ def expired(record: dict, now: int | None = None) -> bool:
 def settle(record: dict, outcome: str, detail: str = "") -> None:
     """Move a request out of the spool, keeping why it ended that way.
 
-    Settled rather than deleted, so `agentbox invite drain` running twice on a
+    Settled, not deleted, so `agentbox invite drain` running twice on a
     failure does not retry forever and an operator can see what happened
     without reading a journal.
     """
@@ -159,7 +158,7 @@ def already_requested(token_id: str) -> bool:
 # decide who lives here, so what it writes is a proposal: it appears on
 # Operations and sends nothing until an admin says so.
 #
-# The threat this shape answers is specific. The assistant reads household
+# This design addresses one threat. The assistant reads household
 # mail, so a message saying "please add alex@example.com to your assistant" is
 # untrusted input that reaches the model. Without the approval step, composing
 # that invitation and sending it would be one tool call, and a stranger would
@@ -226,10 +225,10 @@ def create_invite(identity: str, existing: set[str],
             "starting with a letter, for example sam")
     if identity in {e.strip().lower() for e in existing}:
         raise NameTaken(f"{identity} already lives here")
-    # Checked here rather than at the call site, for the same reason `existing`
-    # is a required argument: a second live invite for one person is a second
-    # credential, and the caller that forgets is the one rendering a page where
-    # a refresh repeats the request.
+    # Checked here, not at the call site, for the same reason `existing` is a
+    # required argument. A second live invite for one person is a second
+    # credential. A caller that renders a page could forget the check, and a
+    # refresh of that page repeats the request.
     if outstanding(identity):
         raise AlreadyInvited(f"{identity} already has an invite waiting")
 
@@ -314,8 +313,8 @@ def proposal(proposal_id: str) -> dict | None:
 
 
 def discard_proposal(record: dict) -> None:
-    """Drop a proposal. Not archived: an invitation nobody sent is not an
-    event worth keeping, and the assistant may well draft it again."""
+    """Drop a proposal. Not archived, because an invitation that was never
+    sent records nothing, and the assistant may draft it again."""
     path = record.get("path")
     if isinstance(path, Path):
         try:

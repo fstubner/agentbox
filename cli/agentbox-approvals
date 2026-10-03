@@ -8,9 +8,9 @@ writes the grant.
 ## Why a separate process
 
 The assistant is in the same Discord. If it could ask for its own approval, an
-instruction in an email could make it ask, and a plausible request is what a
-person clicks through. So approval never passes through the model. This
-process
+instruction in an email could make it ask, and a person is likely to approve a
+request that looks reasonable. So approval never passes through the model.
+This process
 
 - runs as the operator, not as the agentbox user,
 - reads requests from a place the assistant can only add to,
@@ -126,8 +126,8 @@ from agentbox_approvals_memory import (  # noqa: E402, F401
 def record_denial(tool: str, user_id: str) -> None:
     """Record a refusal in the outcome journal.
 
-    Approvals are recorded by `agentbox grant`. Recording refusals too keeps
-    the journal from showing only the yeses.
+    Approvals are recorded by `agentbox grant`. Refusals are recorded here, so
+    the journal holds both outcomes.
     """
     try:
         OUTCOME_DIR.mkdir(parents=True, exist_ok=True)
@@ -142,8 +142,8 @@ def record_denial(tool: str, user_id: str) -> None:
 def main() -> int:
     token = os.environ.get("DISCORD_BOT_TOKEN") or op_read("op://Agentbox/discord/bot_token")
     # Read once here to fail loudly at startup, and again each pass so a
-    # change made on the Operations page takes effect without anyone
-    # remembering there is a service to restart.
+    # change made on the Operations page takes effect without a service
+    # restart.
     channel = approval_channel()
     if not channel:
         sys.exit("no approval channel configured; set one on the portal's "
@@ -160,7 +160,7 @@ def main() -> int:
     while True:
         # Read the current list each time and use it as it is, so removing an
         # id on the portal takes effect at once. An empty list means nobody can
-        # approve, which is the safe way to be wrong.
+        # approve, so a misconfiguration fails closed.
         channel = approval_channel()
         operators = approval_operators()
         complete_pairings(token)
@@ -183,7 +183,7 @@ def main() -> int:
                 save_cursor(state)
                 log(f"asked about {tool} ({capability})")
             else:
-                # Silence here would look like "the loop is broken".
+                # Log the failure, so it is not mistaken for a broken loop.
                 log(f"could not post approval request for {tool}")
 
         params = f"?limit=25&after={state['last_id']}" if state.get("last_id") else "?limit=10"

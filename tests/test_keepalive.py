@@ -1,9 +1,9 @@
-"""The watchdog that puts the model stack back.
+"""The watchdog that restarts the model stack.
 
-Its one dangerous mistake is starting a model while a benchmark is running:
-that steals unified memory from the run and makes its numbers quietly wrong,
-which is worse than the outage it exists to fix. So most of this file is about
-when it must do nothing.
+The dangerous mistake is starting a model while a benchmark is running. That
+takes unified memory from the run and makes its numbers wrong without any
+error, which is worse than the outage the watchdog fixes. So most of this file
+is about when it must do nothing.
 """
 from __future__ import annotations
 
@@ -56,7 +56,8 @@ class Fake:
 
 
 def test_it_stands_down_while_an_evaluation_runs(ka, monkeypatch):
-    """The stop is deliberate. Undoing it mid-run corrupts the benchmark."""
+    """The evaluator stops the stack on purpose. Undoing that mid-run
+    corrupts the benchmark."""
     fake = Fake()
     monkeypatch.setattr(ka, "evaluation_running", lambda: True)
     monkeypatch.setattr(ka, "_run", fake)
@@ -69,7 +70,7 @@ def test_the_disable_flag_stops_it_entirely(ka, tmp_path, monkeypatch):
     fake = Fake()
     monkeypatch.setattr(ka, "_run", fake)
     assert ka.main(["--quiet"]) == 0
-    assert fake.calls == []      # it does not even look
+    assert fake.calls == []      # it does not check any state
 
 
 def test_it_does_nothing_when_everything_is_already_up(ka, monkeypatch):
@@ -82,9 +83,9 @@ def test_it_does_nothing_when_everything_is_already_up(ka, monkeypatch):
 
 
 def test_an_unreadable_unit_list_starts_nothing(ka, monkeypatch):
-    """Output that does not line up with the question is not an answer.
+    """Output with the wrong number of lines is treated as unknown.
 
-    Starting units on a guess is exactly the failure this must not have.
+    Starting units on a guess is the failure this must avoid.
     """
     fake = Fake(pgrep=(1, ""), **{"is-active": (0, "active\n")})   # 1 line, 6 units
     monkeypatch.setattr(ka, "evaluation_running", lambda: False)
@@ -97,9 +98,9 @@ def test_an_unreadable_unit_list_starts_nothing(ka, monkeypatch):
 def test_a_run_starting_mid_check_wins(ka, monkeypatch):
     """The race guard.
 
-    First pgrep says nothing is running, units look down, and by the time it
-    is about to act a run has begun. It must notice rather than push a model
-    into a benchmark's memory.
+    First pgrep says nothing is running and units look down, but a run starts
+    before the watchdog acts. It must check again and not start a model in a
+    benchmark's memory.
     """
     calls = []
 
@@ -118,7 +119,7 @@ def test_a_run_starting_mid_check_wins(ka, monkeypatch):
 
 
 def test_it_restores_units_an_abandoned_run_left_down(ka, monkeypatch):
-    """The whole point: SIGKILL and power loss skip the evaluator's restore."""
+    """SIGKILL and power loss skip the evaluator's own restore step."""
     fake = Fake(pgrep=(1, ""),
                 **{"is-active": (3, "inactive\n" * len(ka.PRODUCTION_UNITS))})
     monkeypatch.setattr(ka, "evaluation_running", lambda: False)
@@ -140,8 +141,8 @@ def test_it_starts_only_what_is_actually_down(ka, monkeypatch):
 
 
 def test_models_are_started_before_the_router_that_needs_them(ka):
-    """The bridge answering for a model that is not up yet is a worse state
-    than one that is plainly down."""
+    """A bridge that answers for a model that is not up yet is worse than a
+    bridge that is down."""
     units = list(ka.PRODUCTION_UNITS)
     assert units.index("agentbox-production-model.service") < units.index(
         "nemohermes-docker-bridge.service")
@@ -157,31 +158,30 @@ def test_a_failed_restore_is_reported_not_swallowed(ka, monkeypatch):
 
 
 def test_restart_always_would_not_have_worked(ka):
-    """Recorded because it is the obvious fix and it is wrong.
+    """Restart=always looks like the fix, but it does not work here.
 
-    systemd does not restart a unit that was stopped deliberately, and every
-    one of these stops is a deliberate `systemctl stop` from the evaluator.
+    systemd does not restart a unit stopped with `systemctl stop`, and every
+    one of these stops is a `systemctl stop` from the evaluator.
     """
-    # code_of, not read_text: the unit's own comment explains why
-    # Restart=always is wrong, and matching that comment is how this exact
-    # assertion has failed in this repo four times now.
+    # code_of, not read_text. The unit's own comment explains why
+    # Restart=always is wrong, and this assertion must not match that comment.
     source = code_of("cli/agentbox-keepalive.service")
     assert "Restart=always" not in source
     assert "Type=oneshot" in source
 
 
-# --- what actually counts as an evaluation ------------------------------------
+# --- what counts as an evaluation ---------------------------------------------
 
 
 def test_naming_the_evaluator_is_not_being_it(ka):
-    """The bug an independent acceptance pass found.
+    """A process that mentions the evaluator is not an evaluation run.
 
-    `pgrep -f agentbox-eval` matched five processes on the live box and none
-    was a run: a seven-day `systemd-inhibit --why=agentbox-eval ... sleep`
-    wakelock, its sudo parent, a thermal sampler under an `agentbox-evals/`
-    path, a launcher shell carrying the binary path in a nohup string, and the
-    diagnostic command doing the grepping. The watchdog stood down for four
-    days with the stack fully up.
+    `pgrep -f agentbox-eval` matches processes that are not runs. Examples are
+    a `systemd-inhibit --why=agentbox-eval ... sleep` wakelock and its sudo
+    parent, a thermal sampler under an `agentbox-evals/` path, a launcher
+    shell carrying the binary path in a nohup string, and the diagnostic
+    command doing the grepping. Matching them would make the watchdog stand
+    down while the stack is up.
     """
     status = sys.modules["agentbox_status"]
     wrappers = [
@@ -204,7 +204,7 @@ def test_the_evaluator_itself_still_counts(ka):
         ["/opt/evals/.venv/bin/agentbox-eval", "certify"],
         ["python", "-m", "agentbox_evals"],
     ):
-        # No escape clause, so the module form must actually be detected.
+        # No escape clause, so the module form must be detected.
         assert status.looks_like_evaluator(argv), argv
 
 
@@ -216,8 +216,8 @@ def test_editing_the_evaluator_is_not_running_it(ka):
 
 
 def test_an_unreadable_process_table_still_counts_as_running(ka, monkeypatch):
-    """Restored. The first fix inverted this and deleted the test that said so,
-    while the module docstring still promised doubt means do nothing."""
+    """When in doubt, the watchdog does nothing, as the module docstring
+    states."""
     status = sys.modules["agentbox_status"]
 
     def explode(path):
@@ -228,8 +228,8 @@ def test_an_unreadable_process_table_still_counts_as_running(ka, monkeypatch):
 
 
 def test_there_is_one_definition_of_a_running_evaluation(ka):
-    """A watchdog and a status page that disagree would each be right half
-    the time."""
+    """The watchdog and the status page use the same check, so they cannot
+    disagree."""
     source = code_of("cli/agentbox_keepalive.py")
     assert "agentbox_status.evaluation_running()" in source
     assert "pgrep" not in source

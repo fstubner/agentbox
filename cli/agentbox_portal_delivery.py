@@ -62,10 +62,9 @@ def send_link_email(address: str, url: str) -> tuple[bool, str]:
 def _smtp_send(message) -> tuple[bool, str]:
     """Hand a composed message to the configured relay.
 
-    Split out because there are now two kinds of mail with different words in
-    them and identical transport. Returns a reason rather than raising, for
-    the same reason its callers do: a delivery failure must never be visible
-    to the browser as something different from a success.
+    Separate because two kinds of mail have different text and the same
+    transport. Returns a reason instead of raising, as its callers do. A
+    delivery failure must never look different from a success to the browser.
     """
     import smtplib
     host = portal.SETTINGS.value("smtp_host")
@@ -86,8 +85,8 @@ def _smtp_send(message) -> tuple[bool, str]:
 def send_invite_email(address: str, url: str, display_name: str = "") -> tuple[bool, str]:
     """Email an invitation to somebody who does not live here yet.
 
-    Different words from a sign-in link, because it is a different thing: this
-    one has no account behind it and asks the recipient to make one.
+    The text differs from a sign-in link because there is no account behind
+    an invitation. It asks the recipient to make one.
     """
     import email.message
     user = portal.SETTINGS.value("smtp_user")
@@ -112,9 +111,9 @@ def send_invite_email(address: str, url: str, display_name: str = "") -> tuple[b
 # it, so a link in a Discord DM or an inbox is useless to anyone who only reads
 # it, including the assistant, which can read both.
 #
-# That makes Discord delivery safe and useful. It needs no SMTP credential or
-# personal sending address, and arrives where the household already talks to
-# the assistant.
+# So Discord delivery is safe. It needs no SMTP credential or personal
+# sending address, and arrives where the household already talks to the
+# assistant.
 #
 # The portal does not hold the bot token. It writes a delivery request, and
 # cli/agentbox-approvals, which runs as the operator, holds the token and
@@ -136,31 +135,31 @@ def delivery_channels(identity: str, address: str) -> list[str]:
     return channels
 
 def has_delivery_channel(identity: str, address: str) -> bool:
-    """Whether an invite for this person would actually travel somewhere.
+    """Whether an invite for this person has a channel to be sent on.
 
     The origin depends on the answer and has to be decided before the link is
-    minted, because the origin is baked into the record. Transmitted over a
-    channel the assistant can read means ORIGIN_CHAT; printed on the admin's
-    screen for a human to carry means ORIGIN_OPERATOR, the same as
+    minted, because the origin is stored in the record. A link sent over a
+    channel the assistant can read gets ORIGIN_CHAT. A link printed on the
+    admin's screen for a person to carry gets ORIGIN_OPERATOR, as
     `agentbox-portal link` does.
 
-    Erring is safe in one direction only: if this says yes and delivery then
-    fails, the link shown on screen is merely more restricted than it needed
-    to be. The reverse would put an operator-privileged link in a mailbox.
+    An error is safe in one direction only. If this says yes and delivery
+    then fails, the link shown on screen is more restricted than it needed to
+    be. The reverse would put an operator-privileged link in a mailbox.
     """
     return bool(delivery_channels(identity, address))
 
 def deliver_link(identity: str, address: str, url: str) -> bool:
     """Send a sign-in link by every channel configured. True if any worked.
 
-    Both are attempted rather than one preferred: a household that has set up
-    both probably wants the link wherever they are looking, and the failure of
-    one must not silently swallow the request.
+    Every channel is tried. A household that has set up both probably wants
+    the link wherever they are looking, and the failure of one must not lose
+    the request.
     """
     delivered = False
-    # Derived, not restated. The predicate that chooses the link's origin and
-    # the code that actually sends it must agree, or a link minted as
-    # hand-over privilege gets transmitted after all.
+    # Uses the same list as the origin check. The predicate that chooses the
+    # link's origin and the code that sends it must agree, or a link minted
+    # with hand-over privilege could be sent over a channel.
     channels = delivery_channels(identity, address)
 
     if "email" in channels:
@@ -201,14 +200,14 @@ INVITE_PORT = int(os.environ.get("AGENTBOX_INVITE_PORT", "8770"))
 
 def invite_public_host() -> str:
     """Where the collecting page is reachable, derived from the portal's own
-    public URL rather than configured twice."""
+    public URL so it is not configured twice."""
     return urllib.parse.urlparse(portal.PUBLIC_URL).hostname or "agentbox.local"
 
 def deliver_invite(record: dict, url: str) -> list[str]:
     """Send an invitation. Returns the channels that accepted it.
 
     The person has no identity here yet, so the targets come from the
-    proposal an admin approved rather than from an identity lookup.
+    proposal an admin approved, not from an identity lookup.
 
     The URL lets whoever opens it fill in the form as the named person. That
     only produces a submitted invite, which creates nothing until an admin

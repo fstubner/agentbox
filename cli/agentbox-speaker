@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Speaking out loud on the host, behind a limit the model cannot argue with.
+"""Speaking out loud on the host, with quiet hours the model cannot override.
 
 The speakers are Bluetooth devices on this machine, which a container cannot
 reach, so this runs on the host as the `agentbox` user, which is in the `audio`
 group as bluealsa requires. agentbox-mcp calls it through
 host.docker.internal, as the Home Assistant bridge reaches Home Assistant.
 
-## Quiet hours are a constraint, not a policy tier
+## Quiet hours
 
-A tier can be granted, and `agentbox grant speak_aloud` would allow speech at
-3am. So the refusal lives here, in the process that owns the speakers, like
-the climate limit. Outside the allowed hours nothing produces sound.
+Quiet hours are not a policy tier, because a tier can be granted, and
+`agentbox grant speak_aloud` would then allow speech at 3am. So the refusal is
+in this process, which owns the speakers, like the climate limit. Outside the
+allowed hours nothing produces sound.
 
-It refuses rather than queues. Nobody wants yesterday's reminder read out at
-7am.
+It refuses instead of queueing, so a reminder from the night before is not
+read out in the morning.
 
 ## The text is the assistant's own words
 
@@ -40,8 +41,8 @@ VOICE = os.environ.get(
     "AGENTBOX_PIPER_VOICE",
     "")
 TOKEN = os.environ.get("AGENTBOX_SPEAKER_TOKEN", "")
-# name:MAC pairs. Named rather than addressed, so the assistant asks for "the
-# kitchen" and never learns a MAC it could use to reach something else.
+# name:MAC pairs. The assistant refers to a speaker by name, such as "the
+# kitchen", and never learns a MAC it could use to reach something else.
 SPEAKERS = os.environ.get("AGENTBOX_SPEAKERS", "")
 QUIET_HOURS = os.environ.get("AGENTBOX_QUIET_HOURS", "22:00-07:00")
 MAX_CHARS = int(os.environ.get("AGENTBOX_SPEAK_MAX_CHARS", "600"))

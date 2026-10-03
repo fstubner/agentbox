@@ -25,8 +25,8 @@ from pathlib import Path
 ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 
 # Refused by homeassistant-bridge whatever this file says. Listed here only so
-# the page can tell somebody why their entry will not work, rather than
-# accepting it and silently doing nothing.
+# the page can tell somebody why their entry will not work, instead of
+# accepting an entry that has no effect.
 NEVER_CONTROLLABLE = ("lock", "alarm_control_panel", "cover", "camera")
 
 
@@ -55,8 +55,8 @@ class HouseholdPolicy:
     def save(self, raw: str) -> list[str]:
         """Validate and store a comma or newline separated list.
 
-        Rejects the whole submission on a single bad entry rather than storing
-        the rest: a list that quietly loses a line leaves somebody believing
+        Rejects the whole submission on a single bad entry and stores none of
+        it. A list that loses a line without warning leaves somebody believing
         they granted something they did not.
         """
         entities = []

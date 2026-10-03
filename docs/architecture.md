@@ -61,7 +61,7 @@ bridge credential, and `docker run -v /:/host` is a root shell.
 
 ## What keeps credentials away from the assistant
 
-Two facts about the host.
+Two things on the host keep them apart.
 
 - The gateway user is not in the `docker` group, so it cannot read a bridge
   container's environment.
@@ -69,8 +69,8 @@ Two facts about the host.
   holding bridge tokens and the memory review token cannot be read.
 
 The bridges are reachable at their container addresses from the host, but an
-unauthenticated request gets a 401, and the token it would need is behind both
-of those facts.
+unauthenticated request gets a 401, and the token it would need is protected
+by both of those.
 
 Either one is a single command away from being undone, and neither failure
 would produce an error. So `cli/agentbox doctor` checks both on every run, by
@@ -82,11 +82,10 @@ source.
 Anything a tool returns is untrusted. An email body is the obvious case, but
 the same goes for calendar entries, documents and web pages. FastContext-4B,
 a small local model I evaluated, obeyed an instruction embedded in tool data in
-10 out of 10 attempts. I treat that as the default for any model, not a quirk
-of one.
+10 out of 10 attempts. I assume any model will do the same.
 
-So the system contains what an injected instruction could do, rather than
-relying on the model to refuse.
+So the system limits what an injected instruction can do, instead of relying
+on the model to refuse.
 
 - Calendar events refuse attendees and are created with `sendUpdates=none`, so
   nothing can make the assistant email anyone.
@@ -103,13 +102,13 @@ if a person reads it carefully.
 
 ## Design principles
 
-- **Levers, not shell.** Every capability is a tool with a defined contract.
-- **Tools are designed, not wrapped.** A tool is a model of what the assistant
-  may do, not a thinner copy of an upstream API. It should be as
-  expressive as what can be verified, and no more. That is why there is no `call_service`
-  and why automations take no templates. Removing dangerous parts from
-  somebody else's general-purpose engine has to be re-checked on every
-  upgrade, while a grammar defined here cannot express what it leaves out.
+- **No shell.** Every capability is a tool with a defined contract.
+- **Tools are written for the assistant.** A tool describes what the assistant
+  may do. It is not a thin copy of an upstream API, and it can only express
+  what can be checked. That is why there is no `call_service` and why
+  automations take no templates. A general engine with the dangerous parts
+  removed would need checking again on every upgrade. A grammar defined here
+  cannot express what it leaves out.
 - **Bridges hold credentials.** OAuth tokens and API secrets live in bridge
   containers and are supplied at deploy time.
 - **Constrain rather than gate.** Several capabilities are `allowed` because
@@ -158,7 +157,7 @@ mail.
 
 Bridges publish no host ports, except the memory bridge's review port for the
 operator. They are reachable only on the compose networks the tool server
-joins, so a stolen bridge token has nowhere to be used from on the host.
+joins, so a stolen bridge token cannot be used from the host.
 Using one needs code running inside the tool server's container, which has no
 dependencies outside the standard library, a read-only filesystem, no root,
 no new privileges and every capability dropped. `validate` fails any bridge
@@ -184,8 +183,8 @@ From the current revision it implements `server/discover`, `resultType` and
 server info on every result, cache hints on `tools/list`, and the standard
 error codes. On current requests the `MCP-Protocol-Version`, `Mcp-Method` and
 `Mcp-Name` headers must match the body, or the request is refused. If a load
-balancer routed on the header while the server acted on the body, that
-mismatch would be an attack.
+balancer routed on the header while the server acted on the body, a request
+could be read differently by each of them.
 
 The `Origin` header is checked before authentication, and an origin that is
 present but not on the list gets a 403. Without that, a web page could point a

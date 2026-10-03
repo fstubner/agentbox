@@ -74,7 +74,7 @@ def test_a_complaint_about_behaviour_is_feedback(mem):
 
 
 def test_an_explicit_kind_beats_the_guess(mem):
-    """The heuristic is allowed to be wrong; the human is not overruled."""
+    """The heuristic may be wrong, so it never overrules the human."""
     kind, _, source = mem.resolve_kind({"kind": "memory"},
                                        "You always ask me twice")
     assert kind == mem.KIND_MEMORY
@@ -90,8 +90,8 @@ def test_the_guess_is_labelled_as_a_guess(mem):
 
 
 def test_a_proposal_can_be_corrected_before_it_is_saved(mem):
-    """Rejecting a nearly-right memory was the only alternative, and that
-    loses the information entirely."""
+    """Without editing, a nearly-right memory could only be rejected, which
+    loses the information."""
     item = propose(mem, "Alex doesn't like early meetings")
     mem.approve_proposal(Handler(), item["id"],
                          {"statement": "Alex doesn't like meetings before 10am"})
@@ -133,8 +133,8 @@ def test_an_edit_cannot_move_a_memory_into_someone_elses_plane(mem):
 
 
 def test_approving_feedback_does_not_create_a_memory(mem):
-    """The whole point. Approving a behaviour complaint must not turn it into
-    a memory that patches around the behaviour."""
+    """Approving a behaviour complaint must not turn it into a memory that
+    works around the behaviour."""
     item = propose(mem, "You keep asking me the same question")
     assert item["kind"] == mem.KIND_FEEDBACK
     mem.approve_proposal(Handler(), item["id"], {})
@@ -156,7 +156,7 @@ def test_the_reviewer_can_reclassify_a_memory_as_feedback(mem):
 
 def test_the_reviewer_can_rescue_a_misclassified_memory(mem):
     """The heuristic will call some real facts feedback. Saving it as a memory
-    must actually store a memory."""
+    must store a memory."""
     item = propose(mem, "Never give Sam peanuts")   # reads as a directive
     assert item["kind"] == mem.KIND_FEEDBACK
     mem.approve_proposal(Handler(), item["id"], {"kind": "memory"})
@@ -254,9 +254,9 @@ REAL_MEMORIES = [
 
 @pytest.mark.parametrize("statement", REAL_FEEDBACK)
 def test_the_assistants_notes_about_its_own_tools_are_feedback(mem, statement):
-    """The purest case of the thing being separated: the fix for
-    'look_at_camera is broken' is to repair look_at_camera, not to carry a
-    memory forever saying it is broken."""
+    """The clearest example of feedback. The fix for 'look_at_camera is
+    broken' is to repair look_at_camera, not to keep a memory saying it is
+    broken."""
     kind, reason = mem.classify_kind(statement)
     assert kind == mem.KIND_FEEDBACK, statement[:60]
     assert reason
@@ -278,7 +278,7 @@ def test_a_tool_name_alone_is_enough_to_suspect_feedback(mem):
 def test_a_proposal_written_before_kind_existed_is_still_classified(mem):
     """A proposal saved before `kind` existed must still be classified, rather
     than read as a memory because the field is missing."""
-    # Written the way the old bridge wrote them: no kind field at all.
+    # Written in the older format, with no kind field.
     store = mem.load_store()
     store["proposals"].append({
         "id": "legacy-1", "scope": "alex", "status": "proposed",
@@ -293,7 +293,7 @@ def test_a_proposal_written_before_kind_existed_is_still_classified(mem):
 
 
 def test_a_legacy_fact_still_becomes_a_memory(mem):
-    """The rescue must not tip the other way and swallow real memories."""
+    """This fallback must not classify real memories as feedback."""
     store = mem.load_store()
     store["proposals"].append({
         "id": "legacy-2", "scope": "alex", "status": "proposed",
@@ -309,9 +309,9 @@ def test_a_legacy_fact_still_becomes_a_memory(mem):
 
 
 def test_the_operator_can_state_a_fact_without_a_review_step(mem):
-    """Reviewing your own statement is theatre. The gate exists so the
-    assistant cannot write its own memory; a person typing at a terminal is
-    the evidence it protects.
+    """Reviewing your own statement adds nothing. The gate exists so the
+    assistant cannot write its own memory. A person typing at a terminal is
+    the kind of evidence the gate protects.
     """
     _, item = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
                                             "scope": "household"})
@@ -321,7 +321,7 @@ def test_the_operator_can_state_a_fact_without_a_review_step(mem):
 
 
 def test_the_assistant_still_cannot_use_that_path(mem):
-    """The whole reason the direct write is operator-only."""
+    """This is why the direct write is operator-only."""
     with pytest.raises(mem.BridgeError) as exc:
         mem.create_memory(Handler(operator=False), {"statement": "sneaky"})
     assert exc.value.status == 403
@@ -331,9 +331,9 @@ def test_the_assistant_still_cannot_use_that_path(mem):
 
 
 def test_a_stored_memory_can_be_removed(mem):
-    """Memory was append-only: a wrong fact stayed wrong forever, and these
-    statements are read back as true, so a stale one misinforms every answer
-    that touches it."""
+    """Without removal, memory is append-only and a wrong fact stays wrong.
+    Memories are read back as true, so a stale one misinforms every answer
+    that uses it."""
     _, item = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
                                             "scope": "household"})
     mem.forget_memory(Handler(), item["id"], {"reason": "it is Wednesday"})
@@ -387,8 +387,8 @@ def test_a_new_fact_retires_the_one_it_replaces(mem):
 
 
 def test_the_assistant_reads_only_the_current_version(mem):
-    """Two contradictory memories with no marker of which is current is how a
-    confident wrong answer happens."""
+    """Two contradictory memories with no marker of which is current lead to
+    confident wrong answers."""
     _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
                                            "scope": "household"})
     mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
@@ -448,8 +448,8 @@ def test_a_near_duplicate_is_suggested_not_applied(mem):
 
 def test_one_shared_word_is_enough_when_the_subject_matches(mem):
     """"Bin day is Tuesday" and "Bin day is Wednesday" share exactly one
-    content word, because the words that differ are the whole point. Requiring
-    two missed the case this feature exists for."""
+    content word, because the words that differ carry the change. Requiring
+    two would miss the case this feature is for."""
     assert mem._same_subject("Bin day is Tuesday", "Bin day is Wednesday")
     assert not mem._same_subject("Sam is allergic to peanuts",
                                  "Bin day is Wednesday")
@@ -539,8 +539,8 @@ def test_the_current_fact_carries_its_own_history(mem):
 
 
 def test_history_is_nested_not_a_second_current_memory(mem):
-    """Flat inclusion is what makes a model contradict itself; nesting is
-    what makes the same information safe."""
+    """Old versions listed flat make a model contradict itself. Nested under
+    the current fact, the same information is safe."""
     _, old = mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
                                            "scope": "household"})
     mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
@@ -551,7 +551,7 @@ def test_history_is_nested_not_a_second_current_memory(mem):
 
 
 def test_a_memory_with_no_history_carries_no_empty_field(mem):
-    """Context economy: an empty list on every memory is pure cost."""
+    """An empty list on every memory costs context and adds nothing."""
     mem.create_memory(Handler(), {"statement": "Sam is allergic to peanuts"})
     _, payload = mem.list_memories(Handler(operator=False), None)
     assert "previously" not in payload["memories"][0]

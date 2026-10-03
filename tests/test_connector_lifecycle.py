@@ -1,7 +1,7 @@
 """Reconnecting and disconnecting a person's Google account.
 
-The flow spans two processes on purpose, because a page on the LAN must not
-hold the credential that makes refresh tokens. These test both halves and the
+The flow spans two processes because a page on the LAN must not hold the
+credential that makes refresh tokens. These test both halves and the
 seam between them.
 """
 from __future__ import annotations
@@ -52,8 +52,8 @@ def cli(tmp_path, monkeypatch):
 def test_consent_state_is_bound_to_the_identity(portal):
     """A crafted callback must not land one person's code in another's record.
 
-    Without this, whoever's Google account Agentbox ends up reading would be
-    the attacker's choice rather than the user's.
+    Without this, an attacker could choose whose Google account Agentbox
+    reads.
     """
     assert portal.consent_state("alex") != portal.consent_state("sam")
     assert portal.consent_state("alex") == portal.consent_state("alex")
@@ -87,7 +87,7 @@ def test_state_secret_is_random_persisted_and_private(portal):
     assert path.exists()
     assert path.stat().st_mode & 0o777 == 0o600
     assert portal.state_secret() == secret          # stable across calls
-    assert len(secret) >= 32                          # actual entropy, not a stub
+    assert len(secret) >= 32                          # real entropy, not a stub
 
 
 def test_consent_url_forces_a_fresh_refresh_token(portal):
@@ -136,8 +136,8 @@ def test_completed_requests_stop_showing(portal):
 
 
 def test_the_portal_cannot_exchange_a_code_itself(portal):
-    """The split is the point: this half has no client secret and no route to
-    one. If it could exchange, a LAN page would mint refresh tokens."""
+    """This half has no client secret and no route to one. If it could
+    exchange a code, a LAN page could mint refresh tokens."""
     source = portal_code()
     assert "CLIENT_SECRET" not in source
     assert "oauth2.googleapis.com/token" not in source
@@ -148,7 +148,7 @@ def test_the_portal_cannot_exchange_a_code_itself(portal):
 
 def test_cli_reads_what_the_portal_wrote(portal, cli):
     """Both halves must agree on the spool location and shape, or the flow
-    silently does nothing."""
+    does nothing and reports no error."""
     portal.save_request({"id": "r4", "identity": "sam", "connector": "google",
                          "action": "reconnect", "code": "auth-code",
                          "created_at": portal.now(), "completed_at": None})
@@ -158,8 +158,8 @@ def test_cli_reads_what_the_portal_wrote(portal, cli):
 
 
 def test_expired_authorisation_codes_are_refused(portal, cli, capsys):
-    """Google expires codes at about ten minutes. Exchanging a stale one fails
-    upstream with an opaque error; saying so plainly is kinder and cheaper."""
+    """Google expires codes after about ten minutes. Exchanging a stale one
+    fails upstream with an unclear error, so the CLI refuses it first."""
     portal.save_request({"id": "r5", "identity": "sam", "connector": "google",
                          "action": "reconnect", "code": "old",
                          "created_at": int(time.time()) - 3600,
@@ -189,10 +189,10 @@ def test_reconnect_without_a_request_does_nothing(cli, capsys):
 
 
 def test_disconnect_revokes_upstream_not_just_locally(cli, tmp_path, monkeypatch):
-    """Deleting our copy is not disconnecting.
+    """Disconnecting revokes the token with Google as well as deleting it.
 
-    The grant would still be listed in the person's Google account, and anyone
-    who had captured the token could still spend it.
+    Otherwise the grant would still be listed in the person's Google account,
+    and anyone who had captured the token could still use it.
     """
     env = tmp_path / "env" / "sam-google-bridge.env"
     env.write_text("GOOGLE_REFRESH_TOKEN=the-token\n")
@@ -208,7 +208,7 @@ def test_disconnect_revokes_upstream_not_just_locally(cli, tmp_path, monkeypatch
 
 def test_already_dead_token_counts_as_revoked(cli, monkeypatch):
     """Google answers 400 invalid_token for a credential that is already
-    dead, which is the end state we wanted."""
+    revoked, which is the intended end state."""
     import urllib.error
 
     def boom(*args, **kwargs):
@@ -249,15 +249,15 @@ def test_unknown_identity_subcommand_does_not_delete(cli):
     assert remove_calls == 1
 
 
-# --- the reconnect must actually take effect -----------------------------------
+# --- the reconnect must take effect --------------------------------------------
 
 
 def test_reconnect_applies_the_routing_to_the_running_gateway(cli, monkeypatch):
-    """Writing the env file is not applying it.
+    """Writing the env file does not apply it.
 
-    The gateway reads its environment at start, so until it is recreated, calls
-    keep going to the shared bridge with its old credential while the reconnect
-    appears to have worked.
+    The gateway reads its environment at start. Until it is recreated, calls
+    keep going to the shared bridge with its old credential, while the
+    reconnect appears to have worked.
     """
     deployed = []
     monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)
@@ -269,8 +269,8 @@ def test_reconnect_applies_the_routing_to_the_running_gateway(cli, monkeypatch):
 
 
 def test_a_gateway_already_routing_correctly_is_left_alone(cli, monkeypatch):
-    """Restarting the gateway drops every in-flight call; do it only when the
-    routing is actually missing."""
+    """Restarting the gateway drops every in-flight call, so it restarts only
+    when the routing is missing."""
     deployed = []
     monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)
     monkeypatch.setattr(cli, "read_env_file",
@@ -318,7 +318,7 @@ def test_a_failed_gateway_restart_is_reported_not_swallowed(cli, monkeypatch, ca
 
 def test_reconnect_from_the_lan_is_refused_with_instructions(portal):
     """Google only accepts a loopback redirect, so a consent started from a
-    phone completes and lands on the phone. Say so before, not after."""
+    phone completes on the phone. The page says so before consent starts."""
     body = portal.wrong_origin_page("192.0.2.10")
     assert "Finish this on the box" in body
     assert "127.0.0.1" in body

@@ -73,11 +73,11 @@ def _rules(rules_dir: Path | None = None, approved_path: Path | None = None) -> 
 
 
 def rules_list(rules_dir: Path | None = None, approved_path: Path | None = None) -> int:
-    """Show standing rules and what each one actually does.
+    """Show standing rules and what each one does.
 
-    Printed in full rather than summarised. A rule is the assistant's only way
-    to cause something to happen when nobody is watching, so the person
-    deciding needs to read the whole thing, not a description of it.
+    Printed in full, not summarised. A rule is the assistant's only way to
+    cause something to happen when nobody is watching, so the person deciding
+    needs to read all of it.
     """
     found = _rules(rules_dir, approved_path)
     if not found:
@@ -133,10 +133,10 @@ def rules_decide(name: str, activate: bool,
                                   f"{record.get('identity')}, until deactivated. If "
                                   f"the rule file changes in any way, the approval is "
                                   f"void and it stops firing.")
-            # Say so at the moment of approval, not in a document. An approved
-            # rule that silently never fires is the confident-but-wrong
-            # state this system keeps having to hunt down. Kept in step with
-            # evaluator.LIVE_SOURCES by tests/test_rules_evaluator.py.
+            # Report at approval time whether the rule's source is live.
+            # Otherwise an approved rule could never fire with nothing to say
+            # so. Kept in step with evaluator.LIVE_SOURCES by
+            # tests/test_rules_evaluator.py.
             live = ("schedule", "homeassistant")
             source = str((record.get("when") or {}).get("source", ""))
             if source in live:

@@ -4,36 +4,36 @@ services:
       context: ../../..
       dockerfile: services/compose/agentbox-mcp/Dockerfile
     image: agentbox/agentbox-mcp:local
-    # The speakers are Bluetooth devices on the host, not something a container
-    # can hold, so the speaker service runs there and this reaches it by name.
-    # Same arrangement as the Home Assistant bridge reaching Home Assistant.
+    # The speakers are Bluetooth devices on the host, which a container cannot
+    # hold, so the speaker service runs there and this reaches it by name. The
+    # Home Assistant bridge reaches Home Assistant the same way.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
       # The policy this bridge enforces, read live from the read-only mount like
-      # grants.json, so editing a tier needs no rebuild. Nothing is built into
-      # the image, so with the variable unset no file is found, and every tool
-      # fails closed to approval_required, which is safer than enforcing a
-      # stale policy.
+      # grants.json, so editing a tier needs no rebuild. No policy is built into
+      # the image. With the variable unset no file is found, and every tool
+      # fails closed to approval_required. That is safer than enforcing a stale
+      # policy.
       AGENTBOX_RUNTIME_POLICY: "${AGENTBOX_RUNTIME_POLICY:-/policy/approval-policy.yaml}"
       AGENTBOX_SPEAKER_URL: "${AGENTBOX_SPEAKER_URL:-http://host.docker.internal:8772}"
       AGENTBOX_SPEAKER_TOKEN: "${AGENTBOX_SPEAKER_TOKEN:-}"
       AGENTBOX_PORTAL_INTERNAL_URL: "${AGENTBOX_PORTAL_INTERNAL_URL:-http://host.docker.internal:8771}"
-      # Lets the assistant mint ORIGIN_AGENT sign-in links. Unset means the
-      # tool refuses rather than the gateway failing to start.
+      # Lets the assistant mint ORIGIN_AGENT sign-in links. If unset, the tool
+      # refuses and the gateway still starts.
       AGENTBOX_PORTAL_AGENT_TOKEN: "${AGENTBOX_PORTAL_AGENT_TOKEN:-}"
 
-      # The model router, also on the host. Unauthenticated because it is bound
-      # to loopback and offers no tools, the worst a caller can do is spend
-      # inference. See app/harness.py for why dispatching to a small model is
-      # safe here and would not be if that were untrue.
+      # The model router, also on the host. It is unauthenticated because it is
+      # bound to loopback and offers no tools. The worst a caller can do is use
+      # inference time. See app/harness.py for the conditions under which
+      # dispatching to a small model is safe.
       AGENTBOX_HARNESS_ROUTER_URL: "${AGENTBOX_HARNESS_ROUTER_URL:-http://host.docker.internal:8765}"
       # Set to 0 to stop a failed extraction retrying on the main model.
       AGENTBOX_HARNESS_ESCALATE: "${AGENTBOX_HARNESS_ESCALATE:-1}"
-      # Identity-aware auth. `alex:tokenA,sam:tokenB`, the presented token
-      # IS the identity, resolved before any tool runs and never taken from a
-      # tool argument. Leave empty for single-operator, which falls back to
-      # AGENTBOX_MCP_SHARED_TOKEN with no identity.
+      # Identity-aware auth, as `alex:tokenA,sam:tokenB`. The presented token
+      # IS the identity. It is resolved before any tool runs and never taken
+      # from a tool argument. Leave empty for a single operator, which falls
+      # back to AGENTBOX_MCP_SHARED_TOKEN with no identity.
       AGENTBOX_IDENTITIES: "${AGENTBOX_IDENTITIES:-}"
       AGENTBOX_MCP_SHARED_TOKEN: "${AGENTBOX_MCP_SHARED_TOKEN:-}"
 
@@ -52,7 +52,7 @@ services:
       # Per-identity overrides. Set GOOGLE_BRIDGE_URL_SAM and
       # GOOGLE_BRIDGE_TOKEN_SAM to route their mail to a bridge holding only
       # their credential. Unset falls back to the shared bridge above, which is
-      # correct for genuinely shared services like tasks.
+      # correct for shared services like tasks.
       GOOGLE_BRIDGE_URL_ALEX: "${GOOGLE_BRIDGE_URL_ALEX:-}"
       GOOGLE_BRIDGE_TOKEN_ALEX: "${GOOGLE_BRIDGE_TOKEN_ALEX:-}"
       GOOGLE_BRIDGE_URL_SAM: "${GOOGLE_BRIDGE_URL_SAM:-}"

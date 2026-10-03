@@ -82,8 +82,9 @@ def controllable_entities() -> frozenset[str]:
     _policy_cache = (stamp, value)
     return value
 
-# The opposite: an entity here is refused even if its domain is allowed, such
-# as a light that is not really a light.
+# The opposite of the allowlist. An entity here is refused even if its domain
+# is allowed, such as a light entity that controls something other than a
+# light.
 NOT_CONTROLLABLE = frozenset(
     e.strip() for e in os.environ.get("HA_DENIED_ENTITIES", "").split(",")
     if e.strip())
@@ -115,8 +116,7 @@ def is_controllable(entity_id: str) -> bool:
     """Whether this bridge may act on `entity_id`.
 
     The security-domain refusal wins over everything, then the deny list, then
-    domain or entity permission. A deny that an allow could override would not
-    be a deny.
+    domain or entity permission. An allow never overrides a deny.
     """
     domain = (entity_id or "").split(".")[0]
     if not domain or domain in SECURITY_DOMAINS:

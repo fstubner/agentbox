@@ -1,7 +1,7 @@
-"""Eufy bridge: viewing constraints and the absence of actuation.
+"""Eufy bridge: viewing constraints, and no route that actuates anything.
 
-Two of these cameras are indoors and one is a doorbell, so the interesting
-tests are the ones about what cannot be reached at all.
+Two of these cameras are indoors and one is a doorbell, so the most important
+tests are the ones about what cannot be reached.
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ def eufy(monkeypatch):
 
 
 def test_there_is_no_route_that_actuates_anything(eufy):
-    """Absent, not gated. A camera the assistant can arm is a camera an
-    injected assistant can disarm, and a tier can be edited later."""
+    """There is no route to gate. If the assistant could arm a camera, an
+    injected assistant could disarm it, and a policy tier can be edited."""
     joined = " ".join(eufy._POST_ROUTES)
     for forbidden in ("arm", "disarm", "alarm", "pan", "tilt", "record",
                       "lock", "unlock", "reboot", "delete"):
@@ -48,8 +48,8 @@ def test_there_is_no_route_that_actuates_anything(eufy):
 
 
 def test_only_two_routes_exist(eufy):
-    """Looking and listing. If this grows, it should be a decision someone
-    made rather than something that accumulated."""
+    """Viewing and listing. Adding a route means changing this test, so a
+    new route is a visible decision."""
     assert set(eufy._POST_ROUTES) == {"/v1/eufy/devices", "/v1/eufy/snapshot"}
 
 
@@ -90,8 +90,8 @@ def test_a_missing_serial_is_refused_before_the_allowlist(eufy):
 
 
 def test_frames_are_labelled_untrusted(eufy, monkeypatch):
-    """A lens is a physical attack surface: a note on a fridge, a phone
-    screen, a television in shot."""
+    """Anything written in view of the lens, such as a note on a fridge, can
+    carry an instruction."""
     monkeypatch.setattr(eufy, "command", lambda *a, **k: {
         "value": {"data": "BASE64", "type": "image/jpeg"}})
     result = eufy.snapshot({"serial": "T8210N"})
@@ -100,8 +100,8 @@ def test_frames_are_labelled_untrusted(eufy, monkeypatch):
 
 
 def test_listing_devices_does_not_leak_state(eufy, monkeypatch):
-    """Knowing a camera exists is a different disclosure from knowing whether
-    it currently sees someone."""
+    """The list says which cameras exist. It does not say whether a camera
+    currently sees someone, which is a separate disclosure."""
     monkeypatch.setattr(eufy, "command", lambda *a, **k: {"devices": [
         {"serialNumber": "T8210N", "name": "Front", "model": "T8210",
          "type": 7, "motionDetected": True, "person": "Alex"}]})
@@ -114,7 +114,7 @@ def test_listing_devices_does_not_leak_state(eufy, monkeypatch):
 
 def test_replies_are_matched_by_message_id(eufy):
     """The socket also carries unsolicited device events. Taking the next
-    message off it would answer a different question than the one asked."""
+    message off it could return an event instead of the reply."""
     import inspect
     source = inspect.getsource(eufy.command)
     assert 'message.get("messageId") == message_id' in source
@@ -131,15 +131,15 @@ def test_a_dropped_connection_reconnects_rather_than_staying_broken(eufy):
 
 def test_client_frames_are_masked_with_a_fresh_mask():
     """RFC 6455 requires client frames be masked with an unpredictable mask.
-    A fixed one is a violation some servers tolerate and proxies do not."""
+    Some servers accept a fixed mask, but proxies reject it."""
     source = code_of(APP / "wsclient.py")
     assert "secrets.token_bytes(4)" in source
     assert "0x80 | TEXT" in source
 
 
 def test_oversized_frames_are_refused():
-    """This process has a memory limit; an 8 MB cap is the difference between
-    a refused frame and an OOM kill that takes the bridge down."""
+    """This process has a memory limit. With an 8 MB cap an oversized frame
+    is refused, instead of an OOM kill taking the bridge down."""
     source = code_of(APP / "wsclient.py")
     assert "frame too large" in source
 

@@ -4,18 +4,16 @@ services:
     container_name: homeassistant
     # --- LAN EXPOSURE, DELIBERATE ---------------------------------------
     #
-    # Host networking, which is the one service here that is not confined to
-    # localhost. It is required, not convenient: device discovery is mDNS and
-    # SSDP, both of which are link-local multicast and do not cross a Docker
-    # bridge. Without this, Home Assistant finds nothing on the network and the
-    # whole point of running it is lost.
+    # Host networking. This is the one service here that is not confined to
+    # localhost. It is required. Device discovery uses mDNS and SSDP, which are
+    # link-local multicast and do not cross a Docker bridge. Without host
+    # networking, Home Assistant finds no devices on the network.
     #
-    # The consequence, stated plainly: Home Assistant listens on 192.0.2.10
-    # (and every other interface), so anyone on the LAN can reach its login
-    # page. That is normal for Home Assistant, you will want it from a phone ,
-    # but it is a real change in posture for this platform, and the
-    # `agentbox.exposure: lan` label below is what `validate` requires before
-    # allowing host networking at all.
+    # As a result, Home Assistant listens on 192.0.2.10 (and every other
+    # interface), so anyone on the LAN can reach its login page. That is normal
+    # for Home Assistant, and you will want it from a phone. It is still a
+    # change in exposure for this platform. `validate` requires the
+    # `agentbox.exposure: lan` label below before it allows host networking.
     #
     # It is NOT reachable from the internet unless you forward a port, which
     # `expose_services_to_internet` puts in always_denied.
@@ -29,32 +27,31 @@ services:
       #
       # Home Assistant talks to Bluetooth through BlueZ, and BlueZ is reached
       # over the system D-Bus. Without this socket the integration can see the
-      # adapter (host networking) but cannot drive it, which is not a quiet
-      # failure: it logged "Failed to force stop scanner" every ten minutes for
-      # two days while discovering nothing at all.
+      # adapter (host networking) but cannot drive it. It then logs "Failed to
+      # force stop scanner" every ten minutes and discovers nothing.
       #
-      # State the cost plainly. This is the system bus, not a private one, so
-      # the container can address other services on it, a wider grant than a
-      # device mapping. It is here because there are real Bluetooth devices to
-      # talk to; a deployment with none should delete these three lines and
-      # disable the integration rather than carry the grant for nothing.
+      # This is the system bus, not a private one, so the container can
+      # address other services on it. That is a wider grant than a device
+      # mapping. It is here because there are Bluetooth devices to talk to. A
+      # deployment with none should delete these three lines and disable the
+      # integration instead of keeping an unused grant.
       #
-      # Mounted read-only: connecting to a socket is not a filesystem write, so
-      # this costs nothing and stops the container creating files in /run/dbus.
+      # Mounted read-only. Connecting to a socket is not a filesystem write, so
+      # read-only does not break anything, and it stops the container creating
+      # files in /run/dbus.
       - /run/dbus:/run/dbus:ro
-    # The Zigbee radio, mapped by its stable by-id path rather than
-    # /dev/ttyUSB0, the numbered name is assigned in probe order and will
-    # move the first time another serial device is plugged in, silently
-    # pointing Home Assistant at the wrong hardware.
+    # The Zigbee radio, mapped by its stable by-id path instead of
+    # /dev/ttyUSB0. The numbered name is assigned in probe order and changes
+    # when another serial device is plugged in. Home Assistant would then point
+    # at the wrong hardware with no error.
     #
     # The default below is a placeholder and will not match your hardware. Set
-    # AGENTBOX_ZIGBEE_DEVICE to your own path; `ls /dev/serial/by-id/` prints
-    # it, and the name encodes the adapter model and its serial number, which
-    # is why it is stable and also why it cannot be shipped as a default.
+    # AGENTBOX_ZIGBEE_DEVICE to your own path. `ls /dev/serial/by-id/` prints
+    # it. The name encodes the adapter model and its serial number. That makes
+    # it stable, and it is also why it cannot be shipped as a default.
     #
-    # No Zigbee radio? Delete these three lines. A device mapping for hardware
-    # that is not present stops the container from starting at all, which is a
-    # confusing first failure for something you did not want.
+    # If you have no Zigbee radio, delete these three lines. A device mapping
+    # for hardware that is not present stops the container from starting.
     devices:
       - "${AGENTBOX_ZIGBEE_DEVICE:-/dev/serial/by-id/usb-REPLACE_WITH_YOUR_ADAPTER-if00-port0}:/dev/ttyZIGBEE"
     cpus: "2.00"
@@ -63,8 +60,8 @@ services:
     security_opt:
       - no-new-privileges:true
       # docker-default plus D-Bus rules for BlueZ, and nothing else. See
-      # services/apparmor/agentbox-homeassistant for why this exists rather
-      # than `apparmor=unconfined`: every restriction docker-default imposes
+      # services/apparmor/agentbox-homeassistant for why this is used instead
+      # of `apparmor=unconfined`. Every restriction docker-default imposes
       # still applies, and the container can reach org.bluez but not systemd,
       # logind, NetworkManager or anything else on the system bus.
       #
@@ -72,9 +69,9 @@ services:
       #   sudo cp services/apparmor/agentbox-homeassistant /etc/apparmor.d/
       #   sudo apparmor_parser -r -W /etc/apparmor.d/agentbox-homeassistant
       - apparmor=agentbox-homeassistant
-    # BLE scanning needs raw socket access to the adapter. NET_ADMIN alone is
-    # not enough and NET_RAW alone is not enough; BlueZ wants both to start a
-    # scan. Still no --privileged, and no-new-privileges above still holds.
+    # BLE scanning needs raw socket access to the adapter. BlueZ needs both
+    # NET_ADMIN and NET_RAW to start a scan. The container is still not
+    # --privileged, and no-new-privileges above still applies.
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -87,6 +84,6 @@ services:
     restart: unless-stopped
     labels:
       agentbox.service: homeassistant
-      # Read by `validate`: host networking is refused without it.
+      # Read by `validate`. Host networking is refused without it.
       agentbox.exposure: lan
       agentbox.source_sha: "${AGENTBOX_SOURCE_SHA:-unknown}"

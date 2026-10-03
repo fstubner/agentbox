@@ -4,7 +4,7 @@ Description=Nightly agentbox backup
 [Timer]
 OnCalendar=*-*-* 03:30:00
 # Catch up after the machine was off. Without this a box that sleeps overnight
-# simply never backs up, and the failure is silent.
+# never backs up, and nothing reports the failure.
 Persistent=true
 RandomizedDelaySec=300
 

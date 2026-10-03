@@ -11,9 +11,9 @@ from agentbox_approvals_discord import discord, dm_channel, log, op_read, short_
 
 # --- memory review in Discord ---------------------------------------------------
 #
-# The portal does everything, but needs a browser and a fresh link, while a
-# memory proposal is a five-second decision. Reviewing them in the conversation
-# keeps the queue from growing.
+# The portal can review proposals, but it needs a browser and a fresh link. A
+# memory proposal is a quick decision, so reviewing it in Discord keeps the
+# queue short.
 #
 # The protections of the approval loop apply, because it is the same loop. Bot
 # messages are ignored, so the assistant cannot approve its own memory by typing
@@ -152,9 +152,8 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
                 {"content": f"no single match for `{prefix}`. Check `memories`"})
         return True
 
-    # `replaces <new> <old>` links two memories that are already stored, which
-    # is the shape this arrives in most often: the suggestion appears after
-    # the write, not before it.
+    # `replaces <new> <old>` links two memories that are already stored. This
+    # is the common case, because the suggestion appears after the write.
     if verb == "replaces":
         old_id, _ = resolve_memory(rest[0]) if rest else ("", "")
         if not old_id:
@@ -206,7 +205,7 @@ def handle_memory_reply(verb: str, prefix: str, channel: str, token: str,
         else:
             reply = "remembered"
             # The suggestion only exists after the write. Say what to type to
-            # act on it rather than leaving two contradictory facts current.
+            # act on it, so two contradictory facts do not both stay current.
             for candidate in result.get("possibly_supersedes", [])[:2]:
                 reply += (f"\nthis may replace “{candidate['statement'][:60]}” "
                           f"Reply `replaces {short_id(memory_id)} "

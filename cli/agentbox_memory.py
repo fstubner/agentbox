@@ -43,8 +43,8 @@ def memory_request(method: str, path: str, payload: dict | None = None) -> Any:
 def memory_list(identity: str = "") -> int:
     """What the assistant has proposed, across every identity.
 
-    The scope is shown on each line rather than filtered, because a proposal
-    the operator cannot see is one nobody can approve.
+    The scope is shown on each line rather than filtered, because nobody can
+    approve a proposal the operator cannot see.
     """
     payload = memory_request("GET", "/v1/proposals?limit=200")
     if payload is None:
@@ -98,8 +98,8 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "",
     if result.get("replaced"):
         report(OK, f"superseded: {result['replaced'].get('statement','')}")
     for candidate in result.get("possibly_supersedes", []):
-        # Offered, never applied: an automatic supersession that is wrong
-        # hides a true memory behind a false one and says nothing.
+        # Suggested, never applied. A wrong automatic supersession would hide
+        # a true memory behind a false one with no warning.
         report(WARN, f"this may replace an existing memory. If so: "
                               f"cli/agentbox memory forget {candidate['id']}  "
                               f"(or re-add with --supersedes {candidate['id']})\n"
@@ -114,7 +114,7 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "",
 
 
 def memory_show(limit: int = 50) -> int:
-    """What is actually stored, as opposed to what is waiting for review."""
+    """What is stored, as opposed to what is waiting for review."""
     payload = memory_request("GET", f"/v1/memories?limit={int(limit)}")
     if payload is None:
         return 1
@@ -169,11 +169,11 @@ def memory_forget(memory_id: str, reason: str = "") -> int:
 
 
 def feedback_list(status: str = "open") -> int:
-    """The improvement backlog: things to fix properly rather than remember.
+    """The improvement backlog: things to fix in the system, not remember.
 
-    An operator surface only. If the assistant could read this it
-    would start explaining the behaviour instead of the behaviour changing,
-    which is the patch-around this split exists to prevent.
+    Only the operator can read it. If the assistant could read it, it would
+    explain the behaviour instead of the behaviour being fixed. Keeping the
+    backlog separate from memory prevents that.
     """
     payload = memory_request("GET", f"/v1/feedback?status={urllib.parse.quote(status)}")
     if payload is None:
@@ -199,8 +199,8 @@ def feedback_decide(action: str, feedback_id: str, note: str = "") -> int:
         {"note": note})
     if payload is None:
         return 1
-    # The highest-value record in the journal: a human said the behaviour was
-    # wrong, and then said what they changed about it.
+    # A person said the behaviour was wrong and what they changed about it.
+    # This is the most useful kind of record in the journal.
     record_decision("operator", f"feedback_{action}", "assistant_behaviour", note)
     report(OK, f"{payload.get('status', action)}: "
                         f"{payload.get('statement', feedback_id)}")
@@ -212,8 +212,7 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
     payload = memory_request("POST", f"/v1/proposals/{urllib.parse.quote(proposal_id)}/{action}", body)
     if payload is None:
         return 1
-    # A rejected proposal is a correction, the clearest "no, not that" the
-    # system gets.
+    # A rejected proposal is recorded as a correction.
     record_decision("operator", action, "memory_proposal", reason)
     report(OK, f"{payload.get('status', action)}: {payload.get('statement', proposal_id)}")
     return 0

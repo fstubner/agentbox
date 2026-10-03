@@ -1,10 +1,10 @@
 # Self-service portal: memories and connected accounts.
 #
 # Runs as the OPERATOR's systemd user instance, never as the agentbox user.
-# Same property as the approval loop, and for a stronger reason: this process
-# holds MEMORY_REVIEW_TOKEN, which approves any memory proposal. If the
-# assistant could start, stop, signal or share a uid with it, the review gate
-# would be a formality. Self-approval is what that gate prevents.
+# This is the same rule as the approval loop. This process holds
+# MEMORY_REVIEW_TOKEN, which approves any memory proposal. If the assistant
+# could start, stop, signal or share a uid with it, the assistant could approve
+# its own memory proposals.
 #
 # Install:
 #   cp cli/agentbox-portal.service ~/.config/systemd/user/
@@ -13,9 +13,9 @@
 #   sudo loginctl enable-linger "$USER"
 #
 # Then sign in at http://127.0.0.1:8771 on this box, or at the LAN address
-# from a phone. See docs/runbook.md, the LAN address works for everything
-# except the Google consent redirect, which Google will only accept on
-# loopback or a real https domain.
+# from a phone. See docs/runbook.md. The LAN address works for everything
+# except the Google consent redirect, which Google only accepts on loopback or
+# a real https domain.
 
 [Unit]
 Description=Agentbox self-service portal
@@ -28,22 +28,21 @@ StartLimitBurst=5
 [Service]
 Type=simple
 
-# Credentials, read from the operator's env dir rather than duplicated here:
-# MEMORY_BRIDGE_TOKEN and MEMORY_REVIEW_TOKEN from the first, GOOGLE_CLIENT_ID
-# from the second.
+# Credentials are read from the operator's env dir and not duplicated here.
+# MEMORY_BRIDGE_TOKEN and MEMORY_REVIEW_TOKEN come from the first file,
+# GOOGLE_CLIENT_ID from the second.
 #
-# These files hold `op://` references, not literal secrets, the same files
-# `agentbox deploy` feeds to `op run`. systemd's EnvironmentFile does not
-# resolve them. It would pass the literal "op://Agentbox/..." string as the
+# These files hold `op://` references, not literal secrets. They are the same
+# files `agentbox deploy` passes to `op run`. systemd's EnvironmentFile does
+# not resolve them. It would pass the literal "op://Agentbox/..." string as the
 # bearer token and the Google client id, and the memory bridge and Google would
 # both refuse it.
 #
-# So the portal is launched under `op run --env-file` (see ExecStart), which
-# resolves the references before the process starts, the same way deploy does.
-# The service-account token that authorises that resolution lives in
-# 1password.env, sourced below; a leading dash means a box without 1Password
-# still starts, with unresolved references that fail loudly rather than
-# silently.
+# The portal is therefore launched under `op run --env-file` (see ExecStart),
+# which resolves the references before the process starts, the same way deploy
+# does. The service-account token that authorises that resolution lives in
+# 1password.env, sourced below. The leading dash means a box without 1Password
+# still starts, and the unresolved references fail with a visible error.
 EnvironmentFile=-%h/.config/agentbox/1password.env
 
 # Broad Drive read. Without this the assistant sees only files it created, so
@@ -51,23 +50,23 @@ EnvironmentFile=-%h/.config/agentbox/1password.env
 # assistant still cannot write outside its own folder, delete, or share.
 Environment=GOOGLE_ENABLE_DRIVE_READ_ALL=1
 
-# Who is an admin. Everyone else is a member: their own memories and their own
-# connectors, no operations. Empty would mean nobody is an admin, which is the
-# right direction for a misread value to fail in.
-# Identities the gateway is configured to act for, so the portal can show
-# somebody who exists to the assistant but has no way to sign in, the state
-# the "Who lives here" card exists to surface. Names only: the gateway's own
+# Who is an admin. Everyone else is a member, with access to their own
+# memories and their own connectors and no operations. An empty value means
+# nobody is an admin, so a misread value fails closed.
+# Identities the gateway is configured to act for. The portal uses them to show
+# somebody who exists to the assistant but has no way to sign in, which the
+# "Who lives here" card reports. This holds names only. The gateway's own
 # AGENTBOX_IDENTITIES carries bearer credentials, and this service is the
 # LAN-facing one.
 Environment=AGENTBOX_IDENTITY_NAMES=alex,sam
 Environment=AGENTBOX_ADMINS=alex
 
-# Sign-in addresses. An address here is not a credential, it only decides
-# where a magic link is sent, and the link is useless in another browser.
+# Sign-in addresses. An address here is not a credential. It only sets where a
+# magic link is sent, and the link does not work in another browser.
 Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 
 # Delivery for sign-in links. Without a host here, links are minted and never
-# sent, and the sign-in page cannot say so, because answering differently for
+# sent. The sign-in page cannot report this, because answering differently for
 # a registered address would reveal who lives here. `agentbox doctor` warns
 # instead.
 #
@@ -78,32 +77,31 @@ Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 #   AGENTBOX_SMTP_USER=you@example.com
 #   AGENTBOX_SMTP_PASSWORD=<app password>
 EnvironmentFile=-%h/.config/agentbox/portal-smtp.env
-# The token the assistant presents to /agent/link. Without it the
-# endpoint 403s with or without a header, which is the correct
-# direction to be off but means the ORIGIN_AGENT downgrade is only
-# ever exercised by tests. A leading dash so a box without the file
-# still starts, with the endpoint simply inert.
+# The token the assistant presents to /agent/link. Without it the endpoint
+# returns 403 with or without a header. That fails closed, but it means only
+# tests exercise the ORIGIN_AGENT downgrade. The leading dash lets a box
+# without the file start, with the endpoint disabled.
 EnvironmentFile=-%h/.config/agentbox/portal-agent.env
 
 # The address links point at, and the base of the Google redirect URI.
-# Loopback by default because Google refuses .local and bare LAN hostnames
-# outright; `agentbox validate` fails if this is set to something the console
-# will not accept.
-# What goes into sign-in links and invitations, so it has to resolve from a
-# phone, where loopback would point at the recipient's own device. mDNS rather
-# than the LAN IP because the address is handed out by DHCP and the name is
-# not.
+# Loopback by default because Google refuses .local and bare LAN hostnames.
+# `agentbox validate` fails if this is set to something the console will not
+# accept.
+# The address used in sign-in links and invitations. It has to resolve from a
+# phone, where loopback would point at the recipient's own device. It uses the
+# mDNS name instead of the LAN IP because DHCP assigns the IP and the name
+# stays fixed.
 Environment=AGENTBOX_PORTAL_URL=http://agentbox.local:8771
 # The household's private skills checkout, shown on the Capabilities page.
 # Environment=AGENTBOX_PERSONAL_PATH=%h/path/to/your-private-skills-repo
-# What Google is told, which is a different question with a different answer:
-# it refuses private IPs and .local, and accepts loopback. Consent is
-# therefore granted in a browser on this box. Set both to one https:// name
-# to allow it from anywhere.
+# The address given to Google, which has different rules. Google refuses
+# private IPs and .local, and accepts loopback. Consent is therefore granted in
+# a browser on this box. Set both to one https:// name to allow it from
+# anywhere.
 Environment=AGENTBOX_OAUTH_REDIRECT_BASE=http://127.0.0.1:8771
 
 # Bound to all interfaces so a phone on the LAN can reach it. The magic-link
-# flow is what protects it, not the network boundary.
+# flow protects it. The network boundary does not.
 #
 # Launched under `op run` so the op:// references in the two --env-file
 # arguments are resolved into real values for this process only, never

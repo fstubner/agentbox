@@ -55,10 +55,9 @@ def memory_call(method: str, path: str, payload: dict | None = None) -> dict | N
 class BridgeUnreachable(Exception):
     """The memory service did not answer.
 
-    A distinct condition from an empty queue, and it has to stay distinct. The
-    defect this portal was built to fix was a queue that rendered as no rows;
-    reporting "nothing waiting" when the service is down reproduces
-    that failure one layer up.
+    This is a different condition from an empty queue and must be reported
+    differently. A queue that renders as no rows when the service is down
+    hides the failure, so this must never be shown as "nothing waiting".
     """
 
 def own_proposals(identity: str, role: str) -> list[dict]:
@@ -79,10 +78,9 @@ def own_proposals(identity: str, role: str) -> list[dict]:
 def stored_memories(identity: str, role: str) -> tuple[list[dict], dict]:
     """Current memories this session may see, and the history behind each.
 
-    One call including superseded rows rather than a history request per
-    memory: the chain is derivable from the rows themselves, and N+1 requests
-    to render a page is how a list of ten becomes slow enough that nobody
-    opens it.
+    One call that includes superseded rows, not a history request per
+    memory. The chain can be derived from the rows themselves, and N+1
+    requests would make the page slow to render.
     """
     payload = portal.memory_call("GET", "/v1/memories?limit=200&include_superseded=true")
     if payload is None:
@@ -107,9 +105,9 @@ def forget_memory(identity: str, role: str, memory_id: str,
                   origin: str = portal.ORIGIN_EMAIL) -> tuple[bool, str]:
     """Retire a stored memory, refusing anything out of scope.
 
-    Withheld from assistant-minted sessions for the same reason approving is:
-    editing what it may remember by deleting the inconvenient parts is the
-    same capability as writing memory, in reverse.
+    Withheld from assistant-minted sessions for the same reason as approving.
+    Deleting memories changes what the assistant remembers, the same as
+    writing them.
     """
     portal.require(role, "memory:decide_own", origin)
     try:
@@ -129,7 +127,7 @@ def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
                   statement: str = "") -> tuple[bool, str]:
     """Approve, file as feedback, or reject one proposal.
 
-    The scope check re-reads the proposal rather than trusting the form. An id
+    The scope check re-reads the proposal instead of trusting the form. An id
     from a crafted form must never decide whose memory is touched.
 
     The edited statement does come from the form, because it is what the
@@ -149,7 +147,7 @@ def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
         payload["statement"] = edited
     if verb == "feedback":
         # Force the classification, then approve: the bridge routes anything
-        # marked feedback to the backlog rather than to memory, so one path
+        # marked feedback to the backlog instead of to memory, so one path
         # covers both and they cannot disagree about where it lands.
         payload["kind"] = "feedback"
         route = "approve"

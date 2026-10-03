@@ -1,16 +1,16 @@
 """Validation for Home Assistant automations the assistant writes.
 
-An automation is not a tool call. It is stored code that Home Assistant runs
-later with its own privileges, which are total. Every refusal in bridge.py
+An automation is stored code that Home Assistant runs later with its own
+privileges, which are unrestricted. Every refusal in bridge.py
 happens at call time, so without this module an assistant that may not unlock a
 door could write
 
     trigger: {platform: time, at: "03:00:00"}
     action:  {service: lock.unlock, entity_id: lock.front_door}
 
-and the door would open at three in the morning. It is the same problem as an
-assistant merging its own change, code that later runs with more authority than
-its author has.
+and the door would open at three in the morning. This is the same problem as
+an assistant merging its own change. In both cases code runs later with more
+authority than its author has.
 
 The automation arrives as JSON, and the template scan runs on its text.
 
@@ -23,13 +23,13 @@ analysing a Turing-complete template engine, and any denylist would have holes.
 
 So automations written by the assistant contain no templates, no `{{ }}` and no
 `{% %}`. Every service and entity id is then a literal, and checking them is
-decidable. The assistant cannot write a clever automation, but it can write
-"when the hall motion sensor fires after sunset, turn on the hall light", which
-is what people want. Templated automations are for the owner to write.
+decidable. The assistant cannot write complex automations. It can still write
+simple ones such as "when the hall motion sensor fires after sunset, turn on
+the hall light". Templated automations are for the owner to write.
 
 ## What this does not decide
 
-Whether an automation is a good idea. It only proves the automation cannot
+This module does not decide whether an automation is a good idea. It proves the automation cannot
 reach anything the assistant could not touch directly. The operator approves
 the intent.
 """
@@ -47,8 +47,8 @@ SERVICE_KEYS = ("service", "action")
 ENTITY_KEYS = ("entity_id", "device_id", "target")
 
 # Service domains that reach the physical world in ways never permitted here.
-# The same list as bridge.SECURITY_DOMAINS, repeated on purpose so this check
-# fails closed on its own rather than depending on an import.
+# The same list as bridge.SECURITY_DOMAINS, repeated here so this check fails
+# closed on its own instead of depending on an import.
 FORBIDDEN_DOMAINS = frozenset({
     "lock", "alarm_control_panel", "cover", "garage_door", "camera", "vacuum",
 })

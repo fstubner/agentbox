@@ -21,9 +21,9 @@ def identity_of(handler) -> str:
 def resolve_scope(body: dict[str, Any], identity: str) -> str:
     """Private to the caller, or shared with the household.
 
-    Two scopes rather than sharing between named people. Per-item sharing makes
-    "what can Sam see?" impossible to answer without reading every row. Putting
-    something in household is a deliberate act with one obvious meaning.
+    There are two scopes and no sharing between named people. Per-item sharing
+    makes "what can Sam see?" impossible to answer without reading every row.
+    Putting something in household is an explicit choice with one meaning.
     """
     requested = str(body.get("scope") or "").strip().lower()
     if not requested:
@@ -35,8 +35,7 @@ def resolve_scope(body: dict[str, Any], identity: str) -> str:
     if requested in ("private", "me", "self"):
         return identity or HOUSEHOLD
     if identity and requested != identity:
-        # Writing into someone else's private scope is impersonation, not
-        # sharing.
+        # Writing into someone else's private scope would be impersonation.
         raise BridgeError(
             403, f"cannot write to '{requested}'s private memory. Use scope "
                  f"'{HOUSEHOLD}' to share, or omit scope to keep it yours.")

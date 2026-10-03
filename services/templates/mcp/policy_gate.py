@@ -9,7 +9,7 @@ refused until someone maps it.
 
 An approval_required tool needs a grant from `cli/agentbox grant <tool>`,
 written to a grants file this module reads. Grants expire and are single-use by
-default, so an approval cannot quietly become a standing permission.
+default, so an approval cannot become a standing permission.
 """
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
     permission.
 
     If that record cannot be written, the call is refused. Otherwise a
-    single-use grant would quietly work until it expired.
+    single-use grant would keep working until it expired.
     """
     store = CONSUMED_PATH if consumed_path is None else consumed_path
     stamp = time.time() if now is None else now

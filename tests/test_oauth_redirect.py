@@ -3,8 +3,8 @@
 `AGENTBOX_PORTAL_URL` goes into sign-in links and invitations, so it must
 resolve from a phone. Google refuses a private IP or a `.local` name as a
 redirect and accepts loopback, which on a phone is the phone. One setting
-cannot meet both requirements, and keeping them separate is what lets a box
-with no extra infrastructure work.
+cannot meet both requirements. Keeping them separate lets a box work with no
+extra infrastructure.
 """
 from __future__ import annotations
 
@@ -33,8 +33,8 @@ def load(tmp_path, monkeypatch, **env):
 
 
 def test_the_public_url_no_longer_decides_the_redirect(tmp_path, monkeypatch):
-    """The actual defect. Setting the portal to something a phone can reach
-    silently moved the redirect URI to a value Google rejects."""
+    """Setting the portal URL to something a phone can reach must not move the
+    redirect URI to a value Google rejects."""
     portal = load(tmp_path, monkeypatch,
                   AGENTBOX_PORTAL_URL="http://agentbox.local:8771")
     assert portal.oauth_redirect_uri() == "http://127.0.0.1:8771/google/callback"
@@ -73,7 +73,7 @@ def test_both_halves_of_the_flow_send_the_same_string():
 
 
 def test_the_portal_unit_sets_a_name_a_phone_can_resolve(tmp_path, monkeypatch):
-    """Loopback here meant every invitation delivered by email pointed the
+    """With loopback here, every invitation delivered by email would point the
     recipient at their own device."""
     unit = (REPO / "cli" / "agentbox-portal.service").read_text(encoding="utf-8")
     body = "\n".join(line for line in unit.splitlines()

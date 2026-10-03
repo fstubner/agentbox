@@ -8,15 +8,15 @@ terminal or the Google Cloud console.
 ## Why this process has no privileges
 
 One service that took the answers, created the Vikunja account and set up the
-Google bridge would need the Docker socket, and a web page on the LAN holding
-the Docker socket is the worst thing that could run here. `docker inspect`
-reads every bridge credential, and `docker run -v /:/host` is a root shell.
+Google bridge would need the Docker socket. A web page on the LAN must not hold
+the Docker socket. `docker inspect` reads every bridge credential, and
+`docker run -v /:/host` is a root shell.
 
-So this only collects. It has no Docker socket, no secret manager token and no
-bridge tokens, cannot create an identity, and writes one spool file. The
-privileged half runs separately. That split is necessary, because Vikunja
-registration is off and creating an account needs `vikunja user create`
-inside the container.
+So this process only collects answers. It has no Docker socket, no secret
+manager token and no bridge tokens, cannot create an identity, and writes one
+spool file. The privileged half runs separately. That split is necessary,
+because Vikunja registration is off and creating an account needs
+`vikunja user create` inside the container.
 
 ## The invite token is a credential
 
@@ -102,15 +102,15 @@ class InviteHandler(BaseHTTPRequestHandler):
     def _google_callback(self) -> None:
         """Google hands the authorisation code back here.
 
-        The code is stored, not exchanged: exchanging needs the client secret,
-        which this process does not have. `agentbox invite
-        complete` does that and provisions their bridge.
+        The code is stored, not exchanged. Exchanging needs the client secret,
+        which this process does not have. `agentbox invite complete` does the
+        exchange and provisions their bridge.
         """
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         state = query.get("state", [""])[0]
         token_id, _, secret = state.partition(":")
         # The invite is already marked used by this point, so validate against
-        # the record directly rather than through valid_invite.
+        # the record directly, not through valid_invite.
         record = load_invite(token_id)
         if not record or not hmac.compare_digest(
                 str(record.get("secret", "")), secret):
@@ -195,10 +195,10 @@ class InviteHandler(BaseHTTPRequestHandler):
 def _shared():
     """cli/agentbox_onboarding.py, which owns the invite record format.
 
-    Loaded rather than duplicated: this record carries the secret that makes
-    the link a credential, and the portal mints the same thing when an admin
-    approves a draft. Two copies of that shape drift, and the one that drifts
-    silently is the one nobody runs by hand.
+    Loaded, not duplicated. This record carries the secret that makes the
+    link a credential, and the portal mints the same record when an admin
+    approves a draft. Two copies of that format would drift apart without any
+    error.
     """
     import importlib.util as _ilu
     spec = _ilu.spec_from_file_location(
@@ -214,8 +214,8 @@ def configured_identities() -> set[str]:
     """Who the gateway already acts for.
 
     Passed to create_invite so it can refuse a name that is taken. Completing
-    an invite for an existing identity re-provisions that person's bridge with
-    whoever answered the form, which turns an invitation into a takeover.
+    an invite for an existing identity re-provisions that identity's bridge
+    with whoever answered the form, which hands them that account.
     """
     raw = os.environ.get("AGENTBOX_IDENTITY_NAMES", "")
     return {n.strip().lower() for n in raw.replace(" ", ",").split(",")

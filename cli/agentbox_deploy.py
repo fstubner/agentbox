@@ -20,8 +20,7 @@ SERVICE_ALIASES = {
 def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     """Validate, then bring up services/compose/<service> with its env file.
 
-    Env file: $AGENTBOX_ENV_DIR/<service>.env (default ~/.config/agentbox,
-    default ~/.config/agentbox).
+    Env file: $AGENTBOX_ENV_DIR/<service>.env (default ~/.config/agentbox).
     op:// references are resolved through the 1Password CLI without printing
     secret values. Compose project name is the service name.
     """
@@ -33,9 +32,9 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     if validate() != 0:
         return 1
 
-    # The policy every bridge enforces travels on the read-only mount rather
-    # than inside the image. Synced here so a deploy can never start a
-    # container against a policy older than the one committed.
+    # The policy every bridge enforces is on the read-only mount, not inside
+    # the image. It is synced here so a deploy cannot start a container
+    # against a policy older than the committed one.
     policy_sync(quiet=True)
 
     env_dir = os.environ.get("AGENTBOX_ENV_DIR", str(Path("~/.config/agentbox").expanduser()))
@@ -48,8 +47,8 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
     project = service
 
     compose = ["docker", "compose", "-p", project, "-f", "compose.yaml"]
-    # --build is not optional: without it compose reuses the existing image and
-    # the deploy reports success having shipped nothing but the git commit.
+    # --build is required. Without it compose reuses the existing image, and
+    # the deploy reports success while the container still runs the old code.
     compose_cmd = (compose + ["config", "--no-interpolate"] if dry_run
                    else compose + ["up", "-d", "--build"])
 

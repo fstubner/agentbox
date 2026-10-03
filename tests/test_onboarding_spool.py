@@ -3,9 +3,9 @@
 Completing an invite starts a new bridge with `docker compose up`, a privilege
 kept off the web page. The portal only triggers it.
 
-So what is tested is that a request settles one thing, which invite is meant.
-The worker re-derives everything else from the invite record, so a request
-that lies about anything else changes nothing.
+These tests check that a request decides only which invite is meant. The
+worker re-derives everything else from the invite record, so false values in
+any other field of a request change nothing.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def write_invite(tmp_path, token_id=GOOD, **over):
     return record
 
 
-# --- the id is the only thing a request buys ----------------------------------
+# --- a request carries only an invite id --------------------------------------
 
 
 def test_an_id_that_is_not_an_id_is_refused(spool):
@@ -74,10 +74,10 @@ def test_an_id_that_is_not_an_id_is_refused(spool):
 
 
 def test_a_request_filed_under_another_name_is_ignored(spool, tmp_path):
-    """Naming one invite while being filed as another.
+    """A request whose field names one invite and whose filename names another.
 
-    Believing the field alone would let a request for an invite the approver
-    never saw ride in under the filename of one they did.
+    Trusting the field alone would let a request for an invite the approver
+    never saw pass under the filename of one they did.
     """
     directory = tmp_path / "onboarding"
     directory.mkdir(parents=True, exist_ok=True)
@@ -96,9 +96,9 @@ def test_one_unreadable_request_does_not_stop_the_others(spool, tmp_path):
 
 
 def test_settled_requests_do_not_look_pending(spool):
-    """Load-bearing for the path unit.
+    """The path unit depends on this.
 
-    Requests settle into a subdirectory rather than vanishing, so the spool
+    Requests settle into a subdirectory and are not deleted, so the spool
     directory is permanently non-empty once anything has been approved. If
     settled records read as pending, every drain would find work forever.
     """
@@ -134,8 +134,8 @@ def drain(cli, monkeypatch):
 
 
 def test_a_request_cannot_invent_an_onboarding(cli, spool, monkeypatch):
-    """Nothing here conjures an identity. The worst a request achieves is
-    finishing one a human already set in motion."""
+    """A request cannot create an identity. At most it finishes an
+    onboarding a human already started."""
     spool.request(GOOD, "alex")
     calls, _, _ = drain(cli, monkeypatch)
     assert calls == []
@@ -154,7 +154,8 @@ def test_an_invite_nobody_filled_in_is_not_completed(cli, spool, tmp_path,
 
 def test_an_already_completed_invite_settles_quietly(cli, spool, tmp_path,
                                                      monkeypatch):
-    """Two admins approving the same person should converge, not alarm."""
+    """Two admins approving the same person should give one result and no
+    error."""
     write_invite(tmp_path, completed_at=1234)
     spool.request(GOOD, "alex")
     calls, code, _ = drain(cli, monkeypatch)
@@ -166,7 +167,7 @@ def test_the_approver_is_recorded_but_never_consulted(cli, spool, tmp_path,
     """The approver and origin are recorded for auditing, not trusted.
 
     A request with a nonsense approver still completes a valid invite, because
-    the worker reads the invite. The converse matters more: a plausible
+    the worker reads the invite. The reverse matters more. A plausible
     approver on a bogus invite completes nothing.
     """
     write_invite(tmp_path)
@@ -180,11 +181,10 @@ def test_the_approver_is_recorded_but_never_consulted(cli, spool, tmp_path,
 
 def test_a_failure_settles_instead_of_retrying(cli, spool, tmp_path,
                                                monkeypatch):
-    """An unattended worker that leaves failures in the spool is a loop.
+    """An unattended worker that leaves failures in the spool would loop.
 
-    The path unit re-arms when the spool empties, so a request that stayed
-    behind on failure would fire again the moment anything else was approved,
-    forever.
+    The path unit re-arms when the spool empties, so a request left behind on
+    failure would fire again each time anything else was approved.
     """
     write_invite(tmp_path)
     spool.request(GOOD, "alex")
@@ -198,12 +198,12 @@ def test_a_failure_settles_instead_of_retrying(cli, spool, tmp_path,
     monkeypatch.setattr(cli, "invite_complete", failing)
     assert cli.invite_drain() == 1
     assert calls == [GOOD]
-    # Reported as a failure, and gone from the spool all the same.
+    # Reported as a failure, and still removed from the spool.
     assert spool.pending() == []
     settled = json.loads(
         (spool.settled_dir() / f"{GOOD}.json").read_text(encoding="utf-8"))
     assert settled["outcome"] == "failed"
-    # A second trigger finds nothing to do rather than trying again.
+    # A second trigger finds nothing to do and does not retry.
     assert cli.invite_drain() == 0
     assert calls == [GOOD]
 
@@ -230,14 +230,14 @@ def portal(tmp_path, monkeypatch, spool):
 
 
 def test_the_assistant_cannot_approve_an_onboarding(portal):
-    """Deciding who lives here, finished. Withheld from every downgraded
-    origin under the same capability as inviting."""
+    """Completing an onboarding decides who lives here. It is withheld from
+    every downgraded origin under the same capability as inviting."""
     for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
         assert not portal.can(portal.ADMIN, "ops:invite", origin), origin
 
 
 def test_the_card_does_not_carry_the_invite_secret(portal, tmp_path):
-    """The one field that would let somebody impersonate the invitee."""
+    """The secret would let somebody impersonate the invitee."""
     write_invite(tmp_path)
     assert "s3cret-do-not-render" not in portal.render_onboarding_card()
     assert GOOD in portal.render_onboarding_card()
@@ -250,7 +250,7 @@ def test_a_completed_invite_leaves_the_waiting_list(portal, tmp_path):
 
 def test_the_card_warns_when_the_google_step_was_skipped(portal, tmp_path):
     """Completing without Google consent leaves the person on the shared
-    bridge, which is wrong for mail, so it is said before the click."""
+    bridge, which is wrong for mail, so the card says so before the click."""
     write_invite(tmp_path, google_code="")
     assert "consent" in portal.render_onboarding_card().lower()
     write_invite(tmp_path, google_code="4/abc")
@@ -258,7 +258,7 @@ def test_the_card_warns_when_the_google_step_was_skipped(portal, tmp_path):
 
 
 def test_the_portal_asks_and_does_not_act(portal):
-    """The whole point of the split. Nothing on this path may run docker."""
+    """This is why the work is split. Nothing on this path may run docker."""
     body = portal_code().split("def _onboard")[1][:2000]
     assert "agentbox_onboarding.request" in body
     for forbidden in ("docker", "subprocess", "invite_complete", "compose"):
@@ -269,8 +269,8 @@ def test_the_portal_asks_and_does_not_act(portal):
 
 
 def test_the_path_unit_cannot_latch_on_the_settled_directory():
-    """DirectoryNotEmpty would be true forever after the first onboarding,
-    because settled records live inside the directory being watched."""
+    """DirectoryNotEmpty would stay true after the first onboarding, because
+    settled records live inside the directory being watched."""
     unit = (REPO / "cli" / "agentbox-onboarding.path").read_text(
         encoding="utf-8")
     body = "\n".join(line for line in unit.splitlines()

@@ -1,4 +1,4 @@
-"""Hardening found by running the system rather than by reading the code."""
+"""Hardening for faults found by running the system."""
 from __future__ import annotations
 
 import importlib.machinery
@@ -50,13 +50,13 @@ class Request:
         self.rfile = io.BytesIO(body)
 
 
-# --- F1: a malformed header killed the handler thread -------------------------
+# --- F1: a malformed header must not kill the handler thread ------------------
 
 
 def test_a_content_length_that_is_not_a_number_is_refused(portal):
-    """A bad length must not kill the handler, which would leave a malformed
-    request unanswered while a valid one gets a page, a difference anyone
-    outside can measure.
+    """A bad length must not kill the handler. A malformed request would then
+    get no answer while a valid one gets a page, and anyone outside could
+    measure that difference.
     """
     for bad in ("abc", "1.5", "0x10", "12 34", "+5"):
         assert portal.PortalHandler._read_form(Request(bad)) is None, bad
@@ -80,14 +80,14 @@ def test_a_well_formed_body_still_parses(portal):
 
 
 def test_every_malformed_request_answers_the_same_way(portal):
-    """Which part was wrong is not the client's business, as on the invite
-    page and for link ids."""
+    """The client is not told which part was wrong, as on the invite page and
+    for link ids."""
     answers = {portal.PortalHandler._read_form(Request(bad))
                for bad in ("abc", "-1", "999999999")}
     assert answers == {None}
 
 
-# --- F2: the declared size was trusted ----------------------------------------
+# --- F2: the declared size is not trusted -------------------------------------
 
 
 def test_a_body_larger_than_the_cap_is_refused(portal):
@@ -106,23 +106,23 @@ def test_a_negative_length_is_refused(portal):
 
 
 def test_only_ascii_digits_count_as_a_length(portal):
-    """int() accepts other numeral systems; a header the spec defines as
-    DIGIT is not the place to be inventive."""
+    """int() accepts digits from other numeral systems. The spec defines this
+    header as DIGIT, so only ASCII digits are accepted."""
     assert portal.PortalHandler._read_form(Request("\u0663")) is None
 
 
 def test_undecodable_bytes_do_not_escape(portal):
-    """parse_qs on invalid UTF-8 raises, in the same place and with the same
-    consequence as the header did."""
+    """parse_qs raises on invalid UTF-8, in the same place and with the same
+    effect as a malformed header."""
     assert portal.PortalHandler._read_form(Request("2", b"\xff\xfe")) is None
 
 
-# --- F3: the approval step degrades under volume ------------------------------
+# --- F3: the approval step must hold up under volume --------------------------
 
 
 def test_the_waiting_queue_is_bounded(portal, spool):
-    """Drafts buy no privilege. What a flood buys is an admin who stops
-    reading, and the reading is the entire safeguard for this tool."""
+    """Drafts grant no privilege. A flood of them makes an admin stop reading,
+    and the admin reading each draft is the only safeguard for this tool."""
     assert portal.MAX_PENDING_PROPOSALS >= 1
     for i in range(portal.MAX_PENDING_PROPOSALS):
         spool.propose(f"person{i}", f"Person {i}", f"p{i}@example.com")
@@ -138,7 +138,7 @@ def test_the_cap_clears_itself_as_the_admin_acts(portal, spool):
 
 
 def test_the_tool_explains_the_refusal(portal):
-    """A 429 relayed as a number makes the model retry into a wall."""
+    """A bare 429 makes the model retry a call that will keep failing."""
     source = (REPO / "services" / "compose" / "agentbox-mcp" / "app" /
               "integrations" / "portal.py").read_text(encoding="utf-8")
     body = source.split("def _propose_invite")[1]
@@ -146,7 +146,7 @@ def test_the_tool_explains_the_refusal(portal):
     assert "waiting" in body.lower()
 
 
-# --- F6: the spool grew forever -----------------------------------------------
+# --- F6: the spool must not grow without limit --------------------------------
 
 
 def write_invite(tmp_path, token_id, **over):
@@ -161,7 +161,7 @@ def write_invite(tmp_path, token_id, **over):
 
 def test_an_invite_that_expired_unused_is_dropped(spool, tmp_path):
     """Its secret is still in the file, and that secret is what made the link
-    a credential. Nobody can redeem it; keeping it buys nothing."""
+    a credential. Nobody can redeem it, so there is no reason to keep it."""
     path = write_invite(tmp_path, "a" * 16, expires_at=int(time.time()) - 1)
     assert spool.reap()[1] == 1
     assert not path.exists()
@@ -198,14 +198,14 @@ def test_settled_requests_age_out_but_not_quickly(spool):
 
 
 def test_reaping_survives_an_unreadable_file(spool, tmp_path):
-    """Runs at startup beside the portal's own reaper. One bad file is worth
-    skipping, not worth refusing to serve over."""
+    """Runs at startup beside the portal's own reaper. A bad file is skipped,
+    so it cannot stop the portal from serving."""
     (tmp_path / "invites").mkdir(parents=True, exist_ok=True)
     (tmp_path / "invites" / "broken.json").write_text("{nope", encoding="utf-8")
     assert spool.reap() == (0, 0)
 
 
-# --- F5: the gate could not see its own worst case ----------------------------
+# --- F5: the size gate must measure the largest files -------------------------
 
 
 def test_the_size_gate_sees_extensionless_files():
@@ -219,9 +219,9 @@ def test_the_size_gate_sees_extensionless_files():
 
 
 def test_the_entry_points_stay_small():
-    """Both commands were split into modules once they passed 2,400 lines.
-    Keeping them off the exceptions list means growing either one again fails
-    validate rather than quietly raising a ceiling."""
+    """Both commands are split into modules. They are not on the exceptions
+    list, so if either grows past the limit, validate fails and no ceiling is
+    raised."""
     import agentbox_validate as cli
     for name in ("cli/agentbox", "cli/agentbox-portal"):
         assert name not in cli.LARGE_FILES, name
@@ -235,12 +235,12 @@ def test_the_repo_is_within_its_own_ceilings():
     assert not grown, grown
 
 
-# --- found by an independent acceptance pass --------------------------------
+# --- acceptance findings ----------------------------------------------------
 
 
 def test_a_finished_invitee_is_not_told_to_ask_for_a_new_link(tmp_path,
                                                               monkeypatch):
-    """They already did the only thing asked of them.
+    """The invitee has already done the only thing asked of them.
 
     The confirmation page is the POST response, so a refresh or a second tap on
     the link lands here. It must not tell them to ask for a new link, which
@@ -261,8 +261,8 @@ def test_a_finished_invitee_is_not_told_to_ask_for_a_new_link(tmp_path,
 
 
 def test_operations_does_not_claim_the_portal_is_unauthenticated():
-    """It authenticates every route, including unknown ones, so the health view
-    must not warn otherwise. A false warning gets ignored.
+    """The portal authenticates every route, including unknown ones, so the
+    health view must not warn otherwise. A false warning gets ignored.
     """
     import importlib.util
     spec = importlib.util.spec_from_file_location(
@@ -278,9 +278,9 @@ def test_operations_does_not_claim_the_portal_is_unauthenticated():
 
 
 def test_the_exposure_warning_does_not_assert_what_it_cannot_know():
-    """The original wording was applied to every watched port. It is knowable
-    for the portal and not for most of the others, and asserting it anyway is
-    what made it wrong."""
+    """The warning applies to every watched port. Whether a port requires a
+    credential is known for the portal but not for most others, so the
+    warning must not claim it."""
     source = (REPO / "cli" / "agentbox_status_checks.py").read_text(encoding="utf-8")
     body = source.split("def lan_exposure")[1]
     assert "cannot confirm it requires a credential" in body

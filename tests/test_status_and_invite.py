@@ -42,7 +42,7 @@ def test_severity_only_applies_when_something_is_wrong(status):
 
 
 def test_a_probe_failure_is_not_an_exception(status):
-    """This runs on a page load; an unreachable port must not 500 the page."""
+    """This runs on page load, so an unreachable port must not 500 the page."""
     assert status.probe("http://127.0.0.1:1/nothing", timeout=0.2) is False
     assert status.probe("not-even-a-url", timeout=0.2) is False
 
@@ -58,16 +58,16 @@ def test_docker_being_unavailable_gives_an_empty_list_not_a_crash(status,
 
 
 def test_an_unlabelled_container_is_not_called_stale(status, monkeypatch):
-    """It predates source hashing. Calling it stale sends somebody to redeploy
-    something that is perfectly current.
+    """It predates source hashing. Calling it stale would send somebody to
+    redeploy something that is current.
     """
     class Result:
         stdout = ("agentbox-mcp-agentbox-mcp-1\tagentbox-mcp\t\t"
                   "Up 2 hours (healthy)\n")
 
     monkeypatch.setattr(status.subprocess, "run", lambda *a, **k: Result())
-    # Looked up by name, not by position: the list also carries services that
-    # have no container at all, so a total count is not what this is about.
+    # Looked up by name, not by position. The list also carries services that
+    # have no container, so the total count is not checked here.
     found = {s.name: s for s in status.services()}["agentbox-mcp"]
     assert found.running
     assert not found.stale
@@ -84,11 +84,11 @@ def test_a_changed_source_hash_is_stale(status, monkeypatch):
 
 
 def test_there_is_exactly_one_definition_of_staleness():
-    """The CLI must delegate rather than carry its own copy.
+    """The CLI must delegate and not carry its own copy.
 
-    The first version of the status module wrote a second source_sha that
-    hashed git history instead of file contents, and reported every service on
-    the box as stale. Two implementations of "is this current" is the bug.
+    A second source_sha that hashed git history instead of file contents would
+    report every service on the box as stale. There must be one implementation
+    of "is this current".
     """
     cli = code_of("cli/agentbox_policy.py")
     assert "agentbox_status.source_sha(service)" in cli
@@ -97,7 +97,7 @@ def test_there_is_exactly_one_definition_of_staleness():
 
 def test_the_status_module_never_changes_anything(status):
     """Read only. The portal holds sessions that can edit the admin list, and a
-    restart button would make every bug in it much more expensive.
+    restart button would make any bug in it much more costly.
     """
     source = code_of("cli/agentbox_status.py")
     for forbidden in ("docker restart", "docker exec", "docker stop",
@@ -135,7 +135,7 @@ def test_a_model_bound_to_every_interface_is_reported(status, monkeypatch):
     monkeypatch.setattr(status.subprocess, "run", lambda *a, **k: Result())
     found = status.lan_exposure()
     assert [c.name for c in found] == ["main model reachable from the network"]
-    # ssh on 0.0.0.0 is deliberate and not ours to complain about.
+    # ssh on 0.0.0.0 is intended and outside this check.
     assert all("22" not in c.detail for c in found)
 
 
@@ -163,8 +163,8 @@ def test_the_assistant_cannot_invite(portal):
 def test_an_invite_adds_without_dropping_anybody(portal):
     """The form has two fields and the setting holds everyone.
 
-    Saving the whole map from a two-field form would silently remove every
-    person not mentioned in it.
+    Saving the whole map from a two-field form would remove every person not
+    mentioned in it, without any warning.
     """
     portal.SETTINGS.save({"identity_emails": "alex:alex@example.com"})
     existing = portal.email_map()
@@ -220,17 +220,16 @@ def test_an_invited_link_is_downgraded_because_it_travels(portal):
 
     With no browser nonce, the downgrade in redeem_link never applies, and an
     emailed or DMed operator link would sit where the assistant can read it,
-    able to approve memories and disconnect accounts. Whoever merely reads a
-    link must not be able to use it.
+    able to approve memories and disconnect accounts. Someone who only reads a
+    link must not be able to use it with full privilege.
     """
-    # Behavioural, not a grep. The first version of this test asserted
-    # "origin=ORIGIN_CHAT" in a 2600-character slice of the file, which stops
-    # guarding the moment the call moves past that offset.
+    # Behavioural, not a grep. Asserting "origin=ORIGIN_CHAT" in a fixed slice
+    # of the file stops working as soon as the call moves past that offset.
     portal.SETTINGS.save({"smtp_host": "smtp.example.com"})
     assert portal.has_delivery_channel("sam", "sam@example.com") is True
     portal.SETTINGS.save({"smtp_host": ""})
     assert portal.has_delivery_channel("sam", "sam@example.com") is False
-    # And the two origins really do differ in what they permit.
+    # The two origins differ in what they permit.
     assert portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_OPERATOR)
     assert not portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_CHAT)
 
@@ -247,8 +246,8 @@ def test_a_link_secret_never_reaches_the_log(portal):
 
 
 def test_a_stopped_service_turns_red_rather_than_vanishing(status, monkeypatch):
-    """`docker ps` without -a derives the list from what is running, so a
-    crashed bridge disappears and the page then says everything is running."""
+    """`docker ps` without -a lists only what is running. A crashed bridge
+    would disappear, and the page would say everything is running."""
     class Result:
         stdout = ("agentbox-mcp-1\tagentbox-mcp\t\tExited (1) 2 minutes ago\n")
 
@@ -285,8 +284,8 @@ def test_not_knowing_the_container_state_is_a_finding(status, monkeypatch):
 
 
 def test_a_service_nobody_deployed_is_not_a_fault(status):
-    """Otherwise the page is permanently red over a service the household chose
-    not to run."""
+    """Otherwise the page would always show a failure for a service the
+    household chose not to run."""
     up = status.Service(name="a", label="A", container="c", running=True,
                         stale=False)
     never = status.Service(name="b", label="B", container="", running=False,
@@ -308,8 +307,8 @@ def test_one_row_per_service_even_with_an_old_container(status, monkeypatch):
 
 
 def test_a_removed_container_is_not_mistaken_for_a_choice(status, monkeypatch):
-    """Absence cannot tell "never deployed" from "deployed and removed", so
-    inferring it meant `docker compose down` read as healthy."""
+    """Absence cannot tell "never deployed" from "deployed and removed". If it
+    were inferred, `docker compose down` would read as healthy."""
     class Result:
         stdout = ""          # nothing running, nothing stopped
 
@@ -325,9 +324,9 @@ def test_a_removed_container_is_not_mistaken_for_a_choice(status, monkeypatch):
 
 
 def test_one_definition_of_where_a_link_can_go(portal):
-    """has_delivery_channel and deliver_link each spelled out the same
-    conditions. They had to agree or B1 reopened, and nothing kept them in
-    sync."""
+    """has_delivery_channel and deliver_link share one definition of the
+    delivery conditions. Two copies could disagree, which would reopen
+    finding B1."""
     source = portal_code()
     assert "delivery_channels(identity, address)" in source
     body = source.split("def deliver_link")[1][:900]
@@ -335,8 +334,8 @@ def test_one_definition_of_where_a_link_can_go(portal):
 
 
 def test_adding_and_promoting_in_one_save_is_allowed(portal):
-    """The settings page saves identity_emails and admins under one button, so
-    checking admins against stored state alone refused the obvious flow."""
+    """The settings page saves identity_emails and admins under one button.
+    Checking admins against stored state alone would refuse that save."""
     portal.SETTINGS.save({"identity_emails": "alex:alex@example.com",
                           "admins": "alex"})
     submitted = {"identity_emails": "alex:alex@example.com,ada:ada@example.com",

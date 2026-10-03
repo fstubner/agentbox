@@ -61,28 +61,28 @@ MAX_LINKS_PER_HOUR = int(os.environ.get("AGENTBOX_PORTAL_MAX_LINKS", "5"))
 MAX_BODY_BYTES = 64 * 1024
 
 # How many drafted invitations may wait unanswered. The assistant can write
-# them but not send them, so the safeguard is an admin reading each one, which
-# stops working when there are forty. A flood gains no privilege, only an admin
-# who starts clicking, so the limit is on queue depth. It clears as the admin
-# acts.
+# them but not send them, so the safeguard is an admin reading each one. That
+# does not work with forty in the queue. A flood gains no privilege, but it can
+# make an admin approve without reading, so the limit is on queue depth. It
+# clears as the admin acts.
 MAX_PENDING_PROPOSALS = int(
     os.environ.get("AGENTBOX_PORTAL_MAX_PROPOSALS", "5"))
 # Lets the assistant make a sign-in link so a person need not go and find an
-# email. Unset means the endpoint does not exist, because a capability nobody
-# configured should be absent.
+# email. Unset means the endpoint does not exist, so a capability nobody
+# configured is not available.
 AGENT_TOKEN = os.environ.get("AGENTBOX_PORTAL_AGENT_TOKEN", "").strip()
 
 # identity -> email, as "alex:alex@example.com,sam:sam@example.com".
-# Addresses live beside the identity list rather than in it so that adding an
-# address never risks disturbing an authentication token.
+# Addresses are stored beside the identity list, not in it, so adding an
+# address cannot change an authentication token.
 
 # The one mail value with no page: the envelope From, which is almost always
 # the account itself and is only separate for relays that require it.
 SMTP_FROM = os.environ.get("AGENTBOX_SMTP_FROM", "")
 
-# A client id is not a secret, which is what makes the split below work: this
-# page can *start* Google's consent flow and receive an authorisation code, but
-# a code is useless without the client secret that exchanges it. The secret
+# A client id is not a secret, so the split below works. This page can
+# *start* Google's consent flow and receive an authorisation code, but a code
+# is useless without the client secret that exchanges it. The secret
 # stays on the operator side. Same reasoning as cli/agentbox-invite.
 # GOOGLE_CLIENT_ID is what the bridge env file already calls it, so the unit
 # can source that file directly instead of the operator copying the value into
@@ -100,16 +100,16 @@ GOOGLE_SCOPES = os.environ.get(
 # Broad Drive read is opt-in, using the same flag as oauth-setup.py, so all
 # three ways of granting a credential enforce the same default.
 #
-# drive.file alone sees only files the assistant created, which is why "find
-# that lease in my Drive" finds nothing. With the flag set, the assistant can
+# drive.file alone sees only files the assistant created, so a search for a
+# document the person made finds nothing. With the flag set, the assistant can
 # read anything the person can, and still cannot write outside its folder,
 # delete or share, because those do not exist.
 if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
         "1", "true", "yes"):
     GOOGLE_SCOPES += " https://www.googleapis.com/auth/drive.readonly"
 
-# Same variable and default as cli/agentbox. Two names for one
-# endpoint is how a portal ends up quietly pointed at nothing.
+# Same variable and default as cli/agentbox. Two names for one endpoint could
+# leave the portal pointed at nothing without any error.
 PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
 
 # Where Google sends someone back after consent. This is separate from
@@ -118,13 +118,13 @@ PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
 # only accepts HTTPS on a real hostname, or loopback, and loopback on a phone
 # is the phone.
 #
-# Kept apart, a box with no extra infrastructure gets onboarding, tasks, memory
-# and house control over plain LAN HTTP. Only granting Google consent from
-# another device needs a hostname, and pointing both at one https:// name
-# provides it.
+# With the two kept apart, a box with no extra infrastructure gets onboarding,
+# tasks, memory and house control over plain LAN HTTP. Only granting Google
+# consent from another device needs a hostname. Pointing both at one https://
+# name provides it.
 #
-# The default is loopback because it always works. Consent happens in a
-# browser on this box, which for a household means sitting down at it once.
+# The default is loopback because it always works. Consent then happens in a
+# browser on this box, so a household has to use the box directly once.
 OAUTH_REDIRECT_BASE = os.environ.get("AGENTBOX_OAUTH_REDIRECT_BASE",
                                      "http://127.0.0.1:8771")
 
@@ -139,8 +139,8 @@ MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
                                    "http://127.0.0.1:3471")
 
 SETTINGS = portal.agentbox_settings.SettingsStore(directory=STATE)
-# Device permissions live on the policy mount rather than in the portal's
-# private directory, because a container has to read them. See
+# Device permissions live on the policy mount, not in the portal's private
+# directory, because a container has to read them. See
 # agentbox_household.
 HOUSEHOLD = portal.agentbox_household.HouseholdPolicy(directory=Path(os.environ.get(
     "AGENTBOX_POLICY_DIR",
@@ -155,10 +155,10 @@ MEMBER = "member"
 # OPERATOR the operator made a link and handed it over directly.
 # AGENT    the assistant made it on request, to save checking email.
 #
-# AGENT links are convenient and cannot be trusted, because the assistant can
-# read whatever channel it delivers them on. Anything an AGENT session can do,
-# the assistant can effectively do. So those sessions are useful but grant
-# nothing the assistant could not already do, and stealing one gains nothing.
+# AGENT links cannot be trusted, because the assistant can read whatever
+# channel it delivers them on. Anything an AGENT session can do, the assistant
+# can do. So those sessions grant nothing the assistant could not already do,
+# and stealing one gains nothing.
 ORIGIN_EMAIL = "email"
 ORIGIN_OPERATOR = "operator"
 ORIGIN_AGENT = "agent"
@@ -168,11 +168,11 @@ ORIGIN_AGENT = "agent"
 # their own browser, which has its own cookies, so the nonce from the request
 # is not there.
 #
-# So the binding decides privilege, not access. The same browser proves the
-# person opening the link is the one who asked, and gets everything. Any other
-# browser can read but not approve a memory or disconnect an account, the same
-# limits as an assistant-made link, because whoever merely read the link could
-# be the one opening it.
+# So the binding sets privilege, and does not block access. The same browser
+# proves the person opening the link is the one who asked, and gets
+# everything. Any other browser can read but not approve a memory or
+# disconnect an account. These are the same limits as an assistant-made link,
+# because someone who only read the link could be the one opening it.
 ORIGIN_CHAT = "chat"
 
 # Capabilities withheld from an assistant-made session.
@@ -180,7 +180,7 @@ ORIGIN_CHAT = "chat"
 # Approving a memory is the important one. The review gate is the assistant's
 # only route to lasting memory, and approving its own proposals would remove
 # the person from the loop. Disconnecting is here because revoking someone's
-# account access is not a convenience.
+# account access must be the person's own decision.
 #
 # Reading your own memories, seeing account status and starting a reconnect
 # that the operator side finishes are all safe.
@@ -191,11 +191,11 @@ AGENT_WITHHELD = frozenset({
     "connector:pair_chat",
     # `admins` decides who may approve a household memory and who sees this
     # page at all, and `identity_emails` decides where a sign-in link is
-    # delivered. A link the assistant minted must not be able to move either:
-    # that is the difference between a convenience and a privilege escalation.
+    # delivered. A link the assistant minted must not be able to change
+    # either, because that would be a privilege escalation.
     "ops:write_settings",
-    # Widening what the assistant may actuate in the house is likewise not
-    # something a session the assistant created gets to do.
+    # A session the assistant created also cannot widen what the assistant
+    # may actuate in the house.
     "ops:write_household",
     # Creating an identity is granting access. If the assistant could invite,
     # the assistant could decide who lives here.
@@ -215,7 +215,7 @@ AGENT_WITHHELD = frozenset({
 #
 # Operations lists who lives here, with their addresses and Discord ids.
 # Withholding it from chat links would stop an admin checking the box from
-# their phone. Withholding it from the assistant alone costs nothing.
+# their phone. Withholding it from the assistant alone has no such cost.
 AGENT_ONLY_WITHHELD = frozenset({
     "ops:read_health",
 })
@@ -239,7 +239,7 @@ ROLE_CAPABILITIES = {
         "connector:pair_chat",
         "ops:read_health",
         # Only capabilities that something checks belong here. One that is
-        # granted and never checked is as confusing as one that is checked
+        # granted and never checked is as misleading as one that is checked
         # and never granted.
         "ops:write_settings",
         "ops:write_household",

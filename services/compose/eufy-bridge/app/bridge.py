@@ -5,17 +5,16 @@
 
 Eufy has no public API, so every route to these cameras is reverse-engineered.
 The usual one is an add-on inside Home Assistant, which runs with host
-networking, a D-Bus socket and network admin rights. That is the worst place to
-add unreviewed code. Instead `eufy-security-ws` runs in its own container on a
+networking, a D-Bus socket and network admin rights. Unreviewed code should
+not run with those privileges. Instead `eufy-security-ws` runs in its own container on a
 private network with no host ports, and this bridge talks to it. Eufy's
 protocols are not reimplemented here.
 
 ## What it will and will not do
 
 Looking is allowed, on request, at allowlisted cameras only. There is no arm,
-disarm, alarm, pan, tilt, recording or lock route, and that absence is the
-point. A camera the assistant could arm is one an injected instruction could
-disarm.
+disarm, alarm, pan, tilt, recording or lock route. If the assistant could arm
+a camera, an injected instruction could disarm it.
 """
 from __future__ import annotations
 
@@ -46,7 +45,7 @@ def client():
     """One shared connection, re-established on failure.
 
     eufy-security-ws drops clients when it restarts, so the bridge reconnects
-    rather than returning 500 until someone notices.
+    instead of returning 500 until it is restarted.
     """
     global _client
     with _lock:

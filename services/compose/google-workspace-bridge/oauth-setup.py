@@ -61,24 +61,25 @@ SCOPES = (
     # Turns "someone edited the budget" into a name, since Drive Activity
     # returns a people/{id} and only the People API maps it to a person.
     #
-    # It reads the contact list, which is a real widening: knowing who works on
-    # a document versus knowing everyone you have emailed. Activity works
-    # without it and says "someone" instead.
+    # It reads the contact list, which widens access. The need is to name who
+    # worked on a document, but the scope reveals everyone you have emailed.
+    # Activity works without it and says "someone" instead.
     "https://www.googleapis.com/auth/contacts.readonly",
-    # Workspace domains only; silently returns nothing on a personal account,
-    # where it costs nothing to have asked.
+    # Workspace domains only. It returns nothing on a personal account, so
+    # requesting it there is harmless.
     "https://www.googleapis.com/auth/directory.readonly",
 )
 
-# Opt-in, and the most consequential choice in this file.
+# Opt-in. This scope changes what the token can read more than any other in
+# this file.
 #
 # drive.file (above) reads and writes only files the assistant created. Google
-# enforces that, so it holds even if this bridge is compromised, but it cannot
-# find your tenancy agreement because it cannot see it.
+# enforces that, so it holds even if this bridge is compromised. It also means
+# Drive search cannot find any file the assistant did not create.
 #
-# drive.readonly reads every file in the drive, including tax returns, medical
-# letters and contracts. That makes Drive search useful and is a large
-# widening. Set GOOGLE_ENABLE_DRIVE_READ_ALL=1 to request it, deliberately.
+# drive.readonly reads every file in the drive, including tax returns. That
+# makes Drive search useful and is a large widening of access. Set
+# GOOGLE_ENABLE_DRIVE_READ_ALL=1 to request it.
 #
 # This is the credential's boundary, not a policy check. A scope that was never
 # granted cannot be used at all.

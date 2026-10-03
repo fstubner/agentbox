@@ -35,11 +35,11 @@ class PortalActions:
         a person to hand over, but this one is sent by email or Discord DM,
         channels the assistant can read. With no browser nonce to bind it, an
         operator-level link would sit in a mailbox the assistant can search,
-        able to approve memories and disconnect accounts. Whoever merely reads
-        a link must not be able to use it, as the module docstring says, and
+        able to approve memories and disconnect accounts. Someone who only
+        reads a link must not be able to use it, as the module docstring says.
         agentbox-approvals mints ORIGIN_CHAT for the same reason.
 
-        It costs the invitee nothing they need on arrival. They can read
+        The invitee still has what they need on arrival. They can read
         everything, and request a browser-bound link for anything more.
         """
         why = portal.refusal(session["role"], "ops:invite",
@@ -64,8 +64,8 @@ class PortalActions:
         if not name or "," in name:
             return fail("Give one name, for example sam.")
 
-        # Append rather than replace. Saving the whole map from a two-field
-        # form would silently drop everybody not mentioned in it.
+        # Append to the map instead of replacing it. Saving the whole map from
+        # a two-field form would drop everybody not in the form.
         if address:
             existing = portal.email_map()
             existing = {a: n for a, n in existing.items() if n != name}
@@ -90,8 +90,8 @@ class PortalActions:
         if portal.deliver_link(name, address, url):
             self._redirect("/admin?m=invite_sent")
             return
-        # Nowhere to send it, so show the admin the link to hand over. That is
-        # the same act as the terminal command, with the same origin, since a
+        # Nowhere to send it, so show the admin the link to hand over. This is
+        # the same as the terminal command, with the same origin, because a
         # link handed over by a person has not passed through a channel
         # anything else can read.
         self._send(200, portal.render_admin(
@@ -103,23 +103,24 @@ class PortalActions:
     def _propose_invite(self, form) -> None:
         """Let the assistant draft an invitation. Sends nothing.
 
-        Weaker than _agent_link on purpose. That one takes no identity,
-        because naming a person is what an injected instruction would do. An
-        invitation has to name somebody, so it cannot be made safe that way.
+        This has a weaker guard than _agent_link. _agent_link takes no
+        identity, because naming a person is what an injected instruction
+        would do. An invitation has to name somebody, so that guard cannot
+        apply here.
 
-        It is safe because it does not act. It writes a draft that appears on
+        It is safe because it only writes a draft. The draft appears on
         Operations for a person to decide on. An email saying "add
-        alex@example.com to your assistant" produces something an admin reads
-        and rejects, not a stranger with an account.
+        alex@example.com to your assistant" produces a draft an admin reads
+        and rejects. No account is created.
         """
         provided = self.headers.get("X-Agentbox-Portal-Token", "")
         if not portal.AGENT_TOKEN or not provided or not hmac.compare_digest(
                 provided, portal.AGENT_TOKEN):
             self._send(403, portal.page("No", "<h1>No</h1>"))
             return
-        # `account_name`, not `identity`: this names an account
-        # that does not exist yet, not somebody to act as. /agent/link takes
-        # the latter and is the reason that word is load-bearing here.
+        # Named `account_name`, not `identity`, because it names an account
+        # that does not exist yet. /agent/link takes an `identity` to act as,
+        # so that word has a specific meaning in this module.
         identity = (form.get("account_name") or [""])[0].strip().lower()
         if not portal.agentbox_onboarding.IDENTITY_NAME.match(identity):
             self._send(400, portal.page("No", "<h1>a name is required</h1>"))
@@ -130,9 +131,9 @@ class PortalActions:
             self._send(400, portal.page(
                 "No", "<h1>an email address or a Discord id is required</h1>"))
             return
-        # Refused loudly rather than queued quietly. A flood gains no
-        # privilege, but it leads to an admin who stops reading, and reading is
-        # the safeguard.
+        # Refused with an error, not queued. A flood of drafts gains no
+        # privilege, but it can make an admin stop reading them. The admin
+        # reading each draft is the safeguard.
         if len(portal.agentbox_onboarding.proposals()) >= portal.MAX_PENDING_PROPOSALS:
             self._send(429, portal.page(
                 "Slow down",
@@ -232,8 +233,8 @@ class PortalActions:
             record = portal.agentbox_onboarding.create_invite(
                 str(draft.get("identity", "")), portal.known_identities())
         except portal.agentbox_onboarding.NameTaken:
-            # Left in place rather than discarded: the admin should see what
-            # was asked for, not have it vanish with a message.
+            # Left in place, not discarded, so the admin can still see what was
+            # asked for.
             self._redirect("/admin?m=proposal_name_taken")
             return
         except ValueError:
@@ -248,8 +249,8 @@ class PortalActions:
             self._redirect("/admin?m=" + urllib.parse.quote(
                 f"Invitation sent by {' and '.join(channels)}."))
             return
-        # Nowhere to send it. The same honest fallback the invite form uses,
-        # rather than claiming a delivery that did not happen.
+        # Nowhere to send it. Use the same fallback as the invite form, and do
+        # not report a delivery that did not happen.
         self._send(200, portal.render_admin(
             session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
             invite_error=f"Nothing is configured to carry that. Hand this "
@@ -264,9 +265,9 @@ class PortalActions:
         own credential.
 
         This writes one file and returns. Whether the invite can be completed
-        is for `agentbox invite drain` to decide, since it re-reads the record,
-        and a second copy of those rules here would drift. The checks below
-        only keep the page honest about what it did.
+        is for `agentbox invite drain` to decide, since it re-reads the record.
+        A second copy of those rules here would drift. The checks below only
+        make the page report accurately what it did.
         """
         why = portal.refusal(session["role"], "ops:invite",
                       session.get("origin", portal.ORIGIN_AGENT))
@@ -291,8 +292,8 @@ class PortalActions:
                 token_id, session["identity"],
                 session.get("origin", portal.ORIGIN_AGENT))
         except (OSError, ValueError):
-            # Telling somebody their request was filed when it was not is the
-            # same lie the invite path refuses to tell about delivery.
+            # Do not report the request as filed when it was not. The invite
+            # path does the same for delivery.
             self._redirect("/admin?m=onboarding_unknown")
             return
         self._redirect("/admin?m=onboarding_requested")
@@ -302,10 +303,10 @@ class PortalActions:
 
         Errors are rendered from this POST rather than carried through a
         redirect, because a validation message quotes what the person typed.
-        Flash messages travel in the URL as *keys* into a fixed table
-        precisely so no one can craft a link that shows another admin an
-        arbitrary sentence, and echoing input through `?m=` would give that
-        back. Re-rendering also keeps the rest of the form filled in.
+        Flash messages travel in the URL as *keys* into a fixed table, so no
+        one can craft a link that shows another admin an arbitrary sentence.
+        Echoing input through `?m=` would remove that protection. Re-rendering
+        also keeps the rest of the form filled in.
         """
         why = portal.refusal(session["role"], "ops:write_settings",
                       session.get("origin", portal.ORIGIN_AGENT))
@@ -319,7 +320,7 @@ class PortalActions:
             setting.key for setting in portal.agentbox_settings.SETTINGS
             if setting.secret and (form.get(f"clear_{setting.key}") or [""])[0])
         # `clean_admins` refuses an empty list, but it only checks shape, so a
-        # misspelt name would pass and lock everyone out just as thoroughly.
+        # misspelt name would pass and also lock everyone out.
         # Every admin named must be someone who exists.
         wanted = {n.strip() for n in submitted.get("admins", "").split(",")
                   if n.strip()}

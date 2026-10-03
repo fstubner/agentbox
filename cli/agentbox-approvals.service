@@ -1,9 +1,8 @@
 # Discord approval loop.
 #
 # Runs as the OPERATOR's systemd user instance, never as the agentbox user.
-# That is the security property, not an implementation detail: this process
-# writes grants, so the assistant must not be able to start, stop, signal or
-# share a uid with it.
+# This process writes grants, so the assistant must not be able to start,
+# stop, signal or share a uid with it.
 #
 # Install:
 #   cp cli/agentbox-approvals.service ~/.config/systemd/user/
@@ -19,8 +18,8 @@ Description=Agentbox Discord approval loop
 After=network-online.target
 Wants=network-online.target
 
-# A restart loop against Discord's API earns a rate limit, so back off hard
-# rather than hammering it when the token is wrong.
+# A restart loop against Discord's API triggers its rate limit. These limits
+# stop the unit restarting repeatedly when the token is wrong.
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

@@ -1,11 +1,11 @@
 # How often to check that the model stack is up.
 #
-# Two minutes. The gap this closes is a killed evaluation that nobody notices,
-# which can run to hours, so the difference between one minute and five does
-# not matter. A tick costs one pgrep and one systemctl is-active.
+# Two minutes. This covers a killed evaluation that nobody notices, which can
+# leave the stack down for hours, so the difference between one minute and
+# five does not matter. Each run is one pgrep and one systemctl is-active.
 #
-# OnBootSec matters more than the interval: a reboot during a run is one of the
-# exact cases this exists for, and the units would otherwise stay stopped until
+# OnBootSec matters more than the interval. A reboot during a run is one of the
+# cases this handles, and without it the units would stay stopped until
 # somebody opened a terminal.
 
 [Unit]

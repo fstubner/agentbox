@@ -108,8 +108,8 @@ def policy_drift() -> int:
         return 1
     if not target.exists():
         # Bridges fall back to the copy baked into the image, so this is a
-        # warning rather than an outage. Worth saying loudly: policy edits are
-        # silently not taking effect.
+        # warning rather than an outage. It is still reported, because policy
+        # edits are not taking effect and nothing else says so.
         report(WARN, f"no runtime policy at {target}; bridges are enforcing "
                      f"the copy baked into their images. Run "
                      f"`cli/agentbox policy sync`")
@@ -126,8 +126,8 @@ def policy_drift() -> int:
 # --- runtime policy grants --------------------------------------------------
 #
 # An approval_required tool is refused until an operator issues a grant. Grants
-# are time-boxed and single-use by default so an approval cannot quietly become
-# a standing permission.
+# are time-boxed and single-use by default so an approval cannot become a
+# standing permission.
 
 GRANTS_PATH = Path(os.environ.get(
     "AGENTBOX_POLICY_GRANTS",

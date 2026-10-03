@@ -1,14 +1,15 @@
-# Eufy Security: the reverse-engineered half, isolated from everything.
+# Eufy Security. The reverse-engineered part runs isolated from all other
+# services.
 #
 # Two containers on a private network with no host ports. eufy-security-ws
-# holds the Eufy account credential and speaks Eufy's undocumented protocols;
-# Both services bind loopback only, so the only thing that can reach
-# either is this box. Neither is reachable from the LAN.
+# holds the Eufy account credential and speaks Eufy's undocumented protocols.
+# Neither publishes a host port. They are reachable only on their own compose
+# network, and not from the LAN.
 #
-# The alternative, a HACS integration inside Home Assistant, would put
+# The alternative is a HACS integration inside Home Assistant. That would put
 # unreviewed third-party code in the container that has host networking, a
-# system D-Bus socket, NET_ADMIN, NET_RAW and a Bluetooth radio. Same
-# functionality, far worse placement.
+# system D-Bus socket, NET_ADMIN, NET_RAW and a Bluetooth radio. It would give
+# the same functionality with much more privilege.
 services:
   eufy-security-ws:
     image: bropat/eufy-security-ws:latest
@@ -18,8 +19,8 @@ services:
       PASSWORD: "${EUFY_PASSWORD:?set EUFY_PASSWORD}"
       COUNTRY: "${EUFY_COUNTRY:-GB}"
       # These are the household's Eufy account credentials, held by
-# reverse-engineered code talking to a vendor cloud. Debug logging off so a credential
-      # cannot end up in a log file nobody reads.
+      # reverse-engineered code talking to a vendor cloud. Debug logging is off
+      # so a credential cannot end up in a log file nobody reads.
       DEBUG: ""
     volumes:
       - "${AGENTBOX_STATE_DIR:-${HOME}/.local/state/agentbox}/eufy:/data"
@@ -49,7 +50,7 @@ services:
       EUFY_WS_URL: "ws://eufy-security-ws:3000"
       EUFY_BRIDGE_TOKEN: "${EUFY_BRIDGE_TOKEN:?set EUFY_BRIDGE_TOKEN}"
       # Empty by default. Two of these cameras are indoors, and a missing
-      # config must mean less access rather than more.
+      # config must mean less access, not more.
       EUFY_VIEWABLE_CAMERAS: "${EUFY_VIEWABLE_CAMERAS:-}"
       BRIDGE_HOST: "0.0.0.0"
       BRIDGE_PORT: "8080"

@@ -1,8 +1,8 @@
-"""Approval-loop configuration, now that it comes from the portal.
+"""Approval-loop configuration, which comes from the portal.
 
-The loop decides whose Discord replies can grant a capability. Where that
-list comes from, and what happens when it changes or goes missing, is the
-whole security surface of this file.
+The loop decides whose Discord replies can grant a capability. These tests
+cover where that list comes from, and what happens when it changes or goes
+missing.
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ def load_approvals(tmp_path, monkeypatch):
     module = importlib.util.module_from_spec(spec)
     sys.modules["agentbox_approvals"] = module
     spec.loader.exec_module(module)
-    # Nothing in these tests should reach 1Password; a subprocess in the poll
-    # loop is the regression this guards against as much as it is a test seam.
+    # Nothing in these tests should reach 1Password. This is a test seam, and
+    # it also catches a regression that adds a subprocess to the poll loop.
     patch_everywhere(monkeypatch, module, "op_read",
                         lambda ref: pytest.fail(f"unexpected op_read({ref})"))
     return module
@@ -47,11 +47,10 @@ def test_it_reads_the_portal_settings(approvals):
 
 
 def test_a_revoked_operator_stops_approving_without_a_restart(approvals):
-    """Revocation has to be as live as granting.
+    """Revocation has to take effect as quickly as granting.
 
-    The loop re-reads each pass precisely so removing somebody on the portal
-    takes effect now, rather than whenever a service nobody remembers gets
-    restarted.
+    The loop re-reads the list on each pass, so removing somebody on the portal
+    takes effect immediately and does not wait for a service restart.
     """
     approvals.SETTINGS.save({"approval_user_ids": "111111111111111111,"
                                                   "222222222222222222"})
@@ -85,7 +84,7 @@ def test_the_vault_is_read_at_most_once(tmp_path, monkeypatch):
 
 
 def test_a_portal_value_beats_the_vault(tmp_path, monkeypatch):
-    """So moving a box onto the portal actually moves it."""
+    """A value set on the portal is used instead of the vault."""
     module = load_approvals(tmp_path, monkeypatch)
     patch_everywhere(monkeypatch, module, "op_read",
                         lambda ref: pytest.fail("vault consulted anyway"))
@@ -102,16 +101,16 @@ def test_a_username_is_rejected_rather_than_stored(approvals):
 
 
 def test_the_bot_token_is_not_a_portal_setting(approvals):
-    """It stays in 1Password: rotation, an audit trail, and off this disk.
+    """The bot token stays in 1Password, which gives rotation, an audit trail
+    and keeps it off this disk.
 
-    Every other value moved *out* of a local file. Moving a managed secret
-    *into* one would be the same trade in reverse.
+    The other approval values moved out of local files. Moving a managed
+    secret into a local file would lose those three properties.
     """
     settings = sys.modules["agentbox_settings"]
     keys = {s.key for s in settings.SETTINGS}
     assert not {k for k in keys if "bot" in k or "token" in k}
-    # And it is still reachable where it does live, so this is a statement
-    # about where the token belongs rather than about it having been dropped.
-    # code_of, not read_text: this codebase has been bitten three times by a
-    # source assertion matching the comment that explains the thing.
+    # The token is still read from 1Password, so this checks where it is
+    # stored and does not pass if it were dropped. script_code strips
+    # comments, so the assertion cannot match a comment that mentions it.
     assert "op://Agentbox/discord/bot_token" in script_code("agentbox-approvals")

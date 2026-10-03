@@ -1,35 +1,35 @@
 # Speech to text for the house, on this box.
 #
-# The Discord voice path already transcribes locally, faster-whisper inside
-# the gateway process. This is the same model served over the Wyoming protocol
-# so that Home Assistant can reach it, which is what a satellite in another
-# room needs: the Pi streams audio to Home Assistant, Home Assistant asks this
-# for the words.
+# The Discord voice path already transcribes locally, with faster-whisper
+# inside the gateway process. This is the same model served over the Wyoming
+# protocol so that Home Assistant can reach it. A satellite in another room
+# needs that. The Pi streams audio to Home Assistant, and Home Assistant asks
+# this service for the words.
 #
-# Why a service rather than an add-on: Home Assistant here is a plain
-# container, not Home Assistant OS, so there is no add-on store. The Assist
-# pipeline on this box has `stt_engine: None` for that reason, and a
-# satellite without one wakes, streams, and is met with silence.
+# Why a service and not an add-on: Home Assistant here is a plain container,
+# not Home Assistant OS, so there is no add-on store. For that reason the
+# Assist pipeline on this box has `stt_engine: None`, and a satellite without
+# a speech-to-text engine wakes, streams audio and gets no response.
 #
-# --- WHY THIS EXISTS AT ALL ---------------------------------------------
+# --- WHY THIS EXISTS ----------------------------------------------------
 #
-# docs/voice.md trades speech quality for locality on purpose: "nothing spoken
-# to the assistant and nothing it says back leaves the machine". Every speaker
-# already in this house is an Echo, a Chromecast or a Sony TV, and routing
-# household speech through any of them would pay Piper's price and not get the
-# thing. A local satellite plus this is what keeps that promise true once voice
-# leaves Discord.
+# docs/voice.md accepts lower speech quality to keep speech local: "nothing
+# spoken to the assistant and nothing it says back leaves the machine". Every
+# speaker already in this house is an Echo, a Chromecast or a Sony TV. Routing
+# household speech through any of them would accept Piper's lower quality and
+# still send speech off the box. A local satellite plus this service keeps
+# speech local when voice is used outside Discord.
 
 services:
   wyoming-whisper:
     image: rhasspy/wyoming-whisper:latest
     container_name: wyoming-whisper
     command:
-      # `base` because that is what the gateway already uses and has been
-      # verified against on this hardware, see docs/voice.md, where a
-      # text -> Piper -> WAV -> faster-whisper round trip came back identical.
-      # Larger models are a real quality gain and a real memory cost on a box
-      # where a benchmark and the production model already cannot coexist.
+      # `base` because the gateway already uses it and it is verified on this
+      # hardware. See docs/voice.md, where a text -> Piper -> WAV ->
+      # faster-whisper round trip came back identical. Larger models improve
+      # quality but use more memory, on a box where a benchmark and the
+      # production model already cannot run at the same time.
       - --model
       - base
       - --language
@@ -37,17 +37,16 @@ services:
       - --beam-size
       - "1"
     # Loopback only. Home Assistant runs with host networking, so 127.0.0.1
-    # from its perspective is this host, it reaches this without the port
-    # being on the LAN. Nothing else needs to.
+    # from its perspective is this host. It reaches this without the port
+    # being on the LAN. Nothing else needs to reach it.
     ports:
       - "127.0.0.1:10300:10300"
     volumes:
       - whisper_models:/data
     cpus: "2.00"
-    # Whisper base plus the runtime. Bounded rather than generous: the
-    # constraint this deployment is built around is 16 GB shared with a model
-    # server, and an unbounded transcriber is how that becomes a swap storm
-    # during someone's sentence.
+    # Whisper base plus the runtime, with a tight limit. This deployment has
+    # 16 GB shared with a model server, and an unbounded transcriber could push
+    # the box into heavy swapping while someone is speaking.
     mem_limit: 1536m
     pids_limit: 256
     security_opt:

@@ -11,8 +11,8 @@ from agentbox_common import FAIL, OK, REPO, WARN, report
 #
 # The builder writes branches into its own clone and never pushes, so this is
 # how they reach the operator: fetch from the clone, read the diff, merge if
-# it's good. Pull rather than push means that container never needs write
-# access to this repository.
+# it's good. Because the operator pulls, the builder container never needs
+# write access to this repository.
 
 BUILDER_REPO = Path(os.environ.get(
     "AGENTBOX_BUILDER_REPO",
@@ -85,9 +85,9 @@ def proposals_show(name: str) -> int:
 def proposals_merge(name: str) -> int:
     """Merge a proposal onto a local branch, never straight onto main.
 
-    The assistant cannot merge, and this keeps it that way. The work lands on a
-    branch for you to test and push. Merging straight to main would make
-    approval one keystroke on an unread diff.
+    The assistant cannot merge. The work lands on a branch for you to test and
+    push. Merging straight to main would make approval one keystroke on an
+    unread diff.
     """
     if not proposals_fetch():
         return 1

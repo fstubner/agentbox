@@ -27,8 +27,8 @@ def file_as_feedback(store: dict[str, Any], proposal: dict[str, Any]):
 
 def list_feedback(handler, body):
     """The feedback backlog. Operator only, and never assistant context, so
-    the assistant cannot start apologising for things instead of them being
-    fixed."""
+    the assistant does not apologise for a problem in place of the problem
+    being fixed."""
     require_review(handler)
     query = query_of(handler)
     wanted = first(query, "status", "open")

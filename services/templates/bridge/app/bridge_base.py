@@ -30,8 +30,8 @@ Without it, a stopped Vikunja looks healthy everywhere.
 
 ## Request logging
 
-One JSON line per request, to show where the bytes go in real traffic. It is
-careful about content.
+One JSON line per request, to show where the bytes go in real traffic. It
+leaves out content as follows.
 
 - The Authorization header and request and response bodies are never logged.
 - Only allowlisted query parameters are logged (`LOGGED_QUERY_PARAMS`). A
@@ -79,7 +79,7 @@ VIEWS = ("full", "lean")
 def resolve_view(value: str | None, allowed: tuple[str, ...] = VIEWS,
                  default: str = "full") -> str:
     """Validate a requested view. An unknown value is refused rather than
-    ignored, so a typo cannot quietly return more data than intended."""
+    ignored, so a typo cannot return more data than intended."""
     view = value or default
     if view not in allowed:
         raise BridgeError(400, f"view must be one of: {', '.join(sorted(allowed))}")
@@ -121,7 +121,7 @@ def project_fields(items: Any, fields: tuple[str, ...]) -> Any:
 # agentbox-mcp already checks every tool call, but it also holds this bridge's
 # token. If the check and the token lived only in that one process, compromising
 # it would defeat both. So the bridge checks again, against the same policy and
-# grants, and its check is the one that counts. The idea comes from OpenShell,
+# grants, and its check is authoritative. The idea comes from OpenShell,
 # which enforces egress outside the agent's sandbox.
 #
 # A bridge declares which capability a request uses. agentbox-mcp checks

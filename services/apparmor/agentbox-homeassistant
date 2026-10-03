@@ -3,34 +3,34 @@
 # This is Docker's `docker-default` profile, copied verbatim, plus the D-Bus
 # rules Bluetooth needs and nothing else.
 #
-# ## Why a custom profile rather than apparmor=unconfined
+# ## Why a custom profile instead of apparmor=unconfined
 #
 # Home Assistant already runs with host networking, a mounted system D-Bus
-# socket, NET_ADMIN and NET_RAW. Each of those is individually defensible and
-# together they make it the most privileged container on this box, and it is
-# the one service meant to be reachable from the LAN. Turning off its last
-# default confinement on top of that stack is a bigger step than it looks.
+# socket, NET_ADMIN and NET_RAW. Each of those is needed. Together they make it
+# the most privileged container on this box, and it is the one service meant
+# to be reachable from the LAN. AppArmor is its last default confinement, so
+# it stays on.
 #
-# `docker-default` carries no dbus rule at all, and AppArmor denies what a
-# profile does not permit, so every D-Bus call was refused at the handshake:
+# `docker-default` has no dbus rule, and AppArmor denies what a profile does
+# not permit, so every D-Bus call is refused at the handshake:
 #
 #   apparmor="DENIED" operation="dbus_method_call" member="Hello"
 #
-# `Hello` is the first message a client sends, which is why the symptom was an
-# EOFError with no useful detail behind it.
+# `Hello` is the first message a client sends, so the symptom is an EOFError
+# with no useful detail.
 #
-# So: keep every restriction docker-default imposes, and add the smallest set
-# of D-Bus rules that lets BlueZ work. Bluetooth becomes possible; nothing else
-# does.
+# This profile keeps every restriction docker-default imposes and adds the
+# smallest set of D-Bus rules that lets BlueZ work. It allows Bluetooth and
+# nothing else.
 #
 # ## Install
 #
 #   sudo cp services/apparmor/agentbox-homeassistant /etc/apparmor.d/
 #   sudo apparmor_parser -r -W /etc/apparmor.d/agentbox-homeassistant
 #
-# The compose file names it via security_opt. `apparmor_parser -r` is idempotent
-# and safe to re-run; the profile survives reboot because it lives in
-# /etc/apparmor.d.
+# The compose file names it via security_opt. `apparmor_parser -r` is
+# idempotent and safe to re-run. The profile survives reboot because it lives
+# in /etc/apparmor.d.
 
 #include <tunables/global>
 
@@ -64,11 +64,11 @@ profile agentbox-homeassistant flags=(attach_disconnected,mediate_deleted) {
 
   # --- the only addition: D-Bus for BlueZ -----------------------------------
   #
-  # Scoped to what a Bluetooth client actually does. Note there is no blanket
-  # `dbus,` rule: the container may speak to the bus daemon itself and to
-  # org.bluez, and to nothing else on the system bus. systemd, NetworkManager,
-  # logind and the rest stay unreachable, which is the entire reason for
-  # writing this file instead of unconfining.
+  # Scoped to what a Bluetooth client does. There is no blanket `dbus,` rule.
+  # The container may talk to the bus daemon itself and to org.bluez, and to
+  # nothing else on the system bus. systemd, NetworkManager, logind and the
+  # other services stay unreachable. That is the reason for this file instead
+  # of unconfining.
 
   # Connect and register. Without these the handshake fails at Hello.
   dbus send
@@ -95,15 +95,14 @@ profile agentbox-homeassistant flags=(attach_disconnected,mediate_deleted) {
        path=/org/bluez/**,
 
   # Device discovery. BlueZ announces a device appearing or disappearing with
-  # InterfacesAdded / InterfacesRemoved on the ObjectManager, at the ROOT path
-  # `/`, not under /org/bluez, and from its unique connection name (:1.3)
-  # rather than the well-known org.bluez. Neither rule above matches either
-  # fact, so every announcement was denied.
+  # InterfacesAdded / InterfacesRemoved on the ObjectManager. It sends these at
+  # the ROOT path `/`, not under /org/bluez, and from its unique connection
+  # name (:1.3), not the well-known org.bluez. Neither rule above matches, so
+  # without this rule every announcement is denied.
   #
-  # Silently: the kernel logged 449 denials between 1 and 14 August, Home
-  # Assistant never complained, and the household's SwitchBot sensors simply
-  # never appeared. A profile written to make Bluetooth work was the thing
-  # stopping it, and nothing in this platform reads the audit log to notice.
+  # Those denials are silent. Home Assistant reports no error, and Bluetooth
+  # devices such as SwitchBot sensors never appear. The only trace is in the
+  # kernel audit log, and nothing in this platform reads it.
   #
   # Scoped to the one interface that carries the announcement, so this does not
   # become a general permission to receive signals from anything on the bus.
@@ -113,15 +112,13 @@ profile agentbox-homeassistant flags=(attach_disconnected,mediate_deleted) {
        interface=org.freedesktop.DBus.ObjectManager,
 
   # Peer-scoped, not interface-scoped. An unscoped rule on these three
-  # interfaces permits introspecting *any* service on the bus, written that
-  # way first, and systemd1 and login1 were both reachable through it. Every
-  # standard interface must name its peer or it is a hole with a specific name
-  # on it.
+  # interfaces permits introspecting *any* service on the bus, including
+  # systemd1 and login1. Every rule on a standard interface must name its peer.
   #
-  # Order matters to the parser: peer= comes last. Getting it wrong is not
-  # silent but it is easy to miss, apparmor_parser rejects the file and leaves
-  # the *previous* profile loaded, so the container keeps running with whatever
-  # was there before while the edit appears to have been applied.
+  # The parser requires peer= to come last. If the order is wrong,
+  # apparmor_parser rejects the file and leaves the *previous* profile loaded.
+  # The container keeps running with the old profile, and the edit looks
+  # applied when it is not.
   dbus (send,receive)
        bus=system
        interface=org.freedesktop.DBus.{Properties,ObjectManager,Introspectable}

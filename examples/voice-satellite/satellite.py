@@ -7,17 +7,17 @@ gives you a spoken conversation with the assistant from another room.
     listen -> transcribe locally -> POST text -> speak the reply locally
 
 **Audio never leaves this device.** Speech-to-text and text-to-speech both run
-here; only text crosses the network. That is the whole reason to put Whisper
-and Piper on the satellite rather than streaming microphone audio to the main
-box: a Pi is far too slow to run the assistant's 30B-class model, but it is
-perfectly capable of the two small models at either end of the conversation.
-It also means a compromised network sees text, not a live microphone feed.
+here, and only text crosses the network. This is why Whisper and Piper run on
+the satellite instead of microphone audio being streamed to the main box. A Pi
+is too slow to run the assistant's 30B-class model, but it can run the two
+small models at either end of the conversation. A compromised network sees
+text, not a live microphone feed.
 
 Sized for a Pi 4 or 5. On a Pi 4, `tiny.en` transcribes a short utterance in
 about a second; `base.en` is noticeably better and roughly twice that. Piper
 synthesises faster than real time on both.
 
-## The one thing this cannot do yet
+## Missing server endpoint
 
 Agentbox has no synchronous conversation endpoint. `hermes webhook` accepts a
 POST and runs the agent, but delivers the reply to a messaging platform such
@@ -68,9 +68,9 @@ SAMPLE_RATE = 16_000
 CHANNELS = 1
 BLOCK_MS = 30
 
-# Voice activity, by amplitude. Crude on purpose: proper VAD or a wake word is
-# the right answer for an always-on device in a room (see the README), but this
-# has no extra dependencies and is enough to prove the loop end to end.
+# Voice activity, by amplitude. A proper VAD or a wake word is better for an
+# always-on device in a room (see the README). This has no extra dependencies
+# and is enough to test the loop end to end.
 SILENCE_RMS = float(os.environ.get("SATELLITE_SILENCE_RMS", "0.012"))
 SILENCE_HANG_S = float(os.environ.get("SATELLITE_SILENCE_HANG", "1.2"))
 MAX_UTTERANCE_S = float(os.environ.get("SATELLITE_MAX_UTTERANCE", "20"))
@@ -166,7 +166,7 @@ def play_wav(path: str) -> None:
 
     alsa-utils is on every Raspberry Pi image, so this drops the `soundfile`
     dependency, one fewer wheel to build on a Pi, where native builds
-    are slow and occasionally fail outright. Set SATELLITE_PLAY_CMD to override
+    are slow and sometimes fail. Set SATELLITE_PLAY_CMD to override
     (`paplay` for PulseAudio, or a command that targets a specific device).
     """
     import shlex
@@ -192,7 +192,7 @@ class Ears:
     def __init__(self, model_name: str) -> None:
         from faster_whisper import WhisperModel
         log(f"loading whisper '{model_name}'…")
-        # int8 on CPU: on a Pi this is the difference between usable and not.
+        # int8 on CPU. Without it, transcription on a Pi is too slow to use.
         self.model = WhisperModel(model_name, device="cpu", compute_type="int8")
 
     def transcribe(self, wav_path: str) -> str:

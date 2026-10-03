@@ -19,7 +19,7 @@ def portal(tmp_path, monkeypatch):
 
 
 def test_a_new_person_is_told_what_this_is(portal):
-    """Nothing stored and nothing waiting is the closest reading of "new"."""
+    """A person with nothing stored and nothing waiting is treated as new."""
     body = portal.render_overview("sam", portal.MEMBER, waiting=0,
                                   has_memories=False)
     assert "What this is" in body
@@ -27,8 +27,8 @@ def test_a_new_person_is_told_what_this_is(portal):
 
 
 def test_somebody_with_memories_is_not_reintroduced(portal):
-    """A household member reading this for the hundredth time does not need
-    to be told what a household assistant is."""
+    """A household member who already uses the assistant does not need the
+    introduction again."""
     body = portal.render_overview("alex", portal.MEMBER, waiting=0,
                                   has_memories=True)
     assert "What this is" not in body
@@ -51,8 +51,8 @@ def test_a_person_with_nothing_connected_is_pointed_at_accounts(portal):
 
 
 def test_only_admins_are_shown_the_box(portal):
-    """A member has no business seeing service health, and computing it costs
-    a docker call and eight probes."""
+    """Members do not need service health, and computing it costs a docker
+    call and eight probes."""
     member = portal.render_overview("sam", portal.MEMBER, waiting=0,
                                     has_memories=True)
     admin = portal.render_overview("alex", portal.ADMIN, waiting=0,
@@ -62,8 +62,8 @@ def test_only_admins_are_shown_the_box(portal):
 
 
 def test_an_evaluation_alone_is_not_alarming(portal, monkeypatch):
-    """An evaluation with nothing actually wrong does not paint the page red,
-    and a real failure is never hidden by one.
+    """An evaluation with nothing wrong does not show the page as failing, and
+    an evaluation never hides a real failure.
     """
     status = portal.agentbox_status
     monkeypatch.setattr(status, "cached", lambda: status.Snapshot(
@@ -98,24 +98,24 @@ def test_every_setting_has_a_one_line_hint(portal):
 
 
 def test_the_rationale_is_still_on_the_page_just_folded(portal):
-    """Hiding it entirely would lose the record of why each one is like that."""
+    """Removing it would lose the record of why each setting is as it is."""
     body = portal.render_admin("alex", "").decode()
     assert "<details" in body
     assert "Why</summary>" in body
     settings = sys.modules["agentbox_settings"]
     admins = settings.BY_KEY["admins"]
     assert admins.hint in body
-    # Any sentence from the long form will do; pinning one exact phrase
-    # made this fail when the admins rationale was legitimately reworded.
+    # Any sentence from the long form will do. Pinning a whole exact phrase
+    # would fail whenever the admins rationale is reworded.
     assert "manages only their own" in body
 
 
 def test_an_evaluation_never_hides_a_real_problem(portal, monkeypatch):
     """A running benchmark must not hide problems on the status card.
 
-    A certification run does not stop production, so assuming an evaluation
-    meant a deliberately stopped stack would hide real outages on the page
-    whose job is to show them.
+    A certification run does not stop production. Treating an evaluation as a
+    planned stop would hide real outages on the page that exists to show
+    them.
     """
     status = portal.agentbox_status
     monkeypatch.setattr(status, "cached", lambda: status.Snapshot(

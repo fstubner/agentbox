@@ -1,8 +1,8 @@
-"""Household settings, and the rules that keep them from becoming a hazard.
+"""Household settings, and the validation rules that keep them safe.
 
-Two of them decide privilege, who is an admin and where a sign-in link goes, so
-the interesting tests are about submitting nonsense and whether the assistant
-can reach them.
+Two of them decide privilege, who is an admin and where a sign-in link goes. So
+most tests here submit invalid input or check whether the assistant can reach
+them.
 """
 from __future__ import annotations
 
@@ -62,8 +62,8 @@ def test_an_unset_setting_falls_back_to_its_default(store):
 
 
 def test_a_bad_entry_changes_nothing_at_all(store):
-    """A half-applied settings page is how somebody ends up with an admin list
-    they did not intend."""
+    """A half-applied save could leave somebody with an admin list they did
+    not intend."""
     store.save({"admins": "alex"})
     with pytest.raises(settings_mod.InvalidSetting):
         store.save({"admins": "sam", "identity_emails": "not-an-email"})
@@ -78,8 +78,8 @@ def test_names_must_look_like_identities(store):
 
 
 def test_a_pair_without_a_colon_is_explained_not_dropped(store):
-    """A list that quietly loses an entry leaves somebody believing they
-    configured something they did not."""
+    """A list that drops an entry without an error leaves somebody believing
+    they configured something they did not."""
     with pytest.raises(settings_mod.InvalidSetting) as exc:
         store.save({"identity_emails": "alex@example.com"})
     assert "name:value" in str(exc.value)
@@ -114,8 +114,8 @@ def test_the_file_is_not_world_readable(store):
 
 
 def test_a_crash_mid_write_cannot_empty_the_admin_list(store):
-    """Written whole then moved: a truncated file that reads as 'nobody is an
-    admin' would lock everyone out of Operations."""
+    """The file is written whole, then moved into place. A truncated file that
+    reads as 'nobody is an admin' would lock everyone out of Operations."""
     store.save({"admins": "alex"})
     assert json.loads(store.path.read_text())["admins"] == "alex"
     # The temp file is never the live path.
@@ -133,14 +133,14 @@ def test_saving_reports_only_what_changed(store):
 def test_device_permissions_are_not_in_the_portal_only_file():
     """The settings file is safe because no container mounts it. Device
     permissions must be readable by the Home Assistant bridge, so they live
-    elsewhere rather than giving the assistant a route to the admin list."""
-    # Named explicitly rather than pattern-matched: "identity_emails"
-    # contains the substring "entit", and a test that passes by accident is
-    # worse than no test.
+    elsewhere, so the assistant has no route to the admin list."""
+    # Named explicitly, not pattern-matched. "identity_emails" contains the
+    # substring "entit", and a test that passes by accident is worse than no
+    # test.
     device_keys = {"controllable", "controllable_entities", "entities",
                    "devices", "ha_controllable_entities"}
     assert not device_keys & set(settings_mod.BY_KEY)
-    # And the household policy is the thing that does hold them.
+    # The household policy holds them.
     assert hasattr(household_mod.HouseholdPolicy, "controllable")
 
 

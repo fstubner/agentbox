@@ -8,8 +8,8 @@ description: Use when adding a new credential bridge to the Agentbox platform, a
 A bridge keeps a credential away from the assistant. agentbox-mcp calls the
 bridge with a bridge token, and the bridge calls the upstream service with the
 real credential and returns only what it allows. Every bridge uses the shared
-base so it gets auth that fails closed. A hand-written check once accepted an
-empty token.
+base so its auth fails closed. A hand-written auth check can accept an empty
+token.
 
 ## Steps
 
@@ -31,17 +31,17 @@ empty token.
      return only the safe part of the upstream response.
    - Subclass `BridgeHandler` and set `bridge_token` and `routes`.
    - **Override `capability_for()` for anything gated.** Return the policy
-     capability a request uses, or None. agentbox-mcp checks tool calls too,
-     but it also holds your bridge token, so the bridge's check is the one
-     that counts.
+     capability a request uses, or None. agentbox-mcp also checks tool calls,
+     but it holds your bridge token, so the bridge's check is the
+     authoritative one.
    - **If the bridge fronts a service you run**, override `upstream_status()`
-     to probe it and return `{"ok": bool, "upstream": {...}}`. That is what
-     makes `/ready` meaningful. Never add the upstream to `/health`.
+     to probe it and return `{"ok": bool, "upstream": {...}}`. `/ready`
+     reports this result. Never add the upstream to `/health`.
    - Consider a `view` parameter on list endpoints that return many objects.
-     Returning only the fields the assistant acts on is the cheapest context
-     saving there is. `vikunja-bridge` shows the pattern.
+     Returning only the fields the assistant acts on saves context at little
+     cost. `vikunja-bridge` shows the pattern.
 
-   Four rules for the API, each learned by getting it wrong.
+   Follow four rules for the API.
 
    - **Every list endpoint takes a limit.** Use `resolve_limit` from
      `bridge_base`. Without one the caller cannot know how much of the model's
@@ -53,29 +53,30 @@ empty token.
    - **Constrain writes the same way in every direction.** If creating
      something forces a namespace, applying or referencing it must enforce the
      same namespace, or the namespace means nothing.
-   - **Tools are building blocks, not workflows.** A tool that is another tool
-     plus a fixed argument should not exist. Workflow belongs in a skill or
-     prompt, where it can change without an API change.
+   - **Do not add a tool that is another tool plus a fixed argument.** Put
+     workflow in a skill or prompt, where it can change without an API
+     change.
 
    Never put policy in a tool description. "Do not use without approval" is
-   only documentation, and the assistant can ignore it. Enforce it in the
-   bridge or do not claim it.
+   only text, and the assistant can ignore it. Enforce the rule in the bridge,
+   or leave it out of the description.
 
 4. **Know which probe is which.** `/health` says whether the process answers
    and never touches the upstream, because the container healthcheck uses it.
-   A bridge that restart-loops when its backing service is down is worse than
-   one that stays up and reports it. `/ready` does probe the upstream. A
-   stopped backing service should turn `/ready` red and leave `/health` green.
+   When the backing service is down, the bridge should stay up and report it.
+   It should not restart-loop. `/ready` probes the upstream. A stopped backing
+   service should turn `/ready` red and leave `/health` green.
 
 5. **Check the compose file and env example.** Keep the `:?` guards so a
-   missing secret fails the deploy loudly. The scaffold publishes a port on
-   `127.0.0.1` with the label `agentbox.exposure: operator`, so the bridge can
-   be tested on its own during review. Remove that `ports` block and set the
-   label to `private` once the bridge is wired into agentbox-mcp. A bridge
-   with a host port lets any local process use a stolen bridge token.
+   missing secret fails the deploy with an error. The scaffold publishes a
+   port on `127.0.0.1` with the label `agentbox.exposure: operator`, so the
+   bridge can be tested on its own during review. Remove that `ports` block
+   and set the label to `private` once the bridge is wired into agentbox-mcp.
+   A bridge with a host port lets any local process use a stolen bridge
+   token.
 
 6. **Map capabilities in `policies/approval-policy.yaml`.** Reads are usually
-   `allowed`. Anything that changes state needs a deliberate tier, and
+   `allowed`. Anything that changes state needs an explicitly chosen tier, and
    anything that sends, deletes or pays belongs in `always_denied` unless a
    bridge constrains it. A tool with no mapping fails closed.
 
@@ -99,8 +100,8 @@ empty token.
    - Once wired in, `curl -s localhost:3465/ready` names the bridge.
    - If you implemented `upstream_status()`, stop the backing service and
      confirm `/health` stays 200 while `/ready` fails and
-     `cli/agentbox doctor` exits non-zero. A readiness check nobody has seen
-     fail may not work.
+     `cli/agentbox doctor` exits non-zero. A readiness check that has never
+     been seen to fail may not work.
 
 9. **Deploy** with `cli/agentbox deploy <name>-bridge`, then
    `cli/agentbox deploy agentbox-mcp`.

@@ -264,8 +264,8 @@ class HomeAssistantBridge(BridgeHandler):
             return "home_control_comfort"
         if path.startswith("/v1/automations"):
             # Writing one is approval_required. Validation proves it cannot
-            # reach a lock, but not whether it is a good idea, and code that
-            # runs unattended deserves a person reading it once.
+            # reach a lock, but not whether it is a good idea. Code that runs
+            # unattended should be read by a person once.
             return ("home_write_automation" if method == "POST"
                     else "home_read_state")
         return None

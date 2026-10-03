@@ -1,7 +1,7 @@
 """Tests for the shared bridge base: fail-closed auth, error handling, routing.
 
-These guard the exact defect that motivated the base class: a bridge accepting
-an empty bearer token when its token is unset.
+They cover the defect the base class exists to prevent, a bridge accepting an
+empty bearer token when its token is unset.
 """
 from __future__ import annotations
 
@@ -290,7 +290,7 @@ def test_persisted_log_rotates_at_the_size_bound(tmp_path, monkeypatch):
 
 
 def test_unwritable_log_file_does_not_break_the_response(tmp_path, monkeypatch):
-    """A logging path that can fail a request is worse than no logging."""
+    """A failure to write the log must not fail the request."""
     monkeypatch.setattr(bridge_base, "LOG_FILE", str(tmp_path / "nope" / "x.jsonl"))
     server, base = serve(make_handler("secret"))
     try:

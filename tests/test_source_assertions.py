@@ -4,10 +4,9 @@
 wrong. `assert "x" not in source` fails when a comment explains why x was
 removed. Both test prose instead of code.
 
-Some properties really are structural, such as "this file must not import
-that", and reading the source is the honest way to check them. So this does not
-ban source assertions. It bans asserting on raw text that still contains
-comments.
+Some properties are structural, such as "this file must not import that", and
+reading the source is the right way to check them. So this does not ban source
+assertions. It bans asserting on raw text that still contains comments.
 """
 from __future__ import annotations
 

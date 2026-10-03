@@ -13,9 +13,9 @@ def complete_pairings(token: str) -> None:
     """Finish Discord pairings started in the portal.
 
     Someone clicks "Connect Discord" on their own page, gets a short code, and
-    sends it to the bot as a direct message. Receiving it from their account is
-    the proof, since anyone can type a user id into a form but only the
-    account's owner can send from it.
+    sends it to the bot as a direct message. The message coming from their
+    account proves they own it. Anyone can type a user id into a form, but only
+    the account's owner can send from it.
     """
     try:
         data = json.loads(CHAT_LINKS.read_text(encoding="utf-8"))
@@ -67,16 +67,16 @@ def send_link_on_request(token: str) -> None:
     """A paired person sends `link` by DM and gets a sign-in link back.
 
     The assistant's `request_signin_link` makes a link that cannot see
-    Operations, and `agentbox-portal link` needs a terminal. This gives someone
-    on their phone a way in.
+    Operations, and `agentbox-portal link` needs a terminal. This lets someone
+    sign in from their phone.
 
-    Sending from a paired account is the authentication, the same proof the
-    pairing rests on.
+    A message from a paired account authenticates the sender, the same check
+    that pairing uses.
 
     The link is ORIGIN_CHAT, never ORIGIN_OPERATOR. It arrives on a channel the
-    assistant can read, so it must be worth little to a reader. It can look at
-    everything, including Operations, and cannot approve a memory, connect or
-    disconnect an account, invite anyone or change a setting.
+    assistant can read, so it must grant little to anyone who reads it. It can
+    view everything, including Operations. It cannot approve a memory, connect
+    or disconnect an account, invite anyone or change a setting.
     """
     try:
         data = json.loads(CHAT_LINKS.read_text(encoding="utf-8"))
@@ -93,9 +93,9 @@ def send_link_on_request(token: str) -> None:
         messages = discord("GET", f"/channels/{channel.get('id')}/messages?limit=10",
                            token) or []
         if str(channel.get("id")) not in seen:
-            # The first look at this conversation. Note where it starts and
-            # answer nothing, so old `link` messages already there do not all
-            # get live links at once.
+            # This conversation has not been seen before. Record where it
+            # starts and answer nothing, so old `link` messages already there do
+            # not all get live links at once.
             newest = max((int(m.get("id", 0)) for m in messages), default=0)
             remember_link_request(str(channel.get("id")), str(newest))
             continue
@@ -168,8 +168,8 @@ def deliver_pending_links(token: str) -> None:
     the same reason it cannot exchange an OAuth code.
 
     Sending over a channel the assistant can read is safe only because the
-    link is bound to the browser that asked for it. That property belongs to
-    the portal. If it were ever relaxed, this would have to stop.
+    link is bound to the browser that asked for it. The portal enforces that
+    binding. If the portal stops binding links, this delivery must stop too.
     """
     directory = PORTAL_DIR / "requests"
     if not directory.is_dir():

@@ -1,6 +1,6 @@
 # The build context is the repo root so Dockerfiles can copy shared sources
 # from services/templates and policies/. Everything not needed in an image is
-# excluded here, or every build ships the whole repo.
+# excluded here. Otherwise every build would include the whole repo.
 .git
 .github
 docs

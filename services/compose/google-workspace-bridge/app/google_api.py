@@ -71,7 +71,7 @@ def post_form(url, data):
 
 
 # The access token, cached until shortly before it expires. Fetching one per
-# request roughly doubled the time of a Gmail search. The margin is there
+# request roughly doubles the time of a Gmail search. The margin is there
 # because the token has to outlive the request it is used for.
 _TOKEN_CACHE: dict = {"value": "", "expires_at": 0.0}
 _TOKEN_LOCK = threading.Lock()
@@ -150,9 +150,9 @@ def google_bytes(method, url):
         raise BridgeError(exc.code, {"google_error": detail}) from None
 
 
-# There is no delete here. Deleting mail and files is
-# always_denied and has no tool, and code that could do it would still sit in
-# the process holding the OAuth credential. Absent is stronger than unused.
+# There is no delete here. Deleting mail and files is always_denied and has no
+# tool. Unused delete code would still sit in the process holding the OAuth
+# credential, so it is not written at all.
 
 
 def decode_b64url(value):

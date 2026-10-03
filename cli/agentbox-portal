@@ -6,8 +6,8 @@
 - **Admins** also see service health and settings, and invite people.
 
 Private memory proposals need someone other than the operator to approve
-them, because the operator approving another person's private memories would
-defeat the point. This page is how each person reaches their own.
+them. The operator should not approve another person's private memories. Each
+person reviews their own proposals on this page.
 
 ## Sign-in links
 
@@ -23,7 +23,7 @@ Reading a link, in any channel, is not enough to use it.
 
 The assistant has one route in, `POST /agent/link`, behind its own token. It
 mints a link that can read but not decide. That endpoint accepts an identity in
-the request body, so the identity binding lives in the caller, not here. The
+the request body, so the identity binding lives in the caller. The
 MCP tool has no identity parameter and passes the one its own bearer token
 resolved to.
 
@@ -54,10 +54,9 @@ from pathlib import Path
 def _sibling(name: str):
     """Load a module that ships beside this script.
 
-    The portal is deployed as a single executable rather than an installed
-    package, so its modules are loaded by path. Keeping them as real files
-    rather than inlining everything is what stops this script becoming the
-    only place any of it can be understood.
+    The portal is deployed as a single executable, not an installed package,
+    so its modules are loaded by path. They are kept as separate files so the
+    code can be read on its own, outside this script.
     """
     if name in sys.modules:
         return sys.modules[name]
@@ -79,9 +78,10 @@ agentbox_onboarding = _sibling("agentbox_onboarding")
 def _part(name: str):
     """Load one of the portal's own modules, fresh, as `<this module>.<name>`.
 
-    Fresh rather than cached because each module reads its settings from the
-    environment when it runs, the same as this file always has, and a portal
-    loaded twice (as the tests do) must not share the first one's settings.
+    The module is loaded fresh, not from the cache, because each module reads
+    its settings from the environment when it runs, as this file does. A
+    portal loaded twice (as the tests do) must not share the first one's
+    settings.
     Every name a part exports is also defined here, so the views and any caller
     see one namespace.
     """
@@ -147,9 +147,9 @@ render_admin = agentbox_portal_admin.render_admin
 def cmd_link(args) -> int:
     """Mint a login link and print it.
 
-    Printing rather than sending, for now: delivery needs the portal's own
-    Discord application (see the module docstring), and until that token exists
-    a link handed over by the operator is honest about who is delivering it.
+    The link is printed, not sent. Delivery needs the portal's own Discord
+    application (see the module docstring). Until that token exists, the
+    operator hands the link over, so it is clear who delivered it.
     """
     try:
         url, link_id = auth.mint_link(args.identity, args.base_url,
@@ -167,8 +167,8 @@ def reap_expired() -> tuple[int, int]:
     """Delete session and link records that can no longer authenticate anyone.
 
     They cannot be used once expired, but each holds an identity and a secret
-    hash, so there is no reason to keep them. Runs at startup rather than on a
-    timer, and skips any record it cannot read.
+    hash, so they are deleted. This runs at startup, not on a timer, and skips
+    any record it cannot read.
     """
     sessions = links = 0
     for directory, counter in (("sessions", "s"), ("links", "l")):
@@ -204,19 +204,19 @@ def cmd_serve(args) -> int:
     if dead_sessions or dead_links:
         print(f"[ok] reaped {dead_sessions} expired session(s) and "
               f"{dead_links} spent link(s)", file=sys.stderr)
-    # Onboarding owns its own directories, so it reaps them. Same moment, same
-    # reasoning: an invite that expired unused still holds the secret that
-    # made its link a credential.
+    # Onboarding owns its own directories, so it removes its own expired
+    # records, also at startup. An invite that expired unused still holds the
+    # secret that made its link a credential.
     dead_settled, dead_invites = agentbox_onboarding.reap()
     if dead_settled or dead_invites:
         print(f"[ok] reaped {dead_settled} settled onboarding record(s) and "
               f"{dead_invites} expired invite(s)", file=sys.stderr)
     httpd = ThreadingHTTPServer((args.host, args.port), server.PortalHandler)
     print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
-    # Said at startup because it cannot be said when it matters. The sign-in
-    # page answers the same way whether or not delivery worked, so without a
-    # mail server links are made, nobody receives them, and the page looks
-    # fine. This is the only place a person finds out.
+    # Warned at startup because the sign-in page cannot report it. The page
+    # answers the same way whether or not delivery worked. Without a mail
+    # server, links are created, nobody receives them, and the page shows no
+    # error. This warning is the only place the problem is reported.
     if config.SETTINGS.value("identity_emails") and not config.SETTINGS.value("smtp_host"):
         print("[warn] sign-in addresses are configured but no mail server is: "
               "links will be minted and never sent, and the page cannot say so "

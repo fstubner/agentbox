@@ -59,7 +59,7 @@ def log(message: str) -> None:
 
 
 def short_id(value: str) -> str:
-    """First eight characters. Nobody is typing a UUID into a chat window."""
+    """First eight characters, short enough to type in a chat reply."""
     return str(value)[:8]
 
 

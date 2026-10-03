@@ -52,7 +52,7 @@ def load_schedule() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 
 def render_calendar(identity: str, role: str, flash: str = "",
                     origin: str = "email") -> bytes:
-    """Render the unified household calendar and schedule."""
+    """Render the household calendar and schedule."""
     tasks, events = load_schedule()
     parts = []
     if flash:

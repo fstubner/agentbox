@@ -41,7 +41,7 @@ def page(title: str, body: str) -> bytes:
 
 def chrome(identity: str, role: str, origin: str, active: str,
            body: str) -> str:
-    """Modern Left Sidebar Workspace shell."""
+    """Page shell with the left sidebar."""
     can_admin = _portal.can(role, "ops:read_health", origin) if _portal else False
 
     waiting = 0
@@ -273,7 +273,7 @@ def render_home(identity: str, role: str, flash: str,
 
 def render_knowledge(identity: str, role: str, flash: str,
                      origin: str = "email") -> bytes:
-    """Dedicated Knowledge Base view with search and scope filters."""
+    """Knowledge Base view with search and scope filters."""
     try:
         stored, history = _portal.stored_memories(identity, role)
     except _portal.BridgeUnreachable:
@@ -361,7 +361,7 @@ def render_signin(sent: bool = False) -> bytes:
 
 def render_connectors(identity: str, role: str, flash: str,
                       origin: str = "email") -> bytes:
-    """Renders the Capabilities & Integrations surface."""
+    """Renders the Capabilities & Integrations page."""
     if _portal and hasattr(_portal, "agentbox_portal_engine"):
         return _portal.agentbox_portal_engine.render_capabilities(
             identity, role, flash, origin)

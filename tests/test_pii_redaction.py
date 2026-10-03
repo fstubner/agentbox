@@ -1,12 +1,12 @@
 """Personal-data substitution.
 
-Two failure directions matter and they pull against each other. Missing real
-personal data defeats the point. Mangling an order number into <CARD_1>
-corrupts data the assistant was meant to act on, silently, and the person who
-finds out is the one whose delivery never arrived.
+Two failure directions matter and they conflict. Missing real personal data
+defeats the purpose. Replacing an order number with <CARD_1> corrupts data the
+assistant was meant to act on, without any error, and the person who finds out
+is the one whose delivery never arrived.
 
-So: checksum-validated where the format allows, and honest about the kinds
-that have no checkable shape at all.
+So formats are checksum-validated where possible, and the module states which
+kinds of data have no checkable shape.
 """
 from __future__ import annotations
 
@@ -64,8 +64,8 @@ def test_real_card_number_is_caught(red):
 
 
 def test_order_number_that_looks_like_a_card_is_left_alone(red):
-    """The false-positive direction. A 16-digit order number mangled into
-    <CARD_1> is data destroyed silently."""
+    """The false-positive direction. A 16-digit order number replaced with
+    <CARD_1> is data destroyed without any error."""
     out = red.redact("order 1234567812345678 shipped")
     assert "1234567812345678" in out
     assert "CARD" not in out
@@ -87,8 +87,7 @@ def test_national_insurance_and_ssn(red):
 def test_impossible_ni_prefixes_are_not_matched(red):
     """Q is not a legal first or second letter of a National Insurance number.
 
-    Found by getting it wrong in a test: the invented example QQ123456C was
-    never a real format, and the pattern was right to decline it.
+    QQ123456C is not a valid format, so the pattern does not match it.
     """
     text = "reference QQ123456C on the form"
     assert red.redact(text) == text
@@ -101,7 +100,7 @@ def test_secrets_are_caught(red):
 
 
 def test_short_numbers_are_not_phone_numbers(red):
-    """Prices, years and quantities must survive untouched."""
+    """Prices, years and quantities must be left unchanged."""
     text = "3 items, 2026 budget of 4500 approved"
     assert red.redact(text) == text
 
@@ -127,14 +126,14 @@ def test_values_round_trip(red):
 
 
 def test_restore_only_touches_known_placeholders(red):
-    """A model inventing <EMAIL_9> must not be able to make one up and have it
-    resolved to somebody's address."""
+    """A placeholder the model invents, such as <EMAIL_9>, must not resolve
+    to somebody's address."""
     red.redact("sam@example.com")
     assert red.restore("mail <EMAIL_9> now") == "mail <EMAIL_9> now"
 
 
 def test_a_draft_written_against_placeholders_reaches_a_real_person(red):
-    """The whole reason for substitution rather than deletion."""
+    """This is why values are substituted and not deleted."""
     red.redact("From: sam@example.com")
     draft = "To: <EMAIL_1>\nSubject: dinner"
     assert red.restore(draft) == "To: sam@example.com\nSubject: dinner"
@@ -157,22 +156,22 @@ def test_summary_counts_without_revealing(red):
     assert "sam@example.com" not in str(summary)
 
 
-# --- honesty about limits ------------------------------------------------------
+# --- documented limits ---------------------------------------------------------
 
 
 def test_names_are_not_claimed_to_be_caught(red):
     """A documented limitation, pinned so nobody later assumes otherwise.
 
-    A pattern cannot find names or medical detail in prose, and claiming to
-    remove personal data while leaving those in place would be worse than not
-    claiming it.
+    A pattern cannot find names or medical detail in prose. Claiming to remove
+    personal data while leaving those in place would be worse than making no
+    claim.
     """
     text = "Sam's checkup result was clear, she lives at 14 Elm Street"
     assert red.redact(text) == text
 
-    # Raw text on purpose: the subject here IS the documentation. The module
+    # Raw text, because the subject here is the documentation. The module
     # must state this limitation in words a reader will see, so stripping
-    # docstrings would remove the very thing being checked. Marked
+    # docstrings would remove what is being checked. Marked
     # asserts-on-prose so tests/test_source_assertions.py allows it.
     doc = MODULE.read_text(encoding="utf-8")  # asserts-on-prose
     assert "does not reliably catch names" in doc
@@ -198,8 +197,8 @@ def test_strip_removes_high_harm_identifiers(pii):
 
 
 def test_strip_keeps_what_the_assistant_needs(pii):
-    """Emails and phones are absent from NEVER_NEEDED on purpose: the assistant
-    cannot reply to anyone without them, so they need the reversible path."""
+    """Emails and phones are not in NEVER_NEEDED. The assistant cannot reply
+    to anyone without them, so they need the reversible path."""
     text = "mail sam@example.com or call +44 7700 900123"
     assert pii.strip_sensitive(text) == text
     assert "EMAIL" not in pii.NEVER_NEEDED
@@ -207,7 +206,7 @@ def test_strip_keeps_what_the_assistant_needs(pii):
 
 
 def test_strip_needs_no_state_to_reverse(pii):
-    """The whole reason this half ships alone: nothing has to be remembered."""
+    """This half can ship alone because nothing has to be remembered."""
     import inspect
     source = inspect.getsource(pii.strip_sensitive)
     assert "self" not in source and "cache" not in source
@@ -220,7 +219,7 @@ def test_strip_respects_checksums(pii):
     assert pii.strip_sensitive(text) == text
 
 
-# --- the format IBANs are actually written in ---------------------------------
+# --- the formats IBANs are written in -----------------------------------------
 
 
 @pytest.mark.parametrize("value", [
@@ -241,5 +240,5 @@ def test_real_ibans_are_stripped_in_every_written_form(pii, value):
     "the meeting is at 10 00 today",
 ])
 def test_the_looser_pattern_does_not_over_match(pii, value):
-    """mod-97 is what makes it safe to allow spaces in the pattern."""
+    """The mod-97 check makes it safe to allow spaces in the pattern."""
     assert pii.strip_sensitive(value) == value

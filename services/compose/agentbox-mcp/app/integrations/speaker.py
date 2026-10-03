@@ -4,9 +4,9 @@ The speakers are attached to the host, not a container, so this reaches
 cli/agentbox-speaker through host.docker.internal, as the Home Assistant bridge
 reaches Home Assistant.
 
-Quiet hours live in that service rather than in approval-policy.yaml. A policy
-tier can be granted, but a limit in the process holding the speaker cannot be
-argued past, which is right for something that can wake people up.
+Quiet hours live in that service, not in approval-policy.yaml. A policy tier
+can be granted. A limit in the process holding the speaker cannot be granted
+or bypassed, which matters for a device that can wake people up.
 """
 from __future__ import annotations
 
@@ -60,8 +60,9 @@ def dispatch(name, args):
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:300]
-        # A refusal is an answer, not a failure. Quiet hours come back as 403
-        # and the assistant should read the reason rather than retry.
+        # A refusal is returned as a result, not raised as an error. Quiet
+        # hours come back as 403, and the assistant should read the reason
+        # and not retry.
         try:
             return json.loads(detail)
         except ValueError:

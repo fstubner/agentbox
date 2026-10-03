@@ -1,7 +1,7 @@
 
 # One script per room, so each can be assigned to its Home Assistant area and
-# referenced by name. This is what makes the speakers appear somewhere a person
-# can point at, which a bare rest_command does not.
+# referenced by name. This makes each speaker appear in a named area. A bare
+# rest_command has no area.
 announce_kitchen:
   alias: Announce in the kitchen
   mode: queued

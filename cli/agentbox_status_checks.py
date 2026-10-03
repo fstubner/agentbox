@@ -21,7 +21,8 @@ class Check:
     detail: str
     # Only consulted when ok is False. FAIL means the assistant cannot serve a
     # request; WARN means something is degraded but answers still happen. The
-    # distinction is doctor's, and is argued in cli/agentbox next to ENDPOINTS.
+    # distinction is doctor's, and is explained in cli/agentbox_doctor.py next
+    # to ENDPOINTS.
     severity: str = WARN
 
     @property
@@ -35,8 +36,8 @@ def disk_check(path: str = "/") -> Check:
     free_gb = usage.free / 1_000_000_000
     return Check(
         name="Disk",
-        # 90 rather than 95: the thing that fills this disk is model weights
-        # and backups, both of which arrive in tens of gigabytes at a time.
+        # The limit is 90, not 95, because model weights and backups fill this
+        # disk, and both arrive tens of gigabytes at a time.
         ok=percent < 90,
         detail=f"{percent}% used, {free_gb:.0f} GB free",
         severity=FAIL if percent >= 95 else WARN)
@@ -55,11 +56,10 @@ def lan_exposure() -> list[Check]:
     except (OSError, subprocess.SubprocessError):
         return []
 
-    # The portal belongs here more than anything else does: it holds sessions
-    # that can edit the admin list, and it is the surface most likely to be
-    # bound wide so a phone on the sofa can reach it. A check
-    # written to catch an unintended 0.0.0.0 that cannot see the box's most
-    # privileged service is checking the easy half of the problem.
+    # The portal must be watched. It holds sessions that can edit the admin
+    # list, and it is the service most likely to be bound to every interface
+    # so a phone can reach it. It is the box's most privileged service, so a
+    # check for an unintended 0.0.0.0 has to cover it.
     watched = {"1234": "main model", "1235": "context worker",
                "1236": "reason worker", "1240": "vision model",
                "8765": "router", "8000": "control plane api",
@@ -67,7 +67,8 @@ def lan_exposure() -> list[Check]:
                "8772": "speaker"}
     # Services that require a credential on every route. The portal answers
     # 401 on every path, including unknown ones, so warning that it is exposed
-    # without one would be false, and false warnings get ignored.
+    # without one would be false. False warnings lead people to ignore real
+    # ones.
     authenticated = {"8771": "it authenticates every route"}
 
     exposed = []
@@ -82,8 +83,8 @@ def lan_exposure() -> list[Check]:
                 tail = (f"{authenticated[port]}, so this is a wider surface "
                         f"rather than open data")
             else:
-                # Not "it asks for no password": that is unknown
-                # for most of these, and asserting it was the bug.
+                # Do not claim "it asks for no password". That is unknown
+                # for most of these services.
                 tail = "this check cannot confirm it requires a credential"
             exposed.append(Check(
                 name=f"{watched[port]} reachable from the network",
@@ -115,7 +116,7 @@ def looks_like_evaluator(argv: list[str]) -> bool:
     if len(argv) > 1 and os.path.basename(argv[1]) in EVALUATOR_NAMES:
         return True
     # `python -m agentbox_evals` puts the module at argv[2]. Missing a real
-    # run costs a benchmark, so this case must be caught.
+    # run would corrupt a benchmark, so this case must be caught.
     return len(argv) > 2 and argv[1] == "-m" and argv[2] in EVALUATOR_NAMES
 
 
@@ -133,9 +134,9 @@ def evaluation_running() -> bool:
     try:
         pids = [p for p in os.listdir("/proc") if p.isdigit()]
     except OSError:
-        # Cannot enumerate at all: that is doubt, and doubt means a benchmark
-        # might own the machine. A late restore costs minutes; starting a
-        # model into a running comparison costs a day of numbers.
+        # If processes cannot be listed, assume a benchmark might own the
+        # machine. A late restore costs minutes. Starting a model during a
+        # running comparison costs a day of results.
         return True
     for pid in pids:
         try:

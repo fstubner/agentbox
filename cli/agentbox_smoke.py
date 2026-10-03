@@ -17,8 +17,8 @@ from agentbox_policy import load_tool_map
 
 # --- smoke: end-to-end workflows against the running system -----------------
 #
-# `doctor` answers "is everything up". This answers "does anything work". The
-# tests in tests/ run against fixtures, so this is what covers the real path
+# `doctor` checks that services are up. This checks that workflows succeed.
+# The tests in tests/ run against fixtures, so this is what covers the real path
 # from agentbox-mcp to the bridges and upstream. A service can pass every
 # readiness probe and still refuse every call.
 #
@@ -98,7 +98,7 @@ def tool_call(service: str, name: str, arguments: dict, token: str) -> tuple[boo
 
 
 def smoke() -> int:
-    """Drive the assistant's real workflows and report what actually works."""
+    """Drive the assistant's real workflows and report what works."""
     failures = 0
     tokens = {service: smoke_token(service) for service in MCP_PORTS}
 
@@ -193,8 +193,8 @@ def smoke() -> int:
         check("lean is smaller than full", False, "could not fetch both views")
 
     print("\n-- policy gate --")
-    # Gated by capability home_control_climate. Refusal is the pass condition;
-    # this is the one place a *successful* call is the bug.
+    # Gated by capability home_control_climate. The call must be refused. This
+    # is the one check where a successful call is a failure.
     ok, message = tool_call("agentbox-mcp", "set_home_climate",
                             {"entity_id": "climate.smoke", "temperature": 20},
                             tokens["agentbox-mcp"])
@@ -218,9 +218,9 @@ def smoke() -> int:
     check("proposal is queued for review", ok and bool(proposals),
           "" if ok else str(proposals))
 
-    # Reject it again as the operator, which both cleans up and exercises the
-    # half of the review gate the assistant is not allowed to reach: rejection
-    # needs a token that lives here and not in any container.
+    # Reject it again as the operator. This cleans up and also tests the part
+    # of the review gate the assistant cannot reach. Rejection needs a token
+    # that lives here and not in any container.
     proposal_id = (created_proposal or {}).get("id") if isinstance(created_proposal, dict) else None
     if proposal_id:
         rejected = agentbox_memory.memory_decide("reject", proposal_id, reason="agentbox smoke") == 0
@@ -234,7 +234,7 @@ def smoke() -> int:
     check("assistant can read the repo", ok,
           f"{(listing or {}).get('total', 0)} files under docs/" if ok else str(listing)[:80])
 
-    # The containment, exercised rather than assumed. A pass here means the
+    # Test the containment against the live system. A pass here means the
     # assistant cannot propose a change to the policy that governs it.
     for guarded in ("policies/approval-policy.yaml",
                     "services/templates/mcp/policy_gate.py",
@@ -287,8 +287,8 @@ def smoke() -> int:
 
 
 def scenarios() -> int:
-    """Of the things a person would actually ask, how many can the assistant
-    answer today, and what would close each remaining gap?
+    """Of the things a person would ask, how many can the assistant answer
+    today, and what would close each remaining gap?
 
     `smoke` checks the seams hold. This checks usefulness. Run it weekly, and
     the score should rise as gaps close.

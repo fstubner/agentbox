@@ -3,10 +3,11 @@
 ## Placeholders rather than deletion
 
 Deleting an email address stops the assistant reading it, and also stops it
-replying to anyone. Privacy that breaks the workflow gets switched off.
+replying to anyone. A privacy measure that breaks replies is likely to be
+switched off.
 
 So personal data is substituted. The model sees `<EMAIL_1>` where an address
-was, reasons about "the sender" perfectly well, and writes a draft to
+was, can still reason about "the sender", and writes a draft to
 `<EMAIL_1>`. The bridge puts the real address back on the way out. The value
 never enters the model's context, and the model cannot be talked into
 revealing something it was never given.
@@ -26,8 +27,8 @@ exposure of identifiers, not as anonymisation.
 ## Precision over recall
 
 Every pattern is checksum-validated where the format allows. A false positive
-is not harmless, because turning an order number into `<CARD_1>` quietly
-corrupts data the assistant needs to act on.
+is not harmless, because turning an order number into `<CARD_1>` corrupts
+data the assistant needs to act on, with no visible error.
 """
 from __future__ import annotations
 
@@ -38,11 +39,10 @@ import re
 PATTERNS: list[tuple[str, re.Pattern]] = [
     ("EMAIL", re.compile(
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
-    # Optional single spaces between characters, because that is how IBANs
-    # are actually written: banks, invoices and letters print them in groups
-    # of four. The compact form matched and the spaced form did not, so the
-    # one format this will ever meet was the one it missed. mod-97 below is
-    # what stops the looser pattern over-matching.
+    # Optional single spaces between characters, because banks, invoices and
+    # letters print IBANs in groups of four. A pattern for the compact form
+    # alone would miss the format this will usually see. mod-97 below stops
+    # the looser pattern over-matching.
     ("IBAN", re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b")),
     ("CARD", re.compile(r"\b(?:\d[ -]?){13,19}\b")),
     ("NINO", re.compile(
@@ -60,7 +60,7 @@ PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 # Kinds carrying a checksum. Anything matching the shape but failing the check
-# is left alone, because it was probably never the thing.
+# is left alone, because it is probably not that kind of value.
 CHECKED = {"CARD", "IBAN"}
 
 
@@ -94,12 +94,12 @@ def _valid(kind: str, text: str) -> bool:
         digits = re.sub(r"[ -]", "", text)
         return 13 <= len(digits) <= 19 and _luhn_ok(digits)
     if kind == "IBAN":
-        # Spaces stripped before the checksum, exactly as CARD does above.
+        # Spaces stripped before the checksum, as CARD does above.
         return _iban_ok(re.sub(r"\s", "", text).upper())
     if kind == "PHONE":
-        # Guard against swallowing ordinary numbers: require enough digits to
-        # actually be a phone number, and reject runs that are clearly a year,
-        # a price, or an id.
+        # Guard against matching ordinary numbers. Require enough digits for a
+        # phone number, and reject runs that are clearly a year, a price, or
+        # an id.
         digits = re.sub(r"\D", "", text)
         return 9 <= len(digits) <= 15
     if kind == "IP":
@@ -123,7 +123,7 @@ NEVER_NEEDED = ("CARD", "IBAN", "NINO", "SSN", "SECRET")
 def strip_sensitive(text: str, kinds: tuple[str, ...] = NEVER_NEEDED) -> str:
     """Remove high-harm identifiers outright, before the model sees them.
 
-    Irreversible on purpose. A value the assistant is never given cannot be
+    This cannot be reversed. A value the assistant is never given cannot be
     leaked, repeated on request or written into a memory proposal.
     """
     if not text:

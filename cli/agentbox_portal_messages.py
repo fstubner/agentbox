@@ -16,8 +16,8 @@ __all__ = [
     "flash_text",
 ]
 
-# Messages shown after an action, looked up by key rather than taken from the
-# URL. The text lives here in full, nothing from the URL is ever shown, and a
+# Messages shown after an action, looked up by key, not taken from the URL.
+# The text lives here in full, nothing from the URL is ever shown, and a
 # long message cannot lengthen a URL.
 FLASHES = {
     "memory_saved": "Memory saved.",
@@ -124,5 +124,5 @@ def origin_refusal(origin: str, action: str) -> str:
     return f"{prefix}_cannot_{action}"
 
 def flash_text(key: str) -> str:
-    """Look up a message. An unknown key renders nothing rather than itself."""
+    """Look up a message. An unknown key renders nothing, not the key."""
     return FLASHES.get(key, "")

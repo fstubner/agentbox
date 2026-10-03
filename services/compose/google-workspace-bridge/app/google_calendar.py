@@ -80,6 +80,6 @@ def calendar_create_event(body):
         "POST",
         f"{CALENDAR_API}/calendars/"
         f"{urllib.parse.quote(calendar_id, safe='')}"
-        # sendUpdates=none is the constraint, not a default. It stops an
-        # injected instruction turning an event into an email to anyone.
+        # sendUpdates=none is a required constraint. It stops an injected
+        # instruction turning an event into an email to anyone.
         f"/events?sendUpdates=none", event) or {}
