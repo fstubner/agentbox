@@ -1,5 +1,6 @@
-# Example Hermes config fragments.
-# Copy only the relevant sections into the active Hermes profile config.
+# Example Hermes gateway config for Agentbox.
+# Copy the relevant sections into the gateway profile's config.yaml, which
+# should be owned by root and only readable by the gateway user.
 
 skills:
   write_approval: true
@@ -19,74 +20,26 @@ model:
   base_url: http://127.0.0.1:1234/v1
   api_mode: chat_completions
 
-model_aliases:
-  local-main:
-    provider: openai-compatible
-    model: local-main
-    base_url: http://127.0.0.1:1234/v1
-  local-gemma:
-    provider: openai-compatible
-    model: gemma4-26b-qat-q4
-    base_url: http://127.0.0.1:1234/v1
+# The assistant gets no shell, no code execution and no direct file access.
+# Everything it does goes through agentbox-mcp below. Hermes also ships its own
+# Home Assistant toolset, which would bypass the bridge's refusals, so that is
+# off too. `cli/agentbox doctor` checks the shell side of this.
+agent:
+  disabled_toolsets:
+    - terminal
+    - code_execution
+    - file
+    - homeassistant
 
-terminal:
-  backend: docker
-  container_memory: 8192
-  container_cpu: 4
-  container_persistent: true
-
-# Google Workspace MCP fragment.
-# Store these values in 1Password and inject them into the Hermes process
-# environment; do not paste raw client secrets into this file.
-#
-# GOOGLE_WORKSPACE_MCP_CLIENT_ID=op://Agentbox/google-workspace-mcp/client_id
-# GOOGLE_WORKSPACE_MCP_CLIENT_SECRET=op://Agentbox/google-workspace-mcp/client_secret
-#
-# Phase 1 keeps Calendar read/suggest-only because Google OAuth does not enforce
-# "write only this one calendar" by itself. Use a narrow assistant-calendar
-# bridge before exposing Calendar write tools.
+# One tool server. agentbox-mcp holds bridge tokens only, and the bridges hold
+# the upstream credentials, so nothing in this file grants access to anyone's
+# mail. The token is an identity token from `cli/agentbox identity add`, or
+# AGENTBOX_MCP_SHARED_TOKEN on a single-person box. Put it in the gateway's
+# environment rather than in this file.
 mcp_servers:
-  gmail:
-    url: "https://gmailmcp.googleapis.com/mcp/v1"
-    auth: oauth
-    oauth:
-      client_id: "${GOOGLE_WORKSPACE_MCP_CLIENT_ID}"
-      client_secret: "${GOOGLE_WORKSPACE_MCP_CLIENT_SECRET}"
-      redirect_port: 38337
+  agentbox:
+    url: "http://127.0.0.1:3465/mcp"
+    headers:
+      Authorization: "Bearer ${AGENTBOX_MCP_TOKEN}"
     timeout: 60
     connect_timeout: 15
-    supports_parallel_tool_calls: false
-    tools:
-      include:
-        - search_threads
-        - get_thread
-        - create_draft
-        - list_labels
-        - create_label
-        # These mailbox mutation tools need approval in Hermes and may require
-        # gmail.modify in the Google OAuth consent screen.
-        - label_message
-        - label_thread
-        - unlabel_message
-        - unlabel_thread
-      prompts: false
-      resources: false
-
-  google_calendar:
-    url: "https://calendarmcp.googleapis.com/mcp/v1"
-    auth: oauth
-    oauth:
-      client_id: "${GOOGLE_WORKSPACE_MCP_CLIENT_ID}"
-      client_secret: "${GOOGLE_WORKSPACE_MCP_CLIENT_SECRET}"
-      redirect_port: 38337
-    timeout: 60
-    connect_timeout: 15
-    supports_parallel_tool_calls: false
-    tools:
-      include:
-        - list_calendars
-        - list_events
-        - get_event
-        - suggest_time
-      prompts: false
-      resources: false
