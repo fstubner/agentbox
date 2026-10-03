@@ -37,6 +37,21 @@ jobs:
       - name: Full-history secret scan
         run: gitleaks detect --source . -v --redact --exit-code=2
       - name: PII grep gate
+        # Narrowed 2026-10-03. The alternation used to include home
+        # directories for agentbox, assistant and hermes, which are *service
+        # account* paths the code legitimately names — cli/agentbox_backup.py
+        # has to say where the gateway keeps its state. So this gate failed on
+        # correct code, and had done since it was written. A check that cannot
+        # pass is one people learn to skip.
+        #
+        # It also listed an example identity, which is wrong here: the example
+        # household members are documented in PRODUCT.md and a fixture using
+        # one of their home directories is correct, not a leak.
+        #
+        # What is left is the shape of real personal data rather than any
+        # particular person: a consumer mailbox, and an RFC1918 address. The
+        # docker bridge (172.17.0.0/16) is deliberately not listed, because
+        # host.docker.internal genuinely resolves there and the code says so.
         run: |
-          hits=$(git grep -nIE '@gmail\.com|/home/(alex|assistant|agentbox|hermes)' || true)
+          hits=$(git grep -nIE '@gmail\.com|@googlemail\.com|@hotmail\.com|@outlook\.com|192\.168\.[0-9]|\b10\.[0-9]+\.[0-9]+\.[0-9]+' || true)
           if [ -n "$hits" ]; then echo "$hits"; exit 1; fi
