@@ -149,11 +149,20 @@ def test_it_is_allowed_rather_than_gated():
     """Putting an approval in front of somebody asking for their own sign-in
     link is the exact everyday prompt that trains people to approve unread.
     What keeps it safe is that the link is bounded, not that the mint is."""
-    import yaml
-    policy = yaml.safe_load(
-        (REPO / "policies" / "approval-policy.yaml").read_text())
-    tiers = policy.get("tiers", policy)
+    # Read through the parser the gate itself uses, not PyYAML. Two reasons:
+    # PyYAML is not in the standard library and was declared nowhere, so this
+    # passed on machines that happened to have it and failed collection in CI.
+    # And policy_gate runs in containers with nothing extra installed, so its
+    # own reader is what will actually see this file in production — asserting
+    # through it tests the thing that matters.
+    import sys
+    sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
+    import policy_gate as pg
+
+    policy = REPO / "policies" / "approval-policy.yaml"
+    tiers = pg.load_tiers(policy)
+    tools = pg.load_tool_map(policy)
     assert "request_signin_link" in tiers["allowed"]
     assert "request_signin_link" not in tiers.get("approval_required", [])
     assert "request_signin_link" not in tiers.get("always_denied", [])
-    assert policy["tools"]["request_signin_link"] == "request_signin_link"
+    assert tools["request_signin_link"] == "request_signin_link"
