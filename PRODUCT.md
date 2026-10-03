@@ -27,6 +27,18 @@ Two people in one home, with different privileges:
 - **Household member** (`sam`) — manages their own memories and accounts, and
   cannot reach Operations.
 
+**`alex` and `sam` are the canonical example names**, in tests, docs and config
+samples alike. Use them rather than inventing a placeholder: the suite needs two
+*distinct* identities to assert that one person's memories, mail and bridges are
+not another's, and a third invented name tends to collide with one of these and
+break a fixture in a way that looks like a real failure. Where a test needs
+somebody who is deliberately neither of them — a newcomer, or a person with no
+way to sign in — `newcomer` and `taylor` are already used for that.
+
+They are names rather than role words on purpose. `admin` and `member` are
+already role constants in `cli/agentbox-portal`, so an identity called `member`
+makes a test about one person read as a claim about the whole role.
+
 `docs/roadmap.md` records the model as **"household plane plus private
 planes"**: tasks, shopping and joint scheduling are shared; each person's mail,
 calendar detail and personal memory are private. Two separate stacks were
