@@ -1,24 +1,18 @@
-# Machine-readable mirror of approval-policy.md. Loaded by the gateway/CLI and
-# by policy_gate.py in every MCP.
+# The approval policy, explained in approval-policy.md. Read by the operator
+# CLI and by policy_gate.py in agentbox-mcp and every bridge.
 #
-# Semantics: tiers are checked always_denied -> approval_required -> allowed;
-# unknown actions default to approval_required (deny-by-default).
+# Tiers are checked in the order always_denied, approval_required, allowed, and
+# an action that is not listed is approval_required.
 #
-# One policy, two kinds of actor. `tiers` names capabilities — what may be done,
-# in language a human can review. `tools` maps each assistant-visible MCP tool
-# onto the capability it exercises, so a tool call resolves to the same tier as
-# the equivalent operator action.
+# One policy covers both the operator and the assistant. `tiers` names
+# capabilities in words a person can review. `tools` maps each assistant tool to
+# the capability it uses, so a tool call lands in the same tier as the matching
+# operator action. Each capability lives in exactly one place.
 #
-# This was briefly two files, and they immediately contradicted each other:
-# personal_data_access_beyond_task and gmail_label_management were
-# approval_required here while search_gmail and add_gmail_labels were allowed
-# there. Same system, opposite answers. A capability belongs in exactly one
-# place; the tool map is an index into it, not a second policy.
-#
-# Tiering principle: prefer narrowing a capability over gating it. A constraint
-# holds even when the model is compromised; an approval only helps if a human
-# reads carefully before saying yes. Several tools below are `allowed` because
-# the bridge already contains them, not because the risk was waved through.
+# Narrowing a capability is preferred to gating it. A constraint holds even when
+# the model is compromised, and an approval only helps if a person reads it
+# carefully. Several tools below are `allowed` because the bridge already limits
+# them.
 version: 2
 
 tiers:
@@ -34,12 +28,12 @@ tiers:
 
     # Assistant
     - task_management                # the assistant's own workspace; reversible, nothing deletes
-    - personal_data_read             # gmail/calendar reads — see the note below
+    - personal_data_read             # Gmail and Calendar reads, see the note below
     - propose_memory_for_review      # inert until an operator approves it
     - local_only                     # thinking out loud on this box; reaches nothing
     - propose_rule_for_review        # inert until an operator activates it
     - home_read_state                # sensor/entity state from Home Assistant
-    - home_control_comfort           # lights, scenes, media — allowlisted entities only
+    - home_control_comfort           # lights, scenes, media, allowlisted entities only
     - home_view_camera               # one frame, on request, from an allowlisted camera
     - email_label_own_namespace      # agentbox/* labels only, enforced in the bridge
     - compose_email_draft            # drafts are never sent
@@ -51,45 +45,33 @@ tiers:
     - propose_invite                 # writes a draft; sending is a human act
     - email_state_change             # archive / mark read; reversible, stays in the account
 
-    # drive_read is `allowed` for the same reason personal_data_read is: the
-    # real control is not an approval prompt but which OAuth scope was granted
-    # at consent time — and that choice constrains the credential itself,
-    # which an approval on a tool call cannot.
+    # drive_read is `allowed` for the same reason as personal_data_read. The
+    # real control is which OAuth scope was granted at consent, which limits the
+    # credential itself in a way an approval on a tool call cannot.
     #
-    # The operator chose drive.readonly on 2026-08-13, after drive.file alone
-    # made "find that lease in my Drive" unanswerable: it sees only files the
-    # assistant created, so a full Drive returned nothing and read as empty.
-    # The assistant can now read anything the person can read. It still cannot
-    # write outside its own folder, cannot delete, and cannot share — those
-    # are absent rather than gated, because a permission change is how a
-    # private document quietly becomes a public link.
+    # With drive.readonly the assistant can read anything the person can. It
+    # still cannot write outside its own folder, delete or share, because those
+    # do not exist. A permission change is how a private document becomes a
+    # public link.
     #
-    # drive_write_own_folder mirrors create_agent_calendar_event: confined by
-    # construction rather than by permission. Writes go to one folder, only
-    # text formats, and there is no delete and no sharing — a permission change
-    # is how a private document quietly becomes a public link, so it is absent
-    # rather than gated.
+    # drive_write_own_folder works like create_agent_calendar_event, confined by
+    # design. Writes go to one folder, in text formats only, with no delete and
+    # no sharing.
 
-    # email_state_change moved from approval_required to allowed on
-    # 2026-08-13, on evidence rather than instinct. It was refused 17 times in
-    # one week and granted zero times: the gate was not protecting anything,
-    # it was training the assistant to route around a capability it had been
-    # given. A tier that is never granted is not a control, it is friction
-    # with a security-shaped explanation.
+    # email_state_change is allowed because, as an approval, it was refused
+    # often and never granted, which only taught the assistant to work around
+    # it. It covers archiving and marking read, both reversible in one click and
+    # both staying in the account. Archived mail is in All Mail, and unread is a
+    # flag. Sending and deleting do not exist, and labels stay in the
+    # assistant's own namespace.
     #
-    # What it covers is archive and mark-as-read, both reversible in one click
-    # and neither leaving the account — archived mail is in All Mail, unread
-    # is a flag. The irreversible and outward-facing things stay where they
-    # were: sending is absent entirely, deleting is absent entirely, and
-    # labels are confined to the agent's own namespace by the bridge.
-    #
-    # The real control is the same as everywhere else in this file: the bridge
-    # decides what `modify` may do, and it accepts exactly two verbs.
+    # The real control is the bridge, which accepts exactly two verbs for
+    # `modify`.
 
-    # request_signin_link is `allowed` for the same reason, and it is the
-    # clearest case of it in this file. Gating it would put an approval in
-    # front of somebody asking for their own sign-in link — the exact
-    # everyday request that trains people to approve without reading. What
+    # request_signin_link is `allowed` for the same reason, and is the clearest
+    # case of it. Gating it would put an approval in front of someone asking for
+    # their own sign-in link, the everyday request that trains people to approve
+    # without reading. What
     # keeps it safe is that the link is ORIGIN_AGENT and the portal refuses
     # every consequential action from one: no approving a memory, no
     # disconnecting or connecting an account, no inviting, no settings. The
@@ -202,7 +184,7 @@ tools:
   cast_to_screen: home_control_comfort
 
   # Builder: the assistant reads the repo and proposes changes as git branches.
-  # All `allowed` because none of them ships anything — a proposal is a branch a
+  # All `allowed` because none of them ships anything. A proposal is a branch a
   # human must merge, and merge_own_pr stays always_denied. The containment that
   # matters is not this tier list but the builder bridge's protected-path check,
   # which refuses edits to the policy, both gates, the operator CLI and CI. A
@@ -213,7 +195,7 @@ tools:
   run_repo_checks: run_validators_and_tests
   propose_change: create_branches
 
-  # google-workspace-mcp-lite — reads
+  # Google reads
   search_gmail: personal_data_read
   read_gmail: personal_data_read
   clean_gmail: personal_data_read
@@ -222,7 +204,7 @@ tools:
   list_calendar_events: personal_data_read
   calendar_freebusy: personal_data_read
 
-  # google-workspace-mcp-lite — writes
+  # Google writes
   create_gmail_label: email_label_own_namespace
   add_gmail_labels: email_label_own_namespace
   create_gmail_draft: compose_email_draft
@@ -230,22 +212,14 @@ tools:
   archive_gmail: email_state_change
   mark_gmail_read: email_state_change
 
-# Decisions taken when the two policies were merged, recorded because they
-# changed what the policy asserts:
+# Why reads are allowed. Whether a read goes beyond what the current task needs
+# is a judgement for each call, which a tier cannot express, and gating every
+# read would make an assistant whose job is your mail and calendar unusable. The
+# real risk, data leaving the account, is contained elsewhere. No tool sends
+# mail, and calendar invites are refused at the bridge.
 #
-# personal_data_access_beyond_task was approval_required and is now
-# personal_data_read (allowed). The "beyond task" qualifier is the part that
-# mattered, and a tier cannot express it — whether a read exceeds what the
-# current task needs is a per-call judgement. Gating all reads instead would
-# make an assistant whose job is the operator's mail and calendar unusable.
-# The narrower risk, data leaving the account, is contained elsewhere: no tool
-# sends mail, and calendar invites are refused at the bridge.
-#
-# email_mutations covered archive, mark-read and labelling together. Split,
-# because the bridge now constrains labels to the agentbox/ namespace while
-# archive and mark-read still change what the operator will notice in their own
-# inbox. gmail_label_management folded into email_label_own_namespace for the
-# same reason.
+# Labelling is separate from archiving and marking read, because the bridge
+# keeps labels inside the agentbox/ namespace.
 #
 # store_sensitive_memory stays approval_required and stays unmapped: no tool
 # reaches it, because durable writes require the operator review token that the

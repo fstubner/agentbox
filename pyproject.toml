@@ -1,7 +1,7 @@
 # Dual licensed, MIT or Apache-2.0 at your option: LICENSE-MIT and
-# LICENSE-APACHE. There is no [build-system] here and nothing packages this —
-# the metadata exists so the licence is machine-readable rather than only a
-# pair of files somebody has to notice.
+# LICENSE-APACHE. There is no [build-system] and nothing packages this. The
+# metadata is here so the licence is machine-readable, not only a pair of
+# files somebody has to notice.
 [project]
 name = "agentbox"
 version = "0.0.0"
@@ -14,28 +14,23 @@ requires-python = ">=3.12"
 line-length = 120
 
 [tool.ruff.lint]
-# Pinned explicitly rather than inheriting ruff's defaults, which expand between
-# releases — a version bump can turn CI red with no code change, and that is
-# exactly how this pipeline stayed broken for weeks without anybody noticing.
+# I pin the rule set rather than inherit ruff's defaults, which grow between
+# releases, so a version bump cannot turn CI red with no code change.
 #
-# Chosen to catch real defects: pyflakes (F) finds genuine mistakes, bugbear (B)
-# finds bug-shaped patterns, isort (I) keeps diffs small, PIE/UP are safe
-# simplifications.
+# pyflakes (F) finds real mistakes, bugbear (B) finds bug-shaped patterns,
+# isort (I) keeps diffs small, and PIE/UP are safe simplifications.
 #
-# `S` (bandit) is deliberately NOT selected, which deserves a note in a codebase
-# about refusing things. Turning it on reports ~100 issues, of which nearly all
-# are S310 (every urlopen, though every URL here comes from operator config) and
-# S106 (every test fixture token). A security check that is wrong a hundred
-# times is one people learn to skip — the same failure this project has already
-# recorded twice about checks that are permanently red. The real security
-# properties are asserted in tests/ instead, where they can be specific.
+# `S` (bandit) is not selected. It reports about 100 issues, nearly all S310
+# (every urlopen, though every URL comes from operator config) and S106 (every
+# test fixture token). A security check that is wrong a hundred times is one
+# people learn to skip. The security properties are asserted in tests/ instead,
+# where they can be specific.
 select = ["E", "W", "F", "I", "B", "PIE", "UP"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 # These modules live in containers and are loaded by path, so the tests must
-# extend sys.path before importing them — the import genuinely cannot come
-# first. policy_gate additionally binds its paths as default arguments at
+# extend sys.path before importing them, so the import cannot come first. policy_gate additionally binds its paths as default arguments at
 # import time, so even the ordering between two imports is load-bearing.
 "tests/test_approvals.py" = ["E402"]
 "tests/test_mcp_base.py" = ["E402"]
