@@ -28,8 +28,7 @@ Give one household an assistant that runs on hardware they own, reaches their
 real accounts through narrow levers rather than a shell, and remembers only
 what a person has approved.
 
-The bet is stated in `docs/the-different-axis.md`. This is **"one person, a
-million times, for years"**. The same people, the same data sources, the same
+The bet is **"one person, a million times, for years"**. The same people, the same data sources, the same
 few hundred recurring intents, rather than a million strangers once each.
 Everything expensive is worth amortising across a lifetime of use.
 
@@ -145,8 +144,7 @@ do is read as achieved when it is not. Status measured 2026-08-19.
   in bridge containers. `op://` references resolve at deploy time
   (`README.md`).
 - **Levers, not shell.** MCP tools with explicit contracts, never raw terminal
-  access (`README.md`). See also the 2026-08-05 correction in
-  `docs/architecture.md`, where this was once claimed and was not true.
+  access (`README.md`, `docs/architecture.md`).
 - **Identity is bound to the session, never passed per call.** The roadmap
   calls this "the design constraint that matters more than any of the above".
   If the assistant could choose which account to act as, an instruction

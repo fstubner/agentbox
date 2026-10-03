@@ -1,23 +1,8 @@
 # Architecture
 
-> Paths below use the deployment variables rather than one machine's literal
-> layout: `$HERMES_HOME` is the gateway profile, `$GATEWAY_USER_HOME` the
-> gateway user's home, `$GATEWAY_VENV` its virtualenv, `$AGENTBOX_ENV_DIR` the
-> operator's env files, `$AGENTBOX_REPO` this checkout. CI refuses literal home
-> directories so the repo stays portable and free of one person's filesystem.
-
-
-Agentbox is a self-hosted AI assistant for one household on local hardware.
-The assistant reaches external services only through narrow, policy-gated
-levers, and never holds a raw upstream credential.
-
-> **Corrected and closed, 2026-08-05.** This document long claimed the
-> assistant "never gets raw shell access". That was false: `hermes-cli`
-> included a local terminal with an empty `command_allowlist`. Three policy
-> tiers were bypassable as a result. The toolset is now disabled and the
-> gateway's config, skills and source are read-only to it, so those tiers are
-> enforced by ownership rather than merely asserted. `cli/agentbox doctor`
-> checks all of it. See **Shell access** below.
+Agentbox is an AI assistant for one household, running on a machine in the
+house. The assistant reaches outside services only through narrow tools, and
+it never holds an upstream credential.
 
 ```mermaid
 flowchart TD
@@ -40,7 +25,7 @@ flowchart TD
     bbr --> clone[(builder clone)]
     hbr --> ha[(Home Assistant :8123)]
 
-    subgraph operator[Operator plane — no assistant access]
+    subgraph operator[Operator plane, no assistant access]
         cli["cli/agentbox<br/><small>validate · doctor · deploy</small>"]
         pol["approval-policy.yaml<br/><small>capabilities + tool map</small>"]
         grant["grants<br/><small>read-only to MCPs</small>"]
@@ -52,334 +37,213 @@ flowchart TD
     grant -.-> amcp
 ```
 
-Solid edges are the live request path. Dotted edges are configuration the
-operator controls and the assistant cannot write. The role router, its two
-worker models and the vision model are no longer drawn. They were retired on
-2026-09-16 after both workers failed evaluation, and `router/README.md` says
-why. Production now runs one model.
+Solid edges are the request path. Dotted edges are configuration the operator
+controls and the assistant cannot write.
 
+Paths below use deployment variables rather than one machine's layout.
+`$AGENTBOX_ENV_DIR` is the operator's env files, and `$GATEWAY_USER_HOME` is
+the gateway user's home.
 
-## Shell access — closed, and what it rests on
+## No shell
 
-Until 2026-08-05 the assistant had an unrestricted local shell as `agentbox`:
-`toolsets: [hermes-cli]` includes `terminal_tool`, `command_allowlist` was
-empty. It could rewrite its own config, its own skills and its own source, so
-`modify_production_gateway_config`, `enable_skill_bundle_production` and
-`modify_upstream_agent_source` were enforced against tool calls while a shell
-sat beside them with none of it applied.
+The assistant has no shell. The gateway's terminal toolset is disabled, and
+its config, skills and source are owned by root and only readable by the
+gateway user. The operator changes them with `sudo`.
 
-**The fix was ownership, not an allowlist.** `command_allowlist` lives in
-`config.yaml`, which the assistant could write — so it would have edited the
-allowlist and then run anything. An allowlist in a file the constrained party
-controls is a suggestion. This is the same rule the platform already applies as
-`merge_own_pr`, read-only grant mounts, and the builder's protected paths:
-*separate the constraint from the constrained.* The gateway config was the one
-place it had never been applied.
+This is enforced by file ownership rather than by a command allowlist. An
+allowlist lives in the gateway's config, and a process that can write its own
+config can rewrite its own allowlist. The rule throughout the system is to
+keep a constraint out of reach of the thing it constrains.
 
-What changed:
+Running the terminal inside Docker would not help. It needs the Docker socket,
+and access to the socket is equivalent to root. `docker inspect` reads every
+bridge credential, and `docker run -v /:/host` is a root shell.
 
-- `toolsets: []` and `disabled_toolsets: [hermes-cli]`. The work directory had
-  been empty since June, so nothing depended on it — and 39 designed tools are
-  precisely what a shell was there to substitute for.
-- `config.yaml`, the skills directory and the gateway source are `root:agentbox`
-  and not group-writable. The gateway reads them; the operator writes them with
-  `sudo`.
+## What keeps credentials away from the assistant
 
-**`terminal.backend: docker` was considered and rejected.** It shells out to
-the `docker` binary, so it needs the socket — and socket access is
-root-equivalent: `docker inspect` dumps every bridge credential and `docker run
--v /:/host` is a root shell. The prerequisite is a larger hole than the one it
-patches.
+Two facts about the host.
 
-### What credential isolation actually rests on
+- The gateway user is not in the `docker` group, so it cannot read a bridge
+  container's environment.
+- `$AGENTBOX_ENV_DIR` is mode 700 and owned by the operator, so the files
+  holding bridge tokens and the memory review token cannot be read.
 
-Two filesystem facts, not architecture:
+The bridges are reachable at their container addresses from the host, but an
+unauthenticated request gets a 401, and the token it would need is behind both
+of those facts.
 
-- `agentbox` is not in the `docker` group, so `docker inspect` cannot dump a
-  bridge container's environment;
-- `$AGENTBOX_ENV_DIR/` is mode 700 to the operator, so
-  the env files holding every bridge token and the memory review token are
-  unreadable;
-- bridges *are* reachable at their container IPs from the host — verified,
-  `/health` returns 200 — but an unauthenticated call returns 401, and the
-  token to authenticate it is behind the two lines above.
-
-One `usermod -aG docker agentbox` or one careless `chmod` deletes either, and
-neither failure would announce itself: nothing errors, the policy file still
-says the right thing, and the tier is simply no longer true.
-
-So `cli/agentbox doctor` verifies all five properties on every run — the three
-tiers plus these two — by asking as the gateway user. Verified to fail
-correctly by making `config.yaml` writable and watching it go red.
+Either one is a single command away from being undone, and neither failure
+would produce an error. So `cli/agentbox doctor` checks both on every run, by
+asking as the gateway user, along with the read-only config, skills and
+source.
 
 ## Trust boundaries
 
-**Tool results are untrusted input.** Anything a bridge returns may contain
-text an outsider wrote — an email body is the obvious case. A small worker
-model on this host (FastContext-4B, `:1235`) was measured obeying an
-instruction embedded in tool data in 10 of 10 attempts on a memory-reconcile
-task (n=10, single task type, measured in a separate evaluation harness that
-is not public). Treat that as the
-default assumption for any model in the loop, not a quirk of one worker.
+Anything a tool returns is untrusted. An email body is the obvious case, but
+the same goes for calendar entries, documents and web pages. FastContext-4B,
+a small local model I evaluated, obeyed an instruction embedded in tool data in
+10 out of 10 attempts. I treat that as the default for any model, not a quirk
+of one.
 
-The practical consequence: **do not wire `/context/extract` into the assistant's
-path for content that originated outside the account** without deciding what
-happens when the extraction obeys the content instead of summarising it. Today
-that path does not exist, which is the only reason this is a note rather than a
-defect.
+So the system contains what an injected instruction could do, rather than
+relying on the model to refuse.
 
-Where this is already contained, and why those choices were containment rather
-than gating:
+- Calendar events refuse attendees and are created with `sendUpdates=none`, so
+  nothing can make the assistant email anyone.
+- The house has no general `call_service` tool. Locks, alarms and covers are
+  refused inside the bridge that holds the Home Assistant token, so "unlock
+  the front door" has nothing to call.
+- Gmail labels can only be applied under the `agentbox/` namespace.
+- Saving a memory needs an operator token the assistant does not have, so
+  "remember that..." lands in a review queue and stops there.
+- No tool sends mail or deletes anything.
 
-- calendar events refuse `attendees` and send `sendUpdates=none`, so an
-  injected instruction cannot make the assistant email anyone;
-- the house exposes no `call_service`, and locks, alarms and covers are refused
-  in the process holding the credential rather than by a policy tier, so an
-  injected "unlock the front door" has nothing to call;
-- Gmail labels can only be applied from the `agentbox/` namespace, so an
-  injected label id is refused;
-- durable memory needs an operator token the assistant does not hold, so an
-  injected "remember that…" reaches a review queue and stops;
-- no tool sends mail or deletes anything, because those are not exposed;
-- a camera look takes an *enum*, not a question, and returns counts and enums
-  rather than prose — so neither the request nor the reply has a field an
-  injected instruction can occupy. Text in the room is reported as present and
-  deliberately never transcribed.
-
-A constraint holds when the model is compromised. An approval only helps if a
-human reads carefully first.
+A constraint still holds when the model is compromised. An approval only helps
+if a person reads it carefully.
 
 ## Design principles
 
-- **Levers, not shell.** Every capability is an explicit endpoint with a
-  contract, not terminal access.
-- **Tools are designed surfaces, not wrappers.** A tool is not a thinner
-  version of an upstream API — it is a model of what the assistant may do, and
-  its grammar is fully ours. Expressiveness is a budget: the surface should be
-  exactly as expressive as what we are willing to verify, and no more. This is
-  why there is no `call_service`, why automations are template-free, and why a
-  locked-down general-purpose engine (an n8n with nodes excluded) is the wrong
-  shape — subtracting danger from someone else's surface must be re-audited on
-  every upgrade, whereas a grammar we define cannot express the thing we
-  refused. Determinism is enforced in code; the model participates only at the
-  point of intent.
-- **Bridges hold credentials.** OAuth tokens and API secrets live inside
-  bridge containers, injected at deploy time (1Password `op://` references or
-  plain env files). The assistant and router never see them.
-- **Deterministic routing.** When work goes to a smaller model, which one
-  handles it is decided in code (`router/agentbox_router.py`) and never by
-  model judgment. Retired for now, along with the workers it routed to.
-- **Constrain rather than gate, where possible.** A constraint holds when the
-  model is compromised; an approval only helps if a human reads carefully
-  first. Several capabilities are `allowed` because the bridge contains them.
-- **Deny by default.** Actions resolve against `policies/approval-policy.yaml`
-  in tier order `always_denied` → `approval_required` → `allowed`; unknown
-  actions require approval.
-- **Local-only network posture.** Compose services bind to localhost or an
-  explicit LAN IP; `cli/agentbox validate` rejects `0.0.0.0` bindings and
-  unqualified port mappings.
+- **Levers, not shell.** Every capability is a tool with a defined contract.
+- **Tools are designed, not wrapped.** A tool is a model of what the assistant
+  may do, not a thinner copy of an upstream API. It should be exactly as
+  expressive as what can be verified. That is why there is no `call_service`
+  and why automations take no templates. Removing dangerous parts from
+  somebody else's general-purpose engine has to be re-checked on every
+  upgrade, while a grammar defined here cannot express what it leaves out.
+- **Bridges hold credentials.** OAuth tokens and API secrets live in bridge
+  containers and are supplied at deploy time.
+- **Constrain rather than gate.** Several capabilities are `allowed` because
+  the bridge already limits them.
+- **Deny by default.** Every action resolves against
+  `policies/approval-policy.yaml`, and an unknown action needs approval.
+- **Local network only.** Services bind to localhost or an explicit LAN
+  address, and `cli/agentbox validate` rejects `0.0.0.0` and unqualified port
+  mappings.
 
 ## Components
 
-| Dir | Role |
+| Directory | What it holds |
 |---|---|
-| `router/` | Retired. Role router for small worker models, with their systemd units. See `router/README.md` |
-| `gateway/` | Example gateway configuration (model aliases, MCP endpoints) |
-| `policies/` | Machine-readable approval policy + human-readable mirrors |
-| `services/compose/` | One directory per service: task backend (Vikunja) and bridge/MCP pairs for memory and Google Workspace |
-| `cli/` | Operator CLI: `deploy`, `validate`, `doctor`, `status`, `policy check`, `grant`, `memory`, `scaffold` |
-| `docs/` | This document and the runbook |
+| `cli/` | The operator CLI, the sandbox launcher and the web portal |
+| `services/compose/` | One directory per service. The tool server, the bridges, Vikunja and Home Assistant |
+| `policies/` | The approval policy, plus network and secrets policies |
+| `gateway/` | Example gateway configuration |
+| `router/` | Retired. Routed work to small local models. See `router/README.md` |
+| `docs/` | This document, the runbook, and design and evaluation notes |
 
 ## Policy enforcement
 
-One file, `policies/approval-policy.yaml`, covering both actors. Semantics:
-`always_denied` → `approval_required` → `allowed`, unknown defaults to
-`approval_required`.
+One file, `policies/approval-policy.yaml`, covers both the assistant and the
+operator. It has two parts.
 
-- `tiers` names **capabilities** — what may be done, in language a human
-  reviews (`host_package_install`, `email_state_change`, `merge_own_pr`).
-- `tools` maps each assistant-visible MCP tool onto the capability it
-  exercises, so a tool call resolves to the same tier as the equivalent
-  operator action.
+- `tiers` lists capabilities in words a person can review, such as
+  `email_state_change` or `merge_own_pr`. Tiers are checked in the order
+  `always_denied`, `approval_required`, `allowed`.
+- `tools` maps each assistant tool to the capability it uses, so a tool call
+  lands in the same tier as the operator action it corresponds to.
 
-Enforced in three places against that one file:
+That one file is enforced in three places.
 
-- `cli/agentbox policy check` — operator actions.
-- **The MCP gateway**, at the single `tool_call` dispatch point. Checks
-  *without consuming* a single-use grant, so a denial is fast and names the
-  tool. One process for every integration: policy replicated per-service is the
-  opposite of a policy enforcement point, and five copies is how the fail-open
-  auth bug shipped in the first place.
-- **Bridge**, authoritatively. Each bridge declares the capability an incoming
-  request exercises and consumes the grant.
+- `cli/agentbox policy check` checks operator actions.
+- The tool server checks every call at its single dispatch point, without
+  using up a single-use grant. A denial is fast and names the tool.
+- Each bridge checks again, and this check is the authoritative one. The
+  bridge declares which capability a request uses and consumes the grant.
 
-Two gates, because the gateway holds bridge tokens: gate and credential in one
-process means compromising it defeats both. The gateway never holds an upstream
-credential — a leak there costs a scoped, local, revocable bridge token rather
-than a permanent handle on somebody's mail, which is why consolidating the MCPs
-is safe while consolidating the *bridges* would not be.
+There are two gates because the tool server holds bridge tokens. If the gate
+and the credential lived in one process, compromising that process would
+defeat both. The tool server never holds an upstream credential, so a leak
+there exposes a local, revocable bridge token rather than access to somebody's
+mail.
 
-The concentration of bridge tokens in one process is mitigated at the network
-layer rather than accepted: **bridges publish no host ports** (memory-bridge
-excepted, labelled `agentbox.exposure: operator` for the review CLI), so they
-are reachable only on compose networks the gateway joins. A leaked bridge token
-is therefore unspendable by anything on the host — exfiltrating the gateway's
-environment yields credentials with nowhere to go. Spending them requires code
-execution *inside* the gateway container: stdlib-only, read-only filesystem,
-non-root, no-new-privileges, every capability dropped. `validate` fails any
-bridge compose that publishes a port without declaring the operator exception. The bridge gate sits in the process
-the compromised one cannot bypass, so holding the credential is not sufficient
-to use it. The idea is borrowed from OpenShell, where egress enforcement lives
-outside the sandbox rather than inside the agent.
+Bridges publish no host ports, except the memory bridge's review port for the
+operator. They are reachable only on the compose networks the tool server
+joins, so a stolen bridge token has nowhere to be used from on the host.
+Using one needs code running inside the tool server's container, which has no
+dependencies outside the standard library, a read-only filesystem, no root,
+no new privileges and every capability dropped. `validate` fails any bridge
+that publishes a port without declaring the operator exception.
 
-This was briefly two files, and they contradicted each other within hours —
-`personal_data_access_beyond_task` and `gmail_label_management` were
-`approval_required` in one while `search_gmail` and `add_gmail_labels` were
-`allowed` in the other. A capability belongs in exactly one place; the tool map
-is an index into it, not a second policy. `validate` fails on an unmapped tool
-and on a drifted vendored copy.
+A tool marked `approval_required` needs a grant from `cli/agentbox grant`,
+which expires and is single-use by default. The runbook has the details.
 
-`approval_required` tools need an operator grant (`cli/agentbox grant`), which
-is time-boxed and single-use by default. See the runbook.
+## MCP protocol
 
-## MCP protocol version
+The tool server supports both the current revision of MCP (`2026-07-28`) and
+the older ones (`2025-11-25`, `2025-06-18`) on the same endpoint.
 
-The MCP servers are **dual-era**, the term the specification uses for a server
-that serves both revisions on one endpoint:
+- Current clients declare their version on each request, with no handshake.
+  An unsupported version gets an error listing the supported ones, so the
+  client can retry.
+- Older clients use the `initialize` handshake. The gateway does today.
+  `initialize` only ever negotiates an older version, because answering it
+  with the current one would tell a client to use a revision without the
+  handshake it just used.
 
-- **Modern (`2026-07-28`)** — the client declares its version in per-request
-  `_meta` under `io.modelcontextprotocol/protocolVersion`. No handshake. An
-  unsupported version returns `UnsupportedProtocolVersionError` (`-32022`)
-  listing what we do support, so the client can retry rather than guess.
-- **Legacy (`2025-11-25`, `2025-06-18`)** — the `initialize` handshake, which
-  is what the gateway uses today. It ships `mcp` 1.28.1, whose ceiling is
-  `2025-11-25`.
+From the current revision it implements `server/discover`, `resultType` and
+server info on every result, cache hints on `tools/list`, and the standard
+error codes. On current requests the `MCP-Protocol-Version`, `Mcp-Method` and
+`Mcp-Name` headers must match the body, or the request is refused. If a load
+balancer routed on the header while the server acted on the body, that
+mismatch would be an attack.
 
-`initialize` negotiates only within the legacy set. Answering the handshake
-with `2026-07-28` would tell a client to speak a revision that has no
-handshake, which it has just demonstrated it expects.
+The `Origin` header is checked before authentication, and an origin that is
+present but not on the list gets a 403. Without that, a web page could point a
+domain at `127.0.0.1` and reach the server from a browser on the same machine.
 
-Implemented from `2026-07-28`:
-
-- `server/discover` (a MUST) — supported versions, capabilities and identity in
-  one request, without a handshake.
-- `resultType` on every result, and `io.modelcontextprotocol/serverInfo` in
-  result `_meta`.
-- `ttlMs` and `cacheScope` on `tools/list` (`CacheableResult`), so a client can
-  hold the tool block rather than refetch it. Private scope: the list is
-  per-operator.
-- The `-32020..-32099` error allocation.
-
-Header/body agreement is enforced on modern requests: `MCP-Protocol-Version`,
-`Mcp-Method`, and `Mcp-Name` must match the body, or the request is refused
-with `HeaderMismatch` (`-32020`). The transport mirrors those body fields into
-headers so intermediaries can route without parsing the body — and if a load
-balancer routes on the header while the server executes on the body, that
-disagreement is the vulnerability. Base64-sentinel values are decoded before
-comparison. Legacy requests carry none of these headers and are exempt, which
-is what dual-era means in practice.
-
-An unimplemented method returns `404` with `-32601`, and version errors return
-`400`, both as the revision requires — a client uses those bodies to tell a
-modern server from a legacy one.
-
-Transport requirements, both MUSTs, both previously missing:
-
-- The `Origin` header is validated and a present-but-unlisted origin gets 403,
-  before authentication is even considered. This is the DNS-rebinding control
-  the specification names: a page in a browser on this host could otherwise
-  resolve an attacker domain to `127.0.0.1` and reach a local MCP server.
-- An unsupported `MCP-Protocol-Version` header is rejected. Absent is fine —
-  the spec says assume `2025-03-26`.
-
-`GET /mcp` returns 405, which the specification allows as the explicit way to
-say no SSE stream is offered here.
-
-Not implemented, and why: **MRTR** (`resultType: "input_required"`), which is
-how runtime approval is meant to work — the server returns the inputs it needs
-and the client retries with the answers. That would put approval in the
-conversation. It requires client support that does not exist yet; Hermes wires
-a sampling callback and has no elicitation handling at all. Until then approval
-runs through `cli/agentbox-approvals`, which asks in Discord out of band.
+`MRTR`, the revision's way of asking for approval mid-call, is not
+implemented. It needs client support the gateway does not have yet, so
+approvals go through `cli/agentbox-approvals` in Discord instead.
 
 ## Extension points
 
-- **Builder sandbox** — implemented twice, for two actors. `cli/agentbox
-  scaffold <name>` generates a complete bridge for the *operator*.
-  `builder-bridge`/`builder-mcp` let the *assistant* read this repository and
-  propose changes as git branches — new services, fixes, and edits to its own
-  source. Neither deploys and neither merges, because `merge_own_pr` is
-  `always_denied` and a generated service that shipped itself would route
-  around that.
-
-  The builder is the one service that can write the source of the system
-  constraining it, so its containment is a path check rather than a tier: the
-  policy, both gates, the operator CLI and CI are refused outright. A tier
-  cannot express "may edit any file except the ones that govern it". It also
-  never pushes — proposals stay in its clone and the operator fetches them, and
-  this repository is mounted into it read-only, so pull-not-push is enforced by
-  the filesystem rather than by the code.
-- **Memory review gates** — implemented: the assistant proposes, an operator
-  approves via `cli/agentbox memory` using a credential the assistant does not
+- **Builder.** The assistant can read this repository and propose changes as
+  git branches through `builder-bridge`. It cannot deploy or merge, because
+  `merge_own_pr` is `always_denied`. The builder can write the source of the
+  system that constrains it, so the policy, both gates, the operator CLI and
+  CI are refused by path. It never pushes. Proposals stay in its clone, and
+  this repository is mounted into it read-only. `cli/agentbox scaffold <name>`
+  generates a new bridge for the operator.
+- **Memory review.** The assistant proposes memories and an operator approves
+  them with `cli/agentbox memory`, using a credential the assistant does not
   hold.
-- **Self-reflection** — implemented: the MCPs write an outcome journal,
-  `review_own_activity` aggregates it under the `inspect_service_logs`
-  capability, and a weekly job has the assistant read it and propose lessons
-  through the same review gate. It reflects on evidence rather than on
-  recollection, and it cannot act on its conclusions unaided.
-
-  The journal lives at the MCP layer deliberately. The bridge request log sits
-  below it, so it records `GET /v1/tasks` and never learns the tool was
-  `list_tasks` — and a call the policy gate refuses never reaches a bridge at
-  all, which made the assistant's *denied* attempts, the most interesting
-  events, invisible in the only record that existed.
-- **Cloud escalation** (not implemented): the intended pattern is
-  escalate-on-failure (try the local model, escalate when validation fails),
-  gated by the approval policy — not an LLM-based tier classifier. Likely
-  subsumed by harness dispatch, which generalises it.
-
-**This document records what exists. `docs/roadmap.md` records what was asked
-for and does not.** Keeping both here was a mistake: an architecture document
-has no natural place to describe something absent, so requested capabilities
-quietly stopped being tracked — self-reflection, Home Assistant, on-demand
-service building, self-extension by PR, and harness dispatch were all lost that
-way. The tell was in `policies/approval-policy.yaml`, which tiers seven
-capabilities (`draft_plans_issues_prs_skills`, `scaffold_service_for_review`
-and others) that no tool implements.
+- **Self-reflection.** The tool server writes an outcome journal of every
+  call, including the ones the policy refused. Once a week the assistant reads
+  it and proposes lessons, which go through the same memory review.
+- **Cloud models.** Not implemented. The intended pattern is to try the local
+  model first and escalate only when its answer fails validation, with the
+  escalation gated by the approval policy.
 
 ## Reference deployment
 
-AMD Strix Halo (Ryzen AI Max+ 395, Radeon 8060S iGPU, gfx1151, unified
-memory) running Ubuntu Server with llama.cpp (Vulkan) serving a ~35B MoE
-model at up to 200K context. Any machine that can serve an OpenAI-compatible
-endpoint works, and the CLI is stdlib-only Python.
+An AMD Strix Halo machine (Ryzen AI Max+ 395, Radeon 8060S, unified memory)
+running Ubuntu Server, with llama.cpp on Vulkan serving a 35B model at up to
+200K context. Any machine that can serve an OpenAI-compatible endpoint will
+work, and the CLI needs nothing beyond the Python standard library.
 
 ## Identity
 
-The gateway serves one or more identities, configured as
-`AGENTBOX_IDENTITIES=alex:tokenA,sam:tokenB`. **Which identity is calling is
-decided by which bearer token was presented** — resolved before any tool runs,
-and never read from a tool argument.
+The gateway serves one or more people, configured as
+`AGENTBOX_IDENTITIES=alex:tokenA,sam:tokenB`. Which person is calling is
+decided by which bearer token was presented. It is resolved before any tool
+runs and is never read from a tool argument.
 
-That is the whole property. If the assistant could name the identity it wanted
-to act as, an instruction embedded in an email could name one too, and a single
-compromised context would reach both people's accounts. Because identity *is*
-the credential, a process holding one person's token cannot act as anyone else:
-the other credential is not there to present. Identity is bound to the session,
-not to a parameter, and `tests/test_gateway_identity.py` asserts that no
-argument — `identity`, `as`, or anything else — can change it.
+If the assistant could choose who to act as, an instruction in an email could
+choose too, and one compromised conversation could reach everyone's accounts.
+Because the identity is the credential, a process holding one person's token
+cannot act as anyone else. `tests/test_gateway_identity.py` checks that no
+argument can change it.
 
-Downstream, identity does three things:
+The identity then does three things.
 
-- **routes** the call, via `GOOGLE_BRIDGE_URL_<NAME>` / `_TOKEN_<NAME>`, so each
-  person's mail credential lives in a separate bridge container. Unset falls
-  back to the shared bridge, which is correct for genuinely shared services like
-  tasks;
-- **travels** to the bridge as `X-Agentbox-Identity`, where the authoritative
-  gate matches identity-scoped grants (`agentbox grant <tool> --for alex`).
-  Unscoped grants cover anyone, which is how every pre-identity grant behaves;
-- **is recorded** in the outcome journal, so reflection and any future tier
-  argument can tell whose calls they are reading.
+- It routes the call. Each person's Google credential lives in their own
+  bridge container, reached through `GOOGLE_BRIDGE_URL_<NAME>`. Shared services
+  such as tasks use the shared bridge.
+- It travels to the bridge in `X-Agentbox-Identity`, where grants can be
+  scoped to one person with `agentbox grant <tool> --for alex`. An unscoped
+  grant covers anyone.
+- It is recorded in the outcome journal, so reflection can tell whose calls it
+  is reading.
 
-With no identities configured the gateway falls back to one shared token and no
-identity — exactly the single-operator behaviour that predates this.
+With no identities configured, the gateway uses one shared token and no
+identity, which is the single-person setup.
