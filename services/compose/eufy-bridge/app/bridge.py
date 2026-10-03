@@ -1,34 +1,21 @@
 #!/usr/bin/env python3
-"""Eufy Security, behind the same policy surface as everything else.
+"""Eufy cameras, behind the same policy as everything else.
 
-## Why this exists rather than the Home Assistant integration
+## Why not the Home Assistant integration
 
-Eufy publishes no third-party API, so every route to these cameras is
-reverse-engineered. The usual one is a HACS integration installed *inside* Home
-Assistant — and this deployment's Home Assistant already runs with host
-networking, a system D-Bus socket, NET_ADMIN and NET_RAW, reachable from the
-LAN. Adding unreviewed third-party code to the most privileged container on the
-box, to reach the cameras specifically, is the worst placement available.
+Eufy has no public API, so every route to these cameras is reverse-engineered.
+The usual one is an add-on inside Home Assistant, which runs with host
+networking, a D-Bus socket and network admin rights. That is the worst place to
+add unreviewed code. Instead `eufy-security-ws` runs in its own container on a
+private network with no host ports, and this bridge talks to it. Eufy's
+protocols are not reimplemented here.
 
-So the reverse-engineered part stays where it belongs: `eufy-security-ws` runs
-as its own container on a private network with no host ports, and this bridge
-talks to it. If that code misbehaves it has a docker network and a Eufy
-credential, not a D-Bus socket and a Bluetooth radio.
+## What it will and will not do
 
-What is *not* being done here is reimplementing Eufy's protocol.
-eufy-security-client carries four of them — an HTTPS cloud API, an undocumented
-UDP P2P stack that also carries video, Firebase push, and MQTT for locks.
-Rewriting that is months of packet capture and breaks on every firmware
-release. Consuming it from an isolated container is the good trade.
-
-## What this bridge will and will not do
-
-Looking is allowed, on request, at allowlisted cameras only. Acting is not.
-
-There is no arm, disarm, alarm trigger, pan, tilt, recording start or lock
-route, and their absence is the point — not a tier that could be granted later
-by editing a policy file. A camera the assistant can arm is a camera an
-injected assistant can disarm.
+Looking is allowed, on request, at allowlisted cameras only. There is no arm,
+disarm, alarm, pan, tilt, recording or lock route, and that absence is the
+point. A camera the assistant could arm is one an injected instruction could
+disarm.
 """
 from __future__ import annotations
 
@@ -45,9 +32,8 @@ HOST = os.environ.get("BRIDGE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("BRIDGE_PORT", "8080"))
 SCHEMA_VERSION = int(os.environ.get("EUFY_SCHEMA_VERSION", "21"))
 
-# Serial numbers the operator has decided may be looked at. Empty means look at
-# nothing, which is the right default for indoor cameras: the failure direction
-# of a missing config must be less access, never more.
+# Serial numbers the operator allows to be viewed. Empty means none, so a
+# missing setting gives less access, never more.
 VIEWABLE = frozenset(
     s.strip() for s in os.environ.get("EUFY_VIEWABLE_CAMERAS", "").split(",")
     if s.strip())
@@ -59,9 +45,8 @@ _lock = threading.Lock()
 def client():
     """One shared connection, re-established on failure.
 
-    eufy-security-ws drops clients on its own restarts and on Eufy cloud
-    hiccups, and a bridge that returns 500 until someone notices is a bridge
-    that looks broken rather than reconnecting.
+    eufy-security-ws drops clients when it restarts, so the bridge reconnects
+    rather than returning 500 until someone notices.
     """
     global _client
     with _lock:
@@ -94,10 +79,8 @@ def drop_client():
 def command(payload: dict, timeout: float = 20.0) -> dict:
     """Send one command and wait for its reply.
 
-    Replies are correlated by messageId rather than by taking the next message
-    off the socket: this connection also carries unsolicited device events, and
-    reading one of those as a command result would silently answer the wrong
-    question.
+    Replies are matched by messageId, because the same connection also carries
+    device events, and taking the next message could answer the wrong question.
     """
     message_id = f"m{int(time.time() * 1000)}"
     payload = {**payload, "messageId": message_id}
@@ -134,8 +117,8 @@ def require_viewable(serial: str) -> None:
 def list_devices(_body):
     """Everything the account can see, as metadata only.
 
-    Deliberately no state values in this response. Knowing a camera exists is a
-    different disclosure from knowing whether it currently sees someone.
+    No state values. Knowing a camera exists is a different disclosure from
+    knowing whether it currently sees someone.
     """
     result = command({"command": "driver.get_devices"})
     devices = []
@@ -155,9 +138,8 @@ def list_devices(_body):
 def snapshot(body):
     """One still frame from an allowlisted camera.
 
-    The returned image is untrusted input with a *physical* attack surface:
-    anything in view of the lens can carry text — a note on a fridge, a phone
-    screen, a television. Named so the caller cannot forget that.
+    The image is untrusted input. Anything in view, such as a note or a screen,
+    can carry text, and the name says so.
     """
     serial = str(body.get("serial", "")).strip()
     require_viewable(serial)

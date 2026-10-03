@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Vikunja bridge on the shared bridge_base. Holds the Vikunja API token and
-exposes a narrow task/project API to the assistant."""
+"""The Vikunja bridge. Holds the Vikunja API token and exposes a narrow task
+and project API."""
 from __future__ import annotations
 
 import json
@@ -74,13 +74,11 @@ def first(query, key, default):
     return value[0] if value else default
 
 
-# --- projection pushdown ------------------------------------------------------
+# --- projection pushdown -----------------------------------------------------
 #
-# A lean view emits only the fields a task-picking agent acts on, so the excess
-# is never generated rather than compressed after the fact. `full` stays the
-# default until the A/B eval shows lean costs no task accuracy.
-#
-# The mechanics live in bridge_base so every bridge projects identically.
+# The lean view returns only the fields needed to pick a task, so the rest is
+# never sent. `full` stays the default until an evaluation shows lean costs no
+# accuracy. The mechanics are shared in bridge_base.
 
 LEAN_TASK_FIELDS = ("id", "title", "done", "priority")
 TASK_VIEWS = VIEWS
@@ -173,10 +171,9 @@ class VikunjaBridge(BridgeHandler):
     bridge_token = os.environ.get("VIKUNJA_BRIDGE_TOKEN", "")
 
     def upstream_status(self):
-        """Probe Vikunja itself, so /ready fails when the task backend is down.
+        """Probe Vikunja itself, so /ready fails when it is down.
 
-        Deliberately not wired into /health: the container healthcheck uses
-        that, and a Vikunja outage should not restart-loop a working bridge.
+        Not used by /health, so a Vikunja outage cannot restart-loop the bridge.
         """
         try:
             with urllib.request.urlopen(f"{VIKUNJA_URL}/api/v1/info", timeout=5) as response:

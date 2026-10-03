@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Memory bridge on the shared bridge_base. Stores memories/proposals in a
-JSON file behind a process-wide lock (single-writer semantics)."""
+"""The memory bridge. Holds memories, proposals and the feedback backlog in one
+JSON file behind a process-wide lock, so there is a single writer."""
 from __future__ import annotations
 
 import hmac
@@ -26,15 +26,13 @@ _LOCK = threading.Lock()
 
 # --- the review gate --------------------------------------------------------
 #
-# The assistant may PROPOSE a memory. It may not approve one, and it may not
-# write straight to durable memory. Those are operator actions, gated by a
-# second credential the assistant never holds — the bridge token alone is not
-# enough. This is the same reasoning that puts merge_own_pr in always_denied:
-# proposing and accepting your own change is not review.
+# The assistant may propose a memory. It may not approve one or write straight
+# to durable memory. Those need a second credential, the review token, which the
+# assistant never holds. Proposing and accepting your own change is not review,
+# which is also why merge_own_pr is always_denied.
 #
-# Fails closed. With MEMORY_REVIEW_TOKEN unset nobody can approve, which is the
-# safe direction: durable memory stops accepting writes rather than silently
-# accepting them from anyone holding the bridge token.
+# With MEMORY_REVIEW_TOKEN unset nobody can approve, so durable memory stops
+# accepting writes rather than accepting them from anyone with the bridge token.
 REVIEW_TOKEN = os.environ.get("MEMORY_REVIEW_TOKEN", "")
 REVIEW_HEADER = "X-Memory-Review-Token"
 
@@ -61,17 +59,10 @@ def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-# Bumped whenever a field is added that older records will not have. The
-# upgrade below runs on load, so a record written before a field existed does
-# not silently take that field's default.
-#
-# The absence of this cost a real defect: `kind` was added to distinguish a
-# memory from behaviour feedback, every stored proposal predated it,
-# `.get("kind") == KIND_FEEDBACK` read None as "not feedback", and three notes
-# about broken tooling were approved straight into durable memory — the exact
-# outcome the split existed to prevent. Schemaless stores fail this way every
-# time a field is added; the fix is to make the migration explicit rather than
-# to hope the default is right.
+# Raised whenever a field is added that older records will not have. The
+# upgrade below runs on load, so an old record never quietly takes a new field's
+# default. Without it, proposals written before `kind` existed read as "not
+# feedback" and were approved into memory when they were feedback.
 STORE_VERSION = 1
 
 
@@ -82,9 +73,8 @@ def upgrade_store(store: dict[str, Any]) -> dict[str, Any]:
         store["version"] = STORE_VERSION
         return store
     if version < 1:
-        # v0 -> v1: proposals and memories predate `kind`. Classify rather
-        # than defaulting, which is what approve_proposal already does for
-        # this same reason.
+        # v0 to v1: classify records that predate `kind` rather than default
+        # them, as approve_proposal does.
         for item in list(store.get("proposals", [])) + list(store.get("memories", [])):
             if not item.get("kind"):
                 kind, reason = classify_kind(item.get("statement", ""))
@@ -112,10 +102,10 @@ HOUSEHOLD = "household"
 
 
 def identity_of(handler) -> str:
-    """Who this request is for. Asserted by the gateway, never by the model.
+    """Who this request is for, as stated by agentbox-mcp, never by the model.
 
-    Empty means single-operator, where every memory is implicitly the one
-    person's — the behaviour that predates identities.
+    Empty means single-operator mode, where every memory belongs to the one
+    operator.
     """
     return (handler.headers.get("X-Agentbox-Identity", "").strip()
             if handler is not None else "")
@@ -124,45 +114,33 @@ def identity_of(handler) -> str:
 def resolve_scope(body: dict[str, Any], identity: str) -> str:
     """Private to the caller, or shared with the household.
 
-    Two scopes rather than arbitrary sharing between named people. "Sam can see
-    this one thing of Alex's" is a per-item ACL, and per-item ACLs are how
-    sharing systems become impossible to reason about — the operator ends up
-    unable to answer "what can she see?" without reading every row. Household
-    is a plane, not a permission: putting something there is a deliberate act
-    with one obvious meaning.
+    Two scopes rather than sharing between named people. Per-item sharing makes
+    "what can Sam see?" impossible to answer without reading every row. Putting
+    something in household is a deliberate act with one obvious meaning.
     """
     requested = str(body.get("scope") or "").strip().lower()
     if not requested:
-        # Private by default. A memory that lands in the shared plane because
-        # nobody said otherwise is a disclosure nobody chose.
+        # Private by default. Sharing something because nobody said otherwise
+        # is a disclosure nobody chose.
         return identity or HOUSEHOLD
     if requested == HOUSEHOLD:
         return HOUSEHOLD
     if requested in ("private", "me", "self"):
         return identity or HOUSEHOLD
     if identity and requested != identity:
-        # Writing into somebody else's private plane is not sharing, it is
-        # impersonation.
+        # Writing into someone else's private scope is impersonation, not
+        # sharing.
         raise BridgeError(
             403, f"cannot write to '{requested}'s private memory. Use scope "
                  f"'{HOUSEHOLD}' to share, or omit scope to keep it yours.")
     return requested
 
 
-# The operator's review path. Presenting the review token means "I am the human
-# who administers this box", and that person must see every proposal — they are
-# the only one who can approve any of them.
-#
-# This is not a privacy regression, because the privacy was never there: the
-# operator can read /data/memory.json with one docker exec, and a scope that
-# claimed otherwise would have been theatre. What a scope actually controls is
-# **what the assistant can surface to whom** — Sam's assistant cannot read
-# Alex's private memories, which is the property that matters and the one that
-# holds.
-#
-# Until this existed, a private proposal was unreachable by the only account
-# that could approve it: write-only memory that failed silently, because an
-# empty list looks exactly like an empty queue.
+# The operator's review path. The review token means "the person who runs this
+# box", and they must see every proposal because they are the only one who can
+# approve them. This takes no privacy away, since the operator can read the
+# memory file with one `docker exec` anyway. What a scope controls is what the
+# assistant shows to whom: Sam's assistant cannot read Alex's private memories.
 def visible_scopes(identity: str, operator: bool = False) -> set[str] | None:
     """Scopes readable here. None means unrestricted (operator review)."""
     if operator:
@@ -170,27 +148,23 @@ def visible_scopes(identity: str, operator: bool = False) -> set[str] | None:
     return {identity, HOUSEHOLD} if identity else {HOUSEHOLD}
 
 
-# --- memory vs feedback -----------------------------------------------------
+# --- memory and feedback ---------------------------------------------------
 #
-# Two different things arrive through one door. "Sam is allergic to peanuts"
-# is a fact about the household and belongs in memory. "Stop asking me to
-# confirm before every calendar read" is not a fact — it is a complaint about
-# how the assistant behaves, and storing it as a memory is a patch: the
-# behaviour stays wrong, and a line of memory is spent every session
-# apologising for it. That belongs in a backlog of things to fix properly, in
-# the skill or the tool description or the system prompt.
+# Two different things arrive through one door. "Sam is allergic to peanuts" is
+# a fact and belongs in memory. "Stop asking me to confirm every calendar read"
+# is a complaint about behaviour. Storing that as a memory patches around the
+# problem and spends a line of context every session, so it goes to a backlog
+# to be fixed in the skill, tool description or prompt instead.
 #
-# The classification is a heuristic and is allowed to be wrong, because the
-# person reviewing the proposal sees the suggestion and can flip it. What it
-# must not do is silently decide: the portal always shows which way it went
-# and why.
+# The classification is a heuristic and may be wrong. The reviewer sees which
+# way it went and why, and can flip it.
 
 KIND_MEMORY = "memory"
 KIND_FEEDBACK = "feedback"
 
-# Phrases that describe the assistant's conduct rather than the world. Second
-# person plus a directive is the core signal — a fact about a person almost
-# never addresses the reader.
+# Phrases about the assistant's conduct rather than the world. Second person
+# plus a directive is the main signal, since a fact about a person rarely
+# addresses the reader.
 FEEDBACK_MARKERS = (
     "you should", "you shouldn't", "you should not", "you must", "you need to",
     "you keep", "you always", "you never", "you tend to", "you often",
@@ -204,17 +178,10 @@ FEEDBACK_MARKERS = (
 )
 
 
-# Vocabulary that only appears when the assistant is describing its own
-# operation rather than the household's life.
-#
-# This half was added after reading the real queue on 2026-08-12, where five
-# of seven pending proposals were the assistant writing notes to itself about
-# broken tooling — "look_at_camera returned upstream_rejected on every call
-# this week (3/3, 0% success). Do not retry it" — and the markers above, which
-# were tuned for a person complaining ("you keep asking me"), caught none of
-# them. That shape is the *dominant* one here, and it is the purest example of
-# the thing worth separating: the fix is to repair look_at_camera, not to
-# remember forever that it is broken.
+# Words that only appear when the assistant is describing its own machinery,
+# such as a note that a tool keeps failing. In practice that is the most common
+# kind of feedback, and the fix is to repair the tool rather than remember that
+# it is broken.
 SELF_REPORT_MARKERS = (
     "upstream_rejected", "approval_required", "always_denied",
     "was refused", "were refused", "refused ", "% success", "0/",
@@ -226,20 +193,18 @@ SELF_REPORT_MARKERS = (
     "i need a grant", "ask the operator to grant",
 )
 
-# A tool name: snake_case with at least one underscore. Household facts do not
-# mention find_or_create_task; a proposal that does is describing the machine.
+# A tool name, snake_case with at least one underscore. Household facts do not
+# mention find_or_create_task, so a proposal that does is about the machine.
 TOOL_NAME = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
 
 
 def classify_kind(statement: str) -> tuple[str, str]:
     """Guess whether this is a fact to remember or feedback to act on.
 
-    Returns (kind, reason). The reason is shown to whoever reviews it, because
-    an unexplained classification is one nobody can correct with confidence.
-
-    Three signals, in order of how sure they are: someone addressing the
-    assistant's conduct, the assistant reporting on its own machinery, and a
-    bare directive. All are heuristics and all are overridable at review.
+    Returns (kind, reason). The reason is shown to the reviewer so the guess can
+    be corrected with confidence. The signals, most certain first, are someone
+    addressing the assistant's conduct, the assistant reporting on its own
+    machinery, and a bare directive.
     """
     text = " " + statement.lower().strip() + " "
     for marker in FEEDBACK_MARKERS:
@@ -253,8 +218,8 @@ def classify_kind(statement: str) -> tuple[str, str]:
     if match:
         return KIND_FEEDBACK, (f"names a tool (“{match.group(0)}”), so it is "
                                f"probably about the system rather than the household")
-    # A bare imperative aimed at the assistant: "always confirm before…",
-    # "never read my email out loud". No subject, starts with the directive.
+    # A bare instruction to the assistant, such as "always confirm before…" or
+    # "never read my email out loud".
     first = text.strip().split(" ")[0] if text.strip() else ""
     if first in ("always", "never", "stop", "don't", "dont", "avoid"):
         return KIND_FEEDBACK, f"starts with a directive (“{first}”)"
@@ -262,7 +227,7 @@ def classify_kind(statement: str) -> tuple[str, str]:
 
 
 def resolve_kind(body: dict[str, Any], statement: str) -> tuple[str, str, str]:
-    """(kind, reason, source). An explicit kind always wins over the guess."""
+    """(kind, reason, source). An explicit kind always beats the guess."""
     requested = str(body.get("kind") or "").strip().lower()
     if requested in (KIND_MEMORY, KIND_FEEDBACK):
         return requested, str(body.get("kind_reason") or ""), "explicit"
@@ -281,9 +246,8 @@ def clean_memory(body: dict[str, Any], status: str,
         "id": body.get("id") or str(uuid.uuid4()),
         "type": body.get("type", "profile_preference"),
         "statement": statement,
-        # Which of the two things this is, why we think so, and whether a
-        # human said or a heuristic guessed. All three travel together: a
-        # classification without its provenance cannot be reviewed.
+        # Which kind this is, why, and whether a person said so or the
+        # heuristic guessed. A classification is only reviewable with all three.
         "kind": kind,
         "kind_reason": kind_reason,
         "kind_source": kind_source,
@@ -293,18 +257,18 @@ def clean_memory(body: dict[str, Any], status: str,
         "status": status,
         "created_at": body.get("created_at") or now(),
         "updated_at": now(),
-        # Which memory this replaces, if any. The chain lives on the items
-        # themselves so any link can find the whole history.
+        # The memory this replaces, if any. Links live on the items so any
+        # one of them can find the whole history.
         "supersedes": body.get("supersedes") or None,
         "metadata": body.get("metadata", {}),
     }
 
 
 def is_operator(handler) -> bool:
-    """Whether this request carries the operator's review credential.
+    """Whether this request carries the operator's review token.
 
-    The same token that authorises approving a proposal, so seeing the queue
-    and acting on it are one permission rather than two that can drift apart.
+    The same token approves proposals, so seeing the queue and acting on it are
+    one permission.
     """
     if handler is None or not REVIEW_TOKEN:
         return False
@@ -314,16 +278,11 @@ def is_operator(handler) -> bool:
 
 def visible_to(items: list[dict[str, Any]], identity: str,
                operator: bool = False) -> list[dict[str, Any]]:
-    """Drop anything outside this identity's planes.
+    """Drop anything outside this identity's scopes.
 
-    Filtered here, in the process holding the store, rather than by the caller.
-    A gateway that asked politely for only its own memories would leak the
-    moment anything upstream got confused about who it was serving.
-
-    Items written before scopes existed have none. They belong to the person
-    who was the only user at the time, so they read as household rather than
-    vanishing — losing them silently would be worse than over-sharing between
-    two people who already share a house.
+    Done here, in the process holding the store, rather than trusted to the
+    caller. Items written before scopes existed have none and read as
+    household.
     """
     scopes = visible_scopes(identity, operator)
     if scopes is None:
@@ -359,12 +318,10 @@ def get_schema(handler, body):
 
 
 def whoami(handler, body):
-    """What this session is, in the terms the assistant needs to be careful.
+    """Who this session is for and what it can read.
 
-    Answered by the bridge from the gateway's asserted header rather than by
-    the gateway from its own state, so the answer comes from the same place
-    that enforces it. A whoami that could disagree with the filter would be
-    worse than none — the assistant would trust it.
+    Answered from the same header that the filter uses, so it cannot disagree
+    with what is enforced.
     """
     identity = identity_of(handler)
     return 200, {
@@ -399,19 +356,13 @@ def create_proposal(handler, body):
     item = clean_memory(body or {}, "proposed", identity_of(handler))
     with _LOCK:
         store = load_store()
-        # Idempotent on the statement: a retried proposal must not queue the
-        # same fact twice for review. Nothing here identifies a proposal except
-        # what it says, so that is the key.
+        # Keyed on the statement, so a retried proposal is not queued twice.
         existing = next((x for x in store["proposals"]
                          if x.get("statement", "").strip() == item["statement"]), None)
         if existing:
             return 200, existing
-        # Already on the improvement backlog. The assistant cannot see that
-        # list, so left to itself it would re-propose the same complaint every
-        # time the behaviour recurred — which is exactly when it is most
-        # likely to notice. Swallowed quietly rather than errored: from the
-        # assistant's side this is a proposal that has already been made, not
-        # a mistake.
+        # Already on the feedback backlog, which the assistant cannot see.
+        # Treated as already proposed rather than as an error.
         filed = next((x for x in store.get("feedback", [])
                       if x.get("statement", "").strip() == item["statement"]), None)
         if filed:
@@ -424,10 +375,9 @@ def create_proposal(handler, body):
 
 
 def create_memory(handler, body):
-    """Write straight to durable memory, bypassing the proposal queue.
+    """Write straight to durable memory, skipping the proposal queue.
 
-    Operator-only: this is the path that makes the queue optional, so it takes
-    the review token like approval does.
+    Operator only, so it takes the review token like approval does.
     """
     require_review(handler)
     item = clean_memory(body or {}, STATUS_APPROVED, identity_of(handler))
@@ -438,7 +388,7 @@ def create_memory(handler, body):
             replaced = _mark_superseded(store, item["supersedes"], item["id"])
         store["memories"].append(item)
         save_store(store)
-        # Only when the caller did not say. Offered, never applied — see
+        # Only when the caller did not say. Suggested, never applied. See
         # supersession_candidates.
         suggestions = ([] if replaced else
                        supersession_candidates(store, item["statement"],
@@ -459,22 +409,12 @@ def list_memories(handler, body):
     identity = identity_of(handler)
     operator = is_operator(handler)
     query = query_of(handler)
-    # `include_superseded=true` returns retired rows as top-level items, which
-    # is what a management view wants. The assistant gets something better: the
-    # current fact with its own history nested underneath.
-    #
-    # Excluding history outright was the first design and it was wrong. The
-    # argument was that two contradictory memories produce a confident wrong
-    # answer — true only when nothing says which is current. Nested under the
-    # fact that replaced it, with the date it stopped being true, there is no
-    # ambiguity left to be confused by, and the assistant can answer "when did
-    # that change?" instead of flatly contradicting somebody who remembers the
-    # old value.
-    #
-    # Nested rather than flat for context economy, which is the real cost:
-    # a prior version carries a sentence and a date, not a second copy of
-    # every field. Capped, because a fact revised fifty times must not become
-    # fifty lines in every retrieval.
+    # `include_superseded=true` lists retired rows as separate items, for a
+    # management view. The assistant instead gets each current fact with the
+    # versions it replaced nested under it, each with the date it stopped being
+    # true. That leaves no doubt about which is current, and lets the assistant
+    # answer "when did that change?". An old version costs a sentence and a
+    # date, and the number kept is capped.
     include_history = first(query, "include_superseded", "") == "true"
     current = [x for x in store["memories"]
                if include_history
@@ -492,16 +432,12 @@ def list_memories(handler, body):
 
 def apply_reviewer_edits(proposal: dict[str, Any], body: dict[str, Any] | None,
                          identity: str) -> None:
-    """Let the reviewer correct a proposal before it becomes durable.
+    """Let the reviewer correct a proposal before it is stored.
 
-    The assistant's wording is a draft. "Alex doesn't like early meetings" may
-    be true only on Mondays, and the choice was previously all-or-nothing:
-    accept a slightly wrong memory forever, or reject and lose it. Both are
-    bad, and rejecting is the one that quietly loses information.
-
-    The original is kept beside the edit. A memory a human rewrote and one the
-    assistant wrote are different evidence about how well it is doing, and
-    collapsing them would corrupt the only record of that.
+    The assistant's wording is a draft, and otherwise the only choices are a
+    slightly wrong memory or none. The original is kept beside the edit,
+    because a memory a person rewrote is different evidence from one the
+    assistant got right.
     """
     body = body or {}
     edited = str(body.get("statement") or "").strip()
@@ -511,8 +447,8 @@ def apply_reviewer_edits(proposal: dict[str, Any], body: dict[str, Any] | None,
         proposal["edited_by_reviewer"] = True
     scope = str(body.get("scope") or "").strip().lower()
     if scope:
-        # Re-resolved rather than assigned, so the reviewer cannot widen a
-        # memory into someone else's private plane by typing a name.
+        # Resolved again rather than taken from the form, so a reviewer cannot
+        # move a memory into someone else's private scope by typing a name.
         proposal["scope"] = resolve_scope({"scope": scope}, identity)
     kind = str(body.get("kind") or "").strip().lower()
     if kind in (KIND_MEMORY, KIND_FEEDBACK) and kind != proposal.get("kind"):
@@ -522,11 +458,10 @@ def apply_reviewer_edits(proposal: dict[str, Any], body: dict[str, Any] | None,
 
 
 def approve_proposal(handler, proposal_id: str, body=None):
-    """Approve a proposal, optionally with the reviewer's edits applied.
+    """Approve a proposal, with the reviewer's edits if any.
 
-    A proposal marked as feedback is routed to the feedback backlog instead of
-    durable memory even here, so "approve" cannot quietly turn a behaviour
-    complaint into a memory that patches around it.
+    A proposal marked as feedback still goes to the feedback backlog, so
+    approving cannot turn a behaviour complaint into a memory.
     """
     require_review(handler)
     with _LOCK:
@@ -536,14 +471,8 @@ def approve_proposal(handler, proposal_id: str, body=None):
             raise BridgeError(404, "proposal not found")
         apply_reviewer_edits(proposal, body, identity_of(handler))
         if not proposal.get("kind"):
-            # Written before this field existed, so it carries no
-            # classification — and `.get("kind") == KIND_FEEDBACK` quietly read
-            # that as "memory", routing every pre-existing proposal into
-            # durable memory however plainly it was feedback. Found the first
-            # time the feature was used on the real queue: three notes about
-            # broken tooling were approved straight into memory, which is the
-            # precise outcome the split exists to prevent. Classify on the way
-            # through rather than defaulting.
+            # Written before this field existed, so classify it now rather
+            # than let a missing value read as "memory".
             kind, reason = classify_kind(proposal.get("statement", ""))
             proposal["kind"] = kind
             proposal["kind_reason"] = reason
@@ -574,12 +503,11 @@ def approve_proposal(handler, proposal_id: str, body=None):
 
 
 def _file_as_feedback(store: dict[str, Any], proposal: dict[str, Any]):
-    """Move a proposal into the improvement backlog. Caller holds the lock.
+    """Move a proposal to the feedback backlog. Caller holds the lock.
 
-    Deliberately not appended to `memories`: the whole point is that this does
-    not become a line of context the assistant reads back to excuse the
-    behaviour. It is work for a human to do to a skill, and it stays on a list
-    until they say they have done it.
+    Not added to `memories`, so it never becomes context the assistant reads
+    back to excuse the behaviour. It stays on the list until a person says it
+    is fixed.
     """
     proposal["status"] = "open"
     proposal["kind"] = KIND_FEEDBACK
@@ -593,21 +521,16 @@ def _file_as_feedback(store: dict[str, Any], proposal: dict[str, Any]):
 
 # --- supersession -----------------------------------------------------------
 #
-# Facts change, and "delete the old one" loses the shape of the change. Bin day
-# was Tuesday and is now Wednesday; the useful record is not one fact plus a
-# tombstone, it is a chain — this replaced that, on this date. That distinction
-# matters when an answer from three weeks ago looks wrong: it lets you see what
-# was believed at the time rather than only what is believed now.
+# Facts change, and deleting the old one loses the shape of the change. Bin day
+# was Tuesday and is now Wednesday, and the useful record is that this replaced
+# that on this date. So there are three end states.
 #
-# So three end states, not two:
+#   approved    current, and read by the assistant
+#   superseded  was true until something replaced it, readable as history
+#   forgotten   should never have been stored
 #
-#   approved    current; the assistant reads these
-#   superseded  was true, something replaced it; readable as history
-#   forgotten   should never have been stored; wrong, or a test fixture
-#
-# Only `approved` is returned to the assistant. A superseded memory that stayed
-# readable would be worse than deleting it — two contradictory facts with no
-# marker of which is current is exactly how a confident wrong answer happens.
+# Only `approved` is returned as current. Two contradictory facts with nothing
+# saying which is current would produce confident wrong answers.
 
 STATUS_APPROVED = "approved"
 STATUS_SUPERSEDED = "superseded"
@@ -629,13 +552,12 @@ def _content_words(statement: str) -> set[str]:
 
 
 def _same_subject(a: str, b: str) -> bool:
-    """Do two statements lead with the same word?
+    """Do two statements start with the same word?
 
-    Cheap stand-in for "are these about the same thing". Two shared content
-    words was the original bar and it missed the case this exists for: "Bin
-    day is Tuesday" and "Bin day is Wednesday" share exactly one — `bin` —
-    because the words that differ are the whole point. Statements about the
-    same subject nearly always lead with it.
+    A cheap stand-in for "are these about the same thing". "Bin day is
+    Tuesday" and "Bin day is Wednesday" share only one content word, because
+    the words that differ are the point, but statements about the same subject
+    nearly always start with it.
     """
     first_a = _ordered_content_words(a)[:1]
     first_b = _ordered_content_words(b)[:1]
@@ -644,13 +566,11 @@ def _same_subject(a: str, b: str) -> bool:
 
 def supersession_candidates(store: dict[str, Any], statement: str,
                             scope: str, exclude: str = "") -> list[dict]:
-    """Existing memories this statement might be replacing.
+    """Existing memories this statement might replace.
 
-    Suggested, never applied. An automatic supersession that is wrong hides a
-    true memory behind a false one and says nothing, which is strictly worse
-    than leaving both visible for a human to reconcile. Word overlap is a crude
-    signal and is meant to be — it only has to be good enough to put the right
-    candidate in front of someone.
+    Suggested, never applied. A wrong automatic replacement would hide a true
+    memory behind a false one without saying so. The signal is crude and only
+    has to put the right candidate in front of a person.
     """
     words = _content_words(statement)
     if not words:
@@ -685,13 +605,10 @@ def _mark_superseded(store: dict[str, Any], old_id: str, new_id: str) -> dict:
 
 
 def link_supersession(handler, new_id: str, body):
-    """Record that an already-stored memory replaced an older one.
+    """Record that a stored memory replaced an older one.
 
-    The link is usually made when the new fact is written, but not always: the
-    suggestion arrives *after* the write, and somebody reviewing a list months
-    later is looking at two memories that were never connected. Without this
-    the only way to reconcile them is to forget one, which throws away the
-    chain that makes the change legible.
+    The suggestion arrives after the write, so two related memories can be
+    stored unlinked. This links them without forgetting either.
     """
     require_review(handler)
     old_id = str((body or {}).get("supersedes") or "").strip()
@@ -720,15 +637,11 @@ MAX_PRIOR_VERSIONS = int(os.environ.get("MEMORY_MAX_PRIOR_VERSIONS", "3"))
 
 
 def _prior_versions(by_id: dict[str, Any], item: dict[str, Any]) -> list[dict]:
-    """The versions this fact replaced, newest first and capped.
+    """The versions this fact replaced, newest first, capped.
 
-    Takes a prebuilt index rather than caching one on the store: anything
-    stashed there is one save_store away from being written to the file on
-    disk, and an index of every memory nested inside the memory file is not a
-    mistake worth risking to save a dict comprehension.
-
-    Walks the `supersedes` links rather than searching, so a fact revised
-    three times costs three lookups, and a whole listing is O(memories).
+    Takes an index built by the caller rather than caching one on the store,
+    where it could end up saved to disk. Follows `supersedes` links, so a fact
+    revised three times costs three lookups.
     """
     prior, cursor, guard = [], item.get("supersedes"), set()
     while cursor in by_id and cursor not in guard and \
@@ -736,8 +649,8 @@ def _prior_versions(by_id: dict[str, Any], item: dict[str, Any]) -> list[dict]:
         guard.add(cursor)
         old = by_id[cursor]
         prior.append({"statement": old.get("statement"),
-                      # When it stopped being true, which is the field that
-                      # makes "which of these is current" unambiguous.
+                      # When it stopped being true, which is what makes the
+                      # current one unambiguous.
                       "until": old.get("superseded_at") or old.get("updated_at")})
         cursor = old.get("supersedes")
     return prior
@@ -746,8 +659,8 @@ def _prior_versions(by_id: dict[str, Any], item: dict[str, Any]) -> list[dict]:
 def memory_history(handler, memory_id: str, body):
     """The whole chain this memory belongs to, oldest first.
 
-    Reachable from any link, not just the newest: the id somebody has is
-    usually the one they saw in an old answer.
+    Works from any link, because the id someone has is usually from an old
+    answer rather than the newest one.
     """
     with _LOCK:
         store = load_store()
@@ -755,13 +668,10 @@ def memory_history(handler, memory_id: str, body):
              + store.get("forgotten", [])}
     if memory_id not in by_id:
         raise BridgeError(404, "memory not found")
-    # Walk back to the oldest, then forward, so any link finds the whole chain.
-    #
-    # Each direction needs its own cycle guard. Sharing one set means the
-    # backward walk marks every ancestor as visited and the forward walk then
-    # refuses to re-cross them — so anchoring on anything but the oldest link
-    # returned a chain of one. The anchor people actually have is the id from
-    # an old answer, which is precisely the case that broke.
+    # Walk back to the oldest, then forward. Each direction needs its own
+    # cycle guard. With a shared one, the forward walk would refuse to cross
+    # ancestors the backward walk had visited, and any link but the oldest
+    # would return a chain of one.
     root = by_id[memory_id]
     walked_back = {root["id"]}
     while root.get("supersedes") in by_id and \
@@ -788,17 +698,12 @@ def memory_history(handler, memory_id: str, body):
 
 
 def forget_memory(handler, memory_id: str, body):
-    """Remove a memory that is already durable. Operator-only.
+    """Remove a memory that is already stored. Operator only.
 
-    Memory was append-only: once approved, a fact could be wrong forever with
-    no route out. That is worse here than in most stores, because these
-    statements are read back into the assistant's context as true — a stale
-    "Bin day is Tuesday" does not sit inertly, it actively misinforms every
-    answer that touches it.
-
-    Kept rather than deleted, in a `forgotten` list. The assistant cannot read
-    it, and it is the only record of what was once believed — which matters
-    when working out why an answer three weeks ago was wrong.
+    Stored memories are read back to the assistant as true, so a wrong one
+    misinforms every answer that touches it. It is moved to a `forgotten` list
+    the assistant cannot read rather than deleted, which keeps a record of what
+    was once believed.
     """
     require_review(handler)
     with _LOCK:
@@ -820,12 +725,9 @@ def forget_memory(handler, memory_id: str, body):
 
 
 def list_feedback(handler, body):
-    """The improvement backlog. Operator-only: this is not assistant context.
-
-    If the assistant could read this it would start apologising for things
-    instead of them being fixed, which is the failure mode the split exists to
-    prevent.
-    """
+    """The feedback backlog. Operator only, and never assistant context, so
+    the assistant cannot start apologising for things instead of them being
+    fixed."""
     require_review(handler)
     query = query_of(handler)
     wanted = first(query, "status", "open")
@@ -853,17 +755,15 @@ def decide_feedback(handler, feedback_id: str, verb: str, body):
         item["updated_at"] = now()
         note = str((body or {}).get("note", ""))[:500]
         if note:
-            # What was actually changed. Without it, a folded item is
-            # indistinguishable from a forgotten one six months later.
+            # What was changed, so a folded item is distinguishable from a
+            # dismissed one later.
             item["resolution"] = note
         save_store(store)
     return 200, item
 
 
 def reject_proposal(handler, proposal_id: str, body):
-    """Decline a proposal. Without this the queue only ever grows — the live
-    store had a proposal sitting unreviewed for six weeks because there was no
-    way to say no."""
+    """Decline a proposal. Without it the queue only grows."""
     require_review(handler)
     with _LOCK:
         store = load_store()
@@ -881,17 +781,11 @@ def reject_proposal(handler, proposal_id: str, body):
 
 # --- self-reflection --------------------------------------------------------
 #
-# The assistant can propose memories but had no way to know how it had been
-# doing — so any "reflection" was the model recalling a conversation, which is
-# the least reliable evidence available and does not survive a restart.
-#
-# This reads the outcome journals the MCPs write and returns an aggregate. It
-# lives in the bridge, not the MCP, for the usual reason: the MCP is a gate,
-# the bridge does the work and enforces the capability authoritatively.
-#
-# It returns *counts and rates*, never journal lines. The journal already omits
-# argument values, but an aggregate is also the useful shape: "archive_gmail
-# was refused six times" is actionable, and a replay of six refusals is not.
+# Reads the outcome journals agentbox-mcp writes and returns an aggregate, so
+# reflection works from a record rather than from the model's recollection of a
+# conversation. It returns counts and rates, never journal lines. "archive_gmail
+# was refused six times" is something to act on, and a replay of six refusals
+# is not.
 
 LOG_DIR = Path(os.environ.get("BRIDGE_LOG_DIR", "/logs"))
 
@@ -939,12 +833,9 @@ def activity(handler, body):
         if isinstance(record.get("ms"), (int, float)):
             entry["ms"].append(record["ms"])
 
-    # Tier per tool, because "denied" alone is ambiguous in a way that produced
-    # a wrong conclusion on the first real run: the assistant saw archive_gmail
-    # refused, recorded "do not retry archive_gmail", and was mistaken —
-    # archive_gmail is approval_required and available with a grant, not
-    # always_denied. Without the tier there is no way to tell "ask for this"
-    # from "never do this", and the safe-looking reading is the wrong one.
+    # Each tool's tier, because "denied" alone is ambiguous. Without it, a
+    # refused approval_required tool looks like one that is never allowed, and
+    # reflection concludes it should stop asking.
     tiers = {}
     if policy_gate is not None:
         try:
@@ -973,12 +864,10 @@ def activity(handler, body):
             elif tiers[name] == "always_denied":
                 entry["note"] = "never permitted; do not ask"
             elif tiers[name] == "allowed" and entry.get("denied"):
-                # An `allowed` tool being refused is not a fault and not a
-                # permission problem: the bridge is saying the thing is not
-                # set up — a camera nobody added to the allowlist, a file
-                # that is guarded. Said explicitly because the alternative
-                # reading is "this tool is broken", which the assistant
-                # actually reached and proposed to remember forever.
+                # A refused `allowed` tool is not broken. The bridge is saying
+                # something is not set up, such as an entity not on the
+                # allowlist or a protected file. Said explicitly so reflection
+                # does not conclude the tool is broken.
                 entry["note"] = ("permitted, but the bridge refused: usually "
                                  "not configured (an entity not on the "
                                  "operator's allowlist, a guarded path) rather "
@@ -986,7 +875,7 @@ def activity(handler, body):
                                  "conclude it is unusable")
         summary[name] = entry
 
-    # Error classes, not messages: an upstream message quotes its input.
+    # Error classes, not messages, because an upstream message quotes its input.
     problems: dict[str, int] = {}
     for record in calls:
         if record.get("outcome") in ("error", "invalid") and record.get("detail"):
@@ -1006,8 +895,8 @@ def activity(handler, body):
         "tools": summary,
         "problems": dict(sorted(problems.items(), key=lambda kv: -kv[1])[:20]),
         "operator_decisions": verdicts,
-        # Said plainly because a model reading this will otherwise treat an
-        # empty window as evidence of good behaviour rather than of no data.
+        # Said plainly, so an empty window does not read as evidence of good
+        # behaviour.
         "note": ("No activity recorded in this window."
                  if not calls else
                  "Counts only. Journal lines are never returned."),
@@ -1030,11 +919,10 @@ class MemoryBridge(BridgeHandler):
 
     def capability_for(self, method: str, path: str,
                        body: dict[str, Any] | None) -> str | None:
-        # Reading its own activity is what inspect_service_logs was always for:
-        # already `allowed` in the policy, never reachable until now.
+        # Reading its own activity is what inspect_service_logs is for.
         if path.startswith("/v1/whoami"):
-            # Knowing who you are is not a capability worth gating; being
-            # unsure is what causes the mistakes this tool prevents.
+            # Ungated, because being unsure who you are acting for causes the
+            # mistakes this tool prevents.
             return None
         if path.startswith("/v1/activity"):
             return "inspect_service_logs"

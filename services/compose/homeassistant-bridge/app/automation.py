@@ -1,75 +1,61 @@
-"""Validation for assistant-authored Home Assistant automations.
+"""Validation for Home Assistant automations the assistant writes.
 
-An automation is not a tool call. It is **stored code that Home Assistant
-executes later, with Home Assistant's privileges** — which are total. Every
-refusal in bridge.py happens at call time and an automation is not a call, so
-without this module an assistant that may not unlock a door may write:
+An automation is not a tool call. It is stored code that Home Assistant runs
+later with its own privileges, which are total. Every refusal in bridge.py
+happens at call time, so without this module an assistant that may not unlock a
+door could write
 
     trigger: {platform: time, at: "03:00:00"}
     action:  {service: lock.unlock, entity_id: lock.front_door}
 
-and the door opens at three in the morning. This is the `merge_own_pr` problem
-in a different costume: producing code that later runs with more authority than
-the producer has.
+and the door would open at three in the morning. It is the same problem as an
+assistant merging its own change, code that later runs with more authority than
+its author has.
 
-Home Assistant's config API takes JSON, so nothing here parses YAML — the
-automation arrives as a JSON object and the template scan runs on its
-serialisation.
+The automation arrives as JSON, and the template scan runs on its text.
 
-## Why this refuses templates
+## Why templates are refused
 
-Home Assistant automations are a templating language. `service: "{{
-states('input_text.x') }}"` is legal, and so are computed entity ids, `repeat`,
-`choose`, and scripts calling scripts. Deciding whether such an automation ever
-reaches `lock.unlock` is program analysis over a Turing-complete template
-engine — any denylist has holes, and a denylist with holes is worse than none
-because it reads as protection.
+Home Assistant automations can be templated. Services and entity ids can be
+computed, and `repeat`, `choose` and scripts calling scripts are all allowed.
+Deciding whether such an automation ever reaches `lock.unlock` would mean
+analysing a Turing-complete template engine, and any denylist would have holes.
 
-So assistant-authored automations are **template-free**. No `{{ }}`, no `{% %}`.
-Every service name and entity id is then a literal, static checking becomes
-decidable, and this module can actually make the guarantee it claims.
+So automations written by the assistant contain no templates, no `{{ }}` and no
+`{% %}`. Every service and entity id is then a literal, and checking them is
+decidable. The assistant cannot write a clever automation, but it can write
+"when the hall motion sensor fires after sunset, turn on the hall light", which
+is what people want. Templated automations are for the owner to write.
 
-The cost is real: the assistant cannot write a clever automation. It can write
-"when the hall motion sensor triggers after sunset, turn on the hall light",
-which is what people actually want from one. An operator who needs a templated
-automation writes it themselves, which they were doing anyway.
+## What this does not decide
 
-## What this does not do
-
-It does not decide whether the automation is a *good idea* — only that it
-cannot reach anything the assistant is not allowed to touch directly. Intent is
-what the operator approves; safety is what this enforces. The two are separate
-on purpose, because an approval prompt is a bad place to be discovering that
-something was never permitted in the first place.
+Whether an automation is a good idea. It only proves the automation cannot
+reach anything the assistant could not touch directly. The operator approves
+the intent.
 """
 from __future__ import annotations
 
 from typing import Any
 
-# Anything that defers a decision to runtime. Checked on the raw YAML text
-# before parsing, so an encoding trick cannot smuggle one past the walk below.
+# Anything that defers a decision to runtime. Checked on the raw text before
+# parsing, so an encoding trick cannot hide one from the walk below.
 TEMPLATE_MARKERS = ("{{", "}}", "{%", "%}")
 
-# Keys whose values name something to act on. Collected wherever they appear at
-# any depth, because `choose`, `repeat`, `parallel` and `if/then` all nest
-# actions arbitrarily and a fixed-shape check would miss them.
+# Keys whose values name something to act on. Collected at any depth, because
+# `choose`, `repeat`, `parallel` and `if/then` nest actions arbitrarily.
 SERVICE_KEYS = ("service", "action")
 ENTITY_KEYS = ("entity_id", "device_id", "target")
 
-# Service domains that can reach the physical world in ways this platform never
-# permits. Kept in step with bridge.SECURITY_DOMAINS; the duplication is
-# deliberate — this must fail closed on its own rather than depend on an import
-# that a future refactor could quietly change the meaning of.
+# Service domains that reach the physical world in ways never permitted here.
+# The same list as bridge.SECURITY_DOMAINS, repeated on purpose so this check
+# fails closed on its own rather than depending on an import.
 FORBIDDEN_DOMAINS = frozenset({
     "lock", "alarm_control_panel", "cover", "garage_door", "camera", "vacuum",
 })
 
-# Whole service *domains* that reach arbitrary code, arbitrary hosts, or the
-# supervisor. Matched on the domain rather than on individual service names —
-# an earlier version listed `"rest_command"` among full names like
-# `"homeassistant.turn_on"` and compared both against `service`, so
-# `rest_command.post` matched neither and was allowed. Every service in these
-# domains is out, whatever it is called.
+# Whole service domains that reach arbitrary code, arbitrary hosts or the
+# supervisor. Matched on the domain, so every service in them is refused
+# whatever it is called.
 FORBIDDEN_SERVICE_DOMAINS = frozenset({
     "shell_command",    # arbitrary host commands
     "python_script",    # arbitrary code
@@ -106,8 +92,8 @@ def _walk(node: Any, found_services: list, found_entities: list) -> None:
                 elif isinstance(value, list):
                     found_entities.extend(str(v).strip() for v in value)
                 elif isinstance(value, dict):
-                    # `target: {entity_id: [...]}` — recurse rather than
-                    # stringify, or a nested target slips through unread.
+                    # `target: {entity_id: [...]}`. Recurse, so a nested
+                    # target is read.
                     _walk(value, found_services, found_entities)
                     continue
             _walk(value, found_services, found_entities)
@@ -119,12 +105,11 @@ def _walk(node: Any, found_services: list, found_entities: list) -> None:
 def validate(raw_text: str, parsed: Any, controllable: frozenset[str]) -> dict:
     """Refuse an automation that could reach anything it must not.
 
-    `raw_text` is the serialised automation as sent by the caller — the
-    template scan runs on that rather than on the parsed tree, so a template
-    hiding in a key, a comment or an unusual encoding still trips it.
+    The template scan runs on `raw_text`, the automation as the caller sent it,
+    so a template hidden in a key or an unusual encoding still trips it.
 
     Returns a summary of what it will touch, for the operator to read when
-    approving. Raises AutomationRefused otherwise.
+    approving, or raises AutomationRefused.
     """
     for marker in TEMPLATE_MARKERS:
         if marker in raw_text:
@@ -164,9 +149,7 @@ def validate(raw_text: str, parsed: Any, controllable: frozenset[str]) -> dict:
                 f"the assistant may call directly, so an automation using it "
                 f"would be an escalation.")
 
-    # Every entity must be one the assistant could already act on. An
-    # automation must not be a way to touch something a direct call would
-    # refuse.
+    # Every entity must be one the assistant could already act on directly.
     for entity in entities:
         if not entity or "." not in entity:
             raise AutomationRefused(f"not an entity id: {entity!r}")
@@ -174,10 +157,8 @@ def validate(raw_text: str, parsed: Any, controllable: frozenset[str]) -> dict:
         if domain in FORBIDDEN_DOMAINS:
             raise AutomationRefused(
                 f"'{entity}' is in the {domain} domain and is never actuated.")
-        # Triggers legitimately reference sensors the assistant cannot control
-        # — "when the hall motion sensor fires" is the normal case — so only
-        # entities in *action* position need to be controllable. Distinguishing
-        # them reliably means checking the action subtree specifically.
+        # Triggers may name sensors the assistant cannot control, such as a
+        # motion sensor, so only entities in the actions must be controllable.
     action_services: list[str] = []
     action_entities: list[str] = []
     _walk(parsed.get("action"), action_services, action_entities)

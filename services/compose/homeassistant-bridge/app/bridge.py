@@ -1,37 +1,27 @@
 #!/usr/bin/env python3
-"""Home Assistant bridge — the house, behind a narrow contract.
+"""The Home Assistant bridge: the house, behind a narrow contract.
 
-Holds a long-lived HA access token and exposes a small allowlisted API. The
+It holds a long-lived Home Assistant token and exposes a small API. The
 assistant never sees the token and never gets `call_service`.
 
 ## Why there is no general call_service
 
-Home Assistant's REST API is one endpoint away from total control of the house:
-`POST /api/services/<domain>/<service>` will unlock a door as readily as it
-turns on a lamp. Exposing that and putting an approval in front of it would be
-the wrong shape — the platform's rule is **constrain rather than gate**, because
-a constraint holds when the model is compromised and an approval only helps if
-a human reads carefully first. An approval prompt that appears every time
-somebody asks for a light is one that gets granted unread within a week, and by
-then it is granting nothing.
+`POST /api/services/<domain>/<service>` unlocks a door as readily as it turns
+on a lamp. An approval in front of that would be asked every time someone
+wanted a light, and would soon be granted without reading. So control is a few
+narrow tools with two independent refusals underneath.
 
-So control is three narrow tools over a **household-configured entity
-allowlist**, and two independent refusals underneath:
-
-- an entity absent from the allowlist is refused. It lives on the read-only
-  policy mount, written by the portal's Operations page — writable by the
-  operator, never by this container or the assistant;
-- an entity in a security domain is refused **even if allowlisted**, because
-  that list is edited by a tired human and `lock.front_door` looks a lot like
-  `light.front_door` at the end of a long day.
+- An entity not on the household's allowlist is refused. The list lives on the
+  read-only policy mount and is edited from the portal's Operations page, never
+  by this container or the assistant.
+- An entity in a security domain is refused even if it is on the list, because
+  `lock.front_door` and `light.front_door` are easy to confuse.
 
 Locks, alarms, garage doors and covers map to `home_control_security`, which is
-`always_denied` — there is no grant that unlocks a door, and this service could
-not act on one if there were.
+`always_denied`. No grant unlocks a door, and this service could not act on one
+if it existed.
 
-Reads are unrestricted, deliberately: knowing the kitchen is 19°C is not a
-capability worth gating, and a sensor allowlist would need editing every time a
-battery is replaced.
+Reads are unrestricted. Knowing the kitchen is 19 °C is not worth gating.
 """
 from __future__ import annotations
 
@@ -46,91 +36,69 @@ from typing import Any
 import automation
 from bridge_base import BridgeError, BridgeHandler, project_fields, resolve_limit, resolve_view, serve
 
-# Every automation this service writes is named with this prefix, so the
-# operator can tell at a glance in the HA UI which ones the assistant authored
-# — and delete them all if they ever want to.
+# Every automation this service writes starts with this prefix, so the owner
+# can see in Home Assistant which ones the assistant wrote and remove them.
 AUTOMATION_ALIAS_PREFIX = os.environ.get("HA_AUTOMATION_PREFIX", "[agentbox] ")
 
 HA_URL = os.environ.get("HA_URL", "").rstrip("/")
 HA_TOKEN = os.environ.get("HA_TOKEN", "")
 HTTP_TIMEOUT = int(os.environ.get("HA_TIMEOUT", "15"))
 
-# Domains this service will never act on, whatever the allowlist says. Not a
-# policy tier — a hard refusal in the process that holds the credential, so a
-# mis-edited allowlist cannot open a door.
-# `camera` stays here: this bridge never *actuates* a camera — no pan, tilt,
-# recording or arming. Reading one frame on request is a separate, allowlisted
-# route (see VIEWABLE_CAMERAS), because looking is not the same act as moving.
+# Domains this service never acts on, whatever the allowlist says. A hard
+# refusal in the process holding the token, so a mistaken allowlist cannot open
+# a door. `camera` is here because this bridge never moves, records or arms a
+# camera. Reading a single frame is a separate allowlisted route.
 SECURITY_DOMAINS = frozenset({"lock", "alarm_control_panel", "cover",
                               "garage_door", "vacuum", "camera"})
 
-# Domains controllable without naming every entity.
+# Domains controllable without naming every entity. A per-entity list for
+# every light means either nothing works or someone pastes in everything,
+# including entities that should not be there.
 #
-# Requiring a per-entity list for lights was a third gate doing work the design
-# never asked for: approval-policy.yaml already tiers home_control_comfort as
-# `allowed`, and SECURITY_DOMAINS below already refuses the things that matter
-# whatever any list says. The practical effect was a house with thirty lights
-# where nobody maintains the list, so either nothing works or somebody pastes
-# everything in — including entities that should never have been there.
+# Only light and scene, chosen by consequence.
 #
-# light and scene only, and the line is drawn on consequence rather than
-# convenience:
+#   light   reversible and visible, and the worst case is annoying
+#   scene   an arrangement a person chose in advance
 #
-#   light   reversible, visible, and its worst case is annoying
-#   scene   a named arrangement of the above, chosen by a human in advance
+# Left out on purpose.
 #
-# Deliberately excluded, each for its own reason:
+#   switch        a switch is whatever it is wired to, such as a heater or a
+#                 pump, so the domain says nothing about risk
+#   climate       costs money and affects people asleep, and the policy
+#                 already makes it approval_required
+#   media_player  casting shows content on a screen other people can see
 #
-#   switch        a "switch" is whatever it is wired to — a heater, a pump, a
-#                 server. The domain name carries no information about risk.
-#   climate       costs money and affects a sleeping household; policy already
-#                 puts home_control_climate in approval_required.
-#   media_player  casting puts content on a screen other people can see, which
-#                 is why PRIVATE_SCREENS exists at all.
-#
-# Anything outside these domains still needs naming in the allowlist below.
+# Anything else has to be named in the allowlist below.
 CONTROLLABLE_DOMAINS = frozenset(
     d.strip() for d in os.environ.get("HA_CONTROLLABLE_DOMAINS",
                                       "light,scene").split(",")
     if d.strip())
 
-# Individual entities allowed on top of the domains above — a media_player to
-# cast to, a specific switch someone has thought about.
+# Individual entities allowed on top of the domains above, such as a
+# media_player to cast to or a specific switch.
 #
-# Read from the read-only policy mount rather than the environment, so adding
-# a device is something the household does on the Operations page instead of
-# something an operator does by editing a systemd unit and restarting this
-# container. The portal writes it; this mount is :ro, so the assistant cannot,
-# which is the same arrangement the grants file uses and for the same reason.
-#
-# The environment variable is still honoured when the file is absent, so a box
-# configured before this existed keeps working until the form is saved once.
+# Read from the read-only policy mount, which the portal writes and the
+# assistant cannot, as with grants. That makes adding a device something the
+# household does on the Operations page. The environment variable is still used
+# when the file is absent.
 POLICY_FILE = Path(os.environ.get("HA_POLICY_FILE", "/policy/household.json"))
 
 _ENV_CONTROLLABLE = frozenset(
     e.strip() for e in os.environ.get("HA_CONTROLLABLE_ENTITIES", "").split(",")
     if e.strip())
 
-# Re-read when the file changes rather than on every call: is_controllable
-# runs once per entity in a listing, and a stat is much cheaper than a parse.
-#
-# Keyed on st_mtime_ns rather than st_mtime, and on size as well. Second
-# resolution is not enough: correcting a typo means two saves moments apart,
-# and if they happen to be the same length — swapping one entity id for
-# another of equal length is the ordinary case — a coarser key would serve the
-# old set until something else changed. That would keep a permission somebody
-# had just revoked, which is the one direction this must never fail in.
+# Re-read only when the file changes. The key uses nanosecond mtime and size,
+# because two quick saves of the same length would otherwise look unchanged and
+# a just-revoked permission would stay in force.
 _policy_cache: tuple[tuple[int, int], frozenset[str]] | None = None
 
 
 def controllable_entities() -> frozenset[str]:
     """Entities permitted on top of CONTROLLABLE_DOMAINS.
 
-    A missing, unreadable or malformed file yields the environment fallback
-    rather than an exception: this is consulted on the refusal path, and a
-    bridge that raises here would turn a bad edit into a broken bridge instead
-    of a narrower one. Failing closed means fewer permissions, never fewer
-    refusals.
+    A missing or broken file falls back to the environment rather than raising,
+    because this runs on the refusal path. A bad edit should narrow
+    permissions, not break the bridge.
     """
     global _policy_cache
     try:
@@ -150,20 +118,16 @@ def controllable_entities() -> frozenset[str]:
     _policy_cache = (stamp, value)
     return value
 
-# Escape hatch the other way: an entity here is refused even if its domain is
-# allowed. For the light that is not really a light, or the one in a room
-# somebody wants left alone.
+# The opposite: an entity here is refused even if its domain is allowed, such
+# as a light that is not really a light.
 NOT_CONTROLLABLE = frozenset(
     e.strip() for e in os.environ.get("HA_DENIED_ENTITIES", "").split(",")
     if e.strip())
 
 
 def _entity_ids_in(config) -> set[str]:
-    """Every entity id mentioned anywhere in an automation, at any depth.
-
-    The validator needs the permitted set, and that set now depends on the
-    entities the automation actually names rather than on a fixed list.
-    """
+    """Every entity id an automation mentions, at any depth, so each can be
+    checked."""
     found: set[str] = set()
 
     def walk(node):
@@ -186,9 +150,9 @@ def _entity_ids_in(config) -> set[str]:
 def is_controllable(entity_id: str) -> bool:
     """Whether this bridge may act on `entity_id`.
 
-    Order matters and is deliberate: the hard domain refusal wins over
-    everything, then the explicit deny list, then domain or entity permission.
-    A deny that could be overridden by an allow is not a deny.
+    The security-domain refusal wins over everything, then the deny list, then
+    domain or entity permission. A deny that an allow could override would not
+    be a deny.
     """
     domain = (entity_id or "").split(".")[0]
     if not domain or domain in SECURITY_DOMAINS:
@@ -201,29 +165,17 @@ LEAN_FIELDS = ("entity_id", "state", "friendly_name")
 
 # --- cameras ------------------------------------------------------------------
 #
-# Reading a camera is on-demand and allowlisted, never continuous. Two reasons
-# beyond the obvious one about other people in the house:
+# The look_at_camera tool is retired along with the local vision model, so
+# nothing calls this route today. The design is kept.
 #
-# A camera frame is untrusted input with a *physical* attack surface. Anything
-# visible to the lens — a note on the fridge, a phone screen, the television
-# itself, something through a window — can carry text, and this platform
-# already records that a worker model obeyed instructions embedded in tool data
-# in 10 of 10 attempts. Looking on request bounds that to the moments somebody
-# asked; watching continuously makes every frame an opportunity.
+# A look is on request and allowlisted, never continuous. A camera frame is
+# untrusted input that anyone can write on, with a note, a screen or a
+# whiteboard in view. The bridge asks the vision model and returns text, so the
+# image never reaches the assistant and is never stored.
 #
-# The bridge asks the local vision model and returns **text**, rather than
-# handing an image to the assistant. That is not a workaround for the gateway's
-# image_input_mode — it is better: the picture never enters the assistant's
-# context, so what reaches the main model is a short description this service
-# controls the prompt for, and the frame is never stored anywhere.
-# What a look may ask. Fixed prompts, chosen by the operator, never composed by
-# the caller.
-#
-# The first version took a free-text `question` and passed it to the vision
-# model. That made the camera a programmable reader: an instruction embedded in
-# an email could have the assistant ask "transcribe any text in view", pointing
-# it at a whiteboard, a passport, a laptop screen. The question is now an enum,
-# so there is nothing to inject into.
+# What a look may ask is a fixed set of prompts, not free text. A free-text
+# question would let an injected instruction ask the camera to read out
+# whatever is in view.
 LOOK_PROMPTS = {
     "occupancy": "How many people are in this image? Answer only with the "
                  "structured fields requested.",
@@ -231,17 +183,17 @@ LOOK_PROMPTS = {
                 "terms? Answer only with the structured fields requested.",
 }
 
-# The vocabulary an answer may use. Anything outside it is dropped rather than
-# passed through — that is what makes the reply inert. A free-text field, however
-# short, is a channel an instruction can travel down; an enum is not.
+# The words an answer may use. Anything else is dropped. A free-text field of
+# any length is a channel an instruction can travel down, and a fixed set of
+# values is not.
 POSTURES = frozenset({"seated", "standing", "lying", "moving", "absent", "unclear"})
 MAX_PEOPLE = 20
 
 VIEWABLE_CAMERAS = frozenset(
     e.strip() for e in os.environ.get("HA_VIEWABLE_CAMERAS", "").split(",")
     if e.strip())
-# host.docker.internal, not 127.0.0.1: inside the container that loopback is
-# the container itself, and the vision model runs on the host.
+# host.docker.internal, because inside the container 127.0.0.1 is the container
+# and the vision model runs on the host.
 VISION_URL = os.environ.get("VISION_BASE_URL",
                             "http://host.docker.internal:1240/v1")
 VISION_MODEL = os.environ.get("VISION_MODEL", "local-qwen25-vl-3b")
@@ -249,14 +201,10 @@ VISION_TIMEOUT = int(os.environ.get("VISION_TIMEOUT", "120"))
 
 # --- screens ------------------------------------------------------------------
 #
-# The lock-screen model: a shared screen gets the preview, a private one gets
-# the detail. Enforced by construction — `detail` is dropped before the request
-# to Home Assistant is built, so a living-room television cannot receive it even
-# if the assistant supplies it.
-#
-# What the assistant chooses to put in `summary` is still its judgement, the
-# same way an app decides what its own lock-screen preview says. The length cap
-# is what stops "summary" quietly becoming a second detail field.
+# Like a phone's lock screen, a shared screen gets the summary and a private one
+# gets the detail too. `detail` is dropped before the request to Home Assistant
+# is built, so a living-room TV cannot receive it even if the assistant sends
+# it. The length cap stops the summary becoming a second detail field.
 PRIVATE_SCREENS = frozenset(
     e.strip() for e in os.environ.get("HA_PRIVATE_SCREENS", "").split(",")
     if e.strip())
@@ -280,8 +228,7 @@ def ha_request(method: str, path: str, payload: dict | None = None) -> Any:
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:300]
         if exc.code in (401, 403):
-            # Never echo the upstream body here: an auth failure from HA can
-            # quote the token back.
+            # Never echo the upstream body, which can quote the token back.
             raise BridgeError(502, "Home Assistant rejected the credential") from None
         raise BridgeError(502, f"Home Assistant returned {exc.code}: {detail}") from None
     except urllib.error.URLError as exc:
@@ -293,11 +240,10 @@ def domain_of(entity_id: str) -> str:
 
 
 def require_controllable(entity_id: str, expected_domains: tuple[str, ...]) -> None:
-    """Two refusals, deliberately independent.
+    """Two independent refusals.
 
-    The security-domain check is first and unconditional. It does not consult
-    the allowlist, because the allowlist is the thing most likely to be wrong —
-    `lock.front_door` and `light.front_door` differ by two characters.
+    The security-domain check comes first and ignores the allowlist, because
+    the allowlist is the part most likely to be wrong.
     """
     if not entity_id or "." not in entity_id:
         raise BridgeError(400, f"not an entity id: {entity_id!r}")
@@ -322,7 +268,7 @@ def require_controllable(entity_id: str, expected_domains: tuple[str, ...]) -> N
 
 
 def flatten(entity: dict) -> dict:
-    """HA nests the display name under attributes; lift it so lean is useful."""
+    """Lift the display name out of attributes so the lean view is useful."""
     attributes = entity.get("attributes") or {}
     flat = {
         "entity_id": entity.get("entity_id"),
@@ -349,12 +295,9 @@ def first(query, key, default=""):
 def list_entities(handler, body):
     """All entity states, optionally filtered by domain.
 
-    A house produces a lot of entities — a modest setup is several hundred, and
-    the full payload with attributes is hundreds of kilobytes. `lean` is the
-    default here rather than `full`, which is the opposite of the other
-    bridges: nobody asking "is the kitchen light on" wants a device registry
-    entry, and the full view is large enough to be a context-economy problem on
-    its own.
+    `lean` is the default here, unlike the other bridges. Even a modest house
+    has hundreds of entities, the full payload runs to hundreds of kilobytes,
+    and nobody asking whether the kitchen light is on wants all of it.
     """
     query = query_of(handler)
     view = resolve_view(first(query, "view", "lean"))
@@ -371,9 +314,8 @@ def list_entities(handler, body):
     page = flattened[:limit]
     if view == "lean":
         page = project_fields(page, LEAN_FIELDS)
-    # Computed from what actually exists rather than echoing the config: a
-    # domain rule permits entities nobody has listed, so the configured value
-    # no longer answers "what may I act on?".
+    # Computed from what exists rather than echoing the config, since a
+    # domain rule permits entities nobody listed.
     controllable = sorted(e["entity_id"] for e in flattened
                           if is_controllable(e.get("entity_id", "")))
     return 200, {"entities": page, "total": total, "returned": len(page),
@@ -440,9 +382,8 @@ def set_climate(handler, body):
         temperature = float(body.get("temperature"))
     except (TypeError, ValueError):
         raise BridgeError(400, "temperature is required and must be a number") from None
-    # A bound the assistant cannot argue its way past. Not comfort policy — a
-    # thermostat driven to an extreme by a confused model or an injected
-    # instruction is a burst pipe or a heat risk to whoever is asleep upstairs.
+    # A hard limit. A thermostat pushed to an extreme by a confused model or
+    # an injected instruction risks a burst pipe or someone overheating.
     if not 5 <= temperature <= 30:
         raise BridgeError(400, "temperature must be between 5 and 30 °C")
     call_service("climate", "set_temperature",
@@ -465,10 +406,9 @@ def list_automations(handler, body):
 def create_automation(handler, body):
     """Write an automation, after proving it cannot reach anything forbidden.
 
-    The validation is not advisory. An automation is stored code Home Assistant
-    later runs with its own privileges, so `require_controllable` — which only
-    ever runs at call time — does nothing for it. Without automation.validate,
-    an assistant that may not unlock a door may schedule one.
+    An automation is stored code that Home Assistant runs later with its own
+    privileges, so the per-call checks do not cover it. Without validation, an
+    assistant that may not unlock a door could schedule one.
     """
     body = body or {}
     config = body.get("automation")
@@ -476,9 +416,9 @@ def create_automation(handler, body):
         raise BridgeError(400, "automation must be an object")
 
     try:
-        # Stored automations run unattended, so they are checked against the
-        # same rule a live call is — including the domain permission, or a
-        # light the assistant may switch now could not be put in an automation.
+        # Checked against the same rule as a live call, including domain
+        # permission, so anything the assistant may switch now can also go in
+        # an automation.
         allowed = {e for e in _entity_ids_in(config) if is_controllable(e)}
         summary = automation.validate(json.dumps(config), config, allowed)
     except automation.AutomationRefused as exc:
@@ -491,9 +431,8 @@ def create_automation(handler, body):
         alias = AUTOMATION_ALIAS_PREFIX + alias
     config = {**config, "alias": alias}
 
-    # HA keys automations by an opaque id in the config API. Derived from the
-    # alias so re-proposing the same automation updates it rather than piling
-    # up duplicates every time somebody asks again.
+    # Home Assistant keys automations by id. Deriving it from the alias means
+    # proposing the same automation again updates it rather than adding a copy.
     import hashlib
     automation_id = "agentbox_" + hashlib.sha256(
         alias.encode("utf-8")).hexdigest()[:16]
@@ -511,25 +450,13 @@ def create_automation(handler, body):
 def look_at_camera(handler, body):
     """Fetch one frame from an allowlisted camera and report structured facts.
 
-    Returns counts and enums — never prose, never the image. The frame is
-    fetched, described, and discarded: not written to disk, not logged, not
-    returned.
+    Returns counts and fixed values, never prose and never the image. The frame
+    is described and discarded, not saved or logged.
 
-    **Why there is no free text in either direction.** A camera frame is
-    untrusted input with a physical attack surface: anyone who can put writing
-    where the lens sees it is addressing the assistant. Two changes make that
-    inert rather than merely flagged:
-
-    - the *question* is an enum, so a compromised caller cannot ask the vision
-      model to read things out;
-    - the *answer* is a fixed schema, so there is no field an instruction can
-      occupy. Text in the room is reported as `text_visible: true` and
-      deliberately not transcribed — knowing a whiteboard has writing on it is
-      the useful part; reading it aloud is the vulnerability.
-
-    Warning it as "untrusted" was the previous approach. That is a hint the
-    model may ignore, and this platform's rule is to constrain rather than ask
-    nicely.
+    Neither direction carries free text. The question is chosen from a fixed
+    set, so a caller cannot ask the model to read things out. The answer is a
+    fixed schema with no field an instruction could occupy. Text in the room is
+    reported as `text_visible: true` and never transcribed.
     """
     body = body or {}
     entity_id = str(body.get("entity_id") or "").strip()
@@ -606,18 +533,13 @@ def look_at_camera(handler, body):
 
 
 def coerce_observation(raw: str) -> dict:
-    """Force a vision reply into the schema, discarding everything else.
+    """Force a vision reply into the schema and discard everything else.
 
-    The prompt asks for JSON, and the model instructed to produce it is the
-    same model looking at the attacker's text — so its output is untrusted too.
-    Nothing here trusts the shape: unknown keys are dropped, `posture` is
-    intersected with a fixed vocabulary, `people` is clamped, and a reply that
-    is not JSON at all becomes `unreadable` rather than being passed through as
-    prose.
-
-    That last case is the important one. Falling back to "return the text we
-    got" would reopen the whole channel precisely when the model has been
-    talked out of the format — which is exactly when an injection succeeded.
+    The model asked to produce JSON is the same model looking at whatever text
+    is in view, so its output is untrusted too. Unknown keys are dropped,
+    `posture` is checked against a fixed list, `people` is clamped, and a reply
+    that is not JSON becomes `unreadable`. Passing the raw text through would
+    reopen the channel exactly when an injection had succeeded.
     """
     parsed: Any = None
     if raw:
@@ -657,11 +579,10 @@ def coerce_observation(raw: str) -> dict:
 
 
 def cast(handler, body):
-    """Put something on a screen, at the detail level that screen is cleared for.
+    """Put something on a screen, at the detail level that screen allows.
 
-    Shared screens get `summary`; private screens get `summary` plus `detail`.
-    The drop happens here rather than being left to the assistant, so a living
-    room television cannot receive the detail even if it is supplied.
+    Shared screens get `summary`, and private screens also get `detail`. This
+    is enforced here, not left to the assistant.
     """
     body = body or {}
     entity_id = str(body.get("entity_id") or "").strip()
@@ -736,10 +657,9 @@ class HomeAssistantBridge(BridgeHandler):
         if path.startswith("/v1/cast"):
             return "home_control_comfort"
         if path.startswith("/v1/automations"):
-            # Writing one is approval_required: static validation proves it
-            # cannot reach a lock, but it cannot tell whether an automation is
-            # a good idea, and stored code that runs unattended deserves a
-            # human reading it once.
+            # Writing one is approval_required. Validation proves it cannot
+            # reach a lock, but not whether it is a good idea, and code that
+            # runs unattended deserves a person reading it once.
             return ("home_write_automation" if method == "POST"
                     else "home_read_state")
         return None

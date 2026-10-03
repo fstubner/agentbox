@@ -1,44 +1,28 @@
 #!/usr/bin/env python3
-"""Builder bridge — lets the assistant propose code changes through git.
+"""The builder bridge, which lets the assistant propose code changes through git.
 
-Three things were asked for and are one system, because they all reduce to
-"the assistant writes code, a human decides whether it ships":
+Building services on request, extending its own source by pull request, and
+keeping a version trail are one system, because all three come down to the
+assistant writing code and a person deciding whether it ships. Every proposal
+is a branch with a commit, so nothing is untracked and review is a `git diff`.
 
-- building services on demand,
-- extending its own source, by pull request and never self-merge,
-- a version-control trail for whatever it produces.
+## Why this is the most dangerous service, and what contains it
 
-Git is the trail. Every proposal is a branch with a commit and a message, so
-nothing this produces is untracked and reviewing it is `git diff`.
+Every other bridge holds a credential for someone else's API. This one can
+write the source of the system that constrains it. A proposed edit to the
+approval policy would need only one distracted approval. So the containment
+does not rely on careful reading.
 
-## Why this is the most dangerous service here, and what stops it
-
-Every other bridge holds a credential to somebody else's API. This one can
-write the source of the system that constrains it. If the assistant could
-propose an edit to `policies/approval-policy.yaml`, it could propose granting
-itself everything and then need only one distracted approval to get it. That is
-not a hypothetical failure of review; it is the review being handed a diff
-whose significance is easy to miss.
-
-So the containment is not "the operator will read it carefully":
-
-**Protected paths are refused outright.** The assistant may not propose a
-change to the policy, either gate, the operator CLI, or CI — no matter what it
-says the change is for. This is `modify_upstream_agent_source` and
-`disable_approval_gates`, both `always_denied`, enforced as a path check rather
-than left to a tier lookup that a cleverly-named tool might sidestep.
-
-**It works in its own clone.** `/repo` is a clone, not the operator's working
-tree, so nothing here can dirty an in-progress edit or a stash.
-
-**It pushes branches and nothing else.** No merge, no deploy, no force, no tag,
-no branch deletion. `merge_own_pr` is `always_denied` and a service that could
-merge would route around it.
-
-**Nothing it writes runs here.** `run_repo_checks` runs the repo's validators
-against the *checked-out branch*, in this container, with no network — it is a
-lint, not a deployment. Generated code only ever executes after an operator
-merges and deploys it.
+- **Protected paths are refused.** The policy, both gates, the operator CLI and
+  CI cannot be changed, whatever the stated reason. This is a path check
+  rather than a policy tier.
+- **It works in its own clone**, so nothing here can touch the operator's
+  working tree.
+- **It never merges, deploys, forces, tags or deletes.** `merge_own_pr` is
+  `always_denied`.
+- **Nothing it writes runs here.** `run_repo_checks` runs the repository's own
+  validators on the branch, with no network. Generated code only runs after
+  the operator merges and deploys it.
 """
 from __future__ import annotations
 
@@ -59,24 +43,14 @@ MAX_FILES_PER_PROPOSAL = int(os.environ.get("BUILDER_MAX_FILES", "25"))
 
 # --- what the assistant may never propose a change to -------------------------
 #
-# Each of these either constrains the assistant or is the operator's own tooling.
-# Matched as path prefixes against the repo-relative path, after normalisation,
-# so `policies/../policies/x` and `./policies/x` both resolve into the check.
+# Everything that constrains the assistant, and the operator's own tooling.
+# Matched as path prefixes after normalisation, so `policies/../policies/x` and
+# `./policies/x` are both caught. That includes the code that enforces the
+# policy, not only the policy file. A tidy refactor that drops one line is the
+# diff most likely to be approved.
 #
-# Protecting the rulebook and leaving the enforcement writable was the gap
-# found on 2026-08-14: policies/ and policy_gate.py were refused, while
-# mcp_base.py — which holds the ONLY call site of policy_gate.check, and the
-# fail-closed auth routine — was accepted, as were the memory review gate, the
-# rule-approval fingerprints and the router. A proposal is only a branch and a
-# human must merge it, but "a human reads it carefully" is precisely the
-# control this list exists because nobody trusts. A tidy refactor that drops
-# one line is the diff that gets approved.
-#
-# Deliberately a denylist of *specific, named* things rather than an allowlist
-# of writable areas: the whole point is that the assistant can propose changes
-# anywhere it might usefully work, including its own MCP servers and bridges.
-# An allowlist would have to be widened constantly and would be widened
-# carelessly.
+# A list of named things rather than of writable areas, so the assistant can
+# still propose changes anywhere useful, including its own tools and bridges.
 PROTECTED = (
     "policies/",                                  # the tiers that gate it
     "services/templates/mcp/policy_gate.py",      # the MCP-side gate
@@ -98,15 +72,15 @@ SAFE_BRANCH = re.compile(r"^[a-z0-9][a-z0-9._/-]{0,80}$")
 def git(*args: str, timeout: int = GIT_TIMEOUT) -> str:
     """Run a git command in the clone and return stdout.
 
-    Never takes a shell string: every argument is passed through a list, so a
-    branch name or commit message cannot become another command.
+    Arguments are always a list, never a shell string, so a branch name or a
+    commit message cannot become a command.
     """
     result = subprocess.run(
         ["git", "-C", str(REPO), *args],
         capture_output=True, text=True, timeout=timeout,
         stdin=subprocess.DEVNULL,
-        # A commit needs an identity, and the assistant's commits should be
-        # visibly its own in `git log` rather than impersonating the operator.
+        # The assistant's commits carry their own identity in `git log` rather
+        # than the operator's.
         env={**os.environ,
              "GIT_AUTHOR_NAME": "agentbox-assistant",
              "GIT_AUTHOR_EMAIL": "assistant@agentbox.local",
@@ -179,8 +153,8 @@ def read_file(handler, body):
         content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         raise BridgeError(415, f"{path} is not text") from None
-    # Readable but not writable — say so here rather than letting the assistant
-    # draft a change and only discover the refusal on submit.
+    # Readable but not writable. Said here, so the assistant does not draft a
+    # change only to have it refused.
     protected = any(path == g.rstrip("/") or path.startswith(g) for g in PROTECTED)
     return 200, {"path": path, "content": content, "writable": not protected}
 
@@ -204,12 +178,10 @@ def list_proposals(handler, body):
 
 
 def run_checks(handler, body):
-    """Run the repo's own validator against the working tree.
+    """Run the repository's own validator against the working tree.
 
-    Its own validator, not an arbitrary command: `run_validators_and_tests` is
-    `allowed`, and it stays safe to be `allowed` only because what runs is
-    fixed. A generic "run this" endpoint under the same capability would be
-    shell access with extra steps.
+    It runs a fixed command. That is why `run_validators_and_tests` can be
+    `allowed`. A "run this" endpoint would be a shell.
     """
     result = subprocess.run(
         ["python", "cli/agentbox", "validate"],
@@ -219,7 +191,7 @@ def run_checks(handler, body):
     return 200, {
         "ok": result.returncode == 0,
         "exit_code": result.returncode,
-        # Tail, not head: validate prints failures last.
+        # The tail, because validate prints failures last.
         "output": output[-8000:],
     }
 
@@ -264,9 +236,8 @@ def propose(handler, body):
     branch = branch_name if branch_name.startswith(BRANCH_PREFIX) else \
         f"{BRANCH_PREFIX}{branch_name}"
 
-    # Start from a clean, current base every time. Without the reset a failed
-    # earlier proposal would leave changes lying around and silently ride along
-    # inside the next one.
+    # Start from a clean, current base every time, so leftovers from a failed
+    # proposal cannot ride along in the next one.
     git("fetch", "origin", "--prune")
     git("reset", "--hard", "HEAD")
     git("clean", "-fd")
@@ -296,12 +267,8 @@ def propose(handler, body):
     head = git("rev-parse", "--short", "HEAD").strip()
     git("checkout", default)
 
-    # Deliberately NOT pushed. The branch stays in this clone and the operator
-    # fetches it, which means this container never needs write access to the
-    # operator's repository — the alternative was granting a service the
-    # assistant drives the ability to write refs into the real .git directory,
-    # to save the operator one fetch. Pull, not push, is the right direction
-    # for anything proposing changes to itself.
+    # Not pushed. The branch stays in this clone and the operator fetches it,
+    # so this container never needs write access to the operator's repository.
     return 201, {
         "branch": branch,
         "commit": head,
@@ -356,10 +323,9 @@ class BuilderBridge(BridgeHandler):
         return None
 
     def upstream_status(self) -> dict[str, Any]:
-        """Readiness is: is there a git repo here, and can we reach its origin?
+        """Ready when there is a repository here and its origin can be fetched.
 
-        A clone that cannot fetch produces proposals off a stale base, which
-        looks fine until the operator tries to merge one.
+        A clone that cannot fetch would propose changes against a stale base.
         """
         if not (REPO / ".git").exists():
             return {"ok": False, "upstream": {"repo": str(REPO),

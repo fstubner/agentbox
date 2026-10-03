@@ -1,13 +1,11 @@
 """A minimal RFC 6455 WebSocket client.
 
-eufy-security-ws speaks WebSocket and nothing else, and the bridges on this
-host are stdlib-only by rule — every one of them ships as a container that can
-be read end to end without chasing a dependency tree. That rule is worth more
-than the ~120 lines below, because a credential-holding process with a
-dependency graph is a process nobody audits.
+eufy-security-ws only speaks WebSocket, and the bridges use only the standard
+library, so each one can be read end to end. A process that holds a credential
+should not bring a dependency tree nobody audits.
 
-Only what a client needs: the upgrade handshake, masked writes, unmasked
-reads, close and ping. No extensions, no compression, no server role.
+It does only what a client needs: the upgrade handshake, masked writes,
+unmasked reads, close and ping.
 """
 from __future__ import annotations
 
@@ -76,9 +74,8 @@ class WebSocket:
 
     def send_json(self, payload: dict) -> None:
         data = json.dumps(payload).encode()
-        # RFC 6455: every client frame must be masked, and the mask must be
-        # unpredictable. A fixed mask is a protocol violation some servers
-        # accept and proxies do not.
+        # RFC 6455 requires every client frame to be masked with an
+        # unpredictable mask.
         mask = secrets.token_bytes(4)
         masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
         header = bytes([0x80 | TEXT])
@@ -93,10 +90,10 @@ class WebSocket:
             self.sock.sendall(header + mask + masked)
 
     def recv(self) -> dict | None:
-        """Next application message, or None once the peer closes.
+        """The next application message, or None once the peer closes.
 
-        Control frames are handled here rather than surfaced: a caller waiting
-        for a device event should not have to know what a ping is.
+        Control frames are handled here, so a caller waiting for an event never
+        sees a ping.
         """
         while True:
             first, second = self._recv_exact(2)
@@ -129,8 +126,8 @@ class WebSocket:
                     return json.loads(payload.decode())
                 except (ValueError, UnicodeDecodeError):
                     raise WebSocketError("non-JSON text frame") from None
-            # Binary frames are livestream data. This bridge does not carry
-            # video, so they are dropped rather than buffered into memory.
+            # Binary frames are video. This bridge carries none, so they are
+            # dropped rather than buffered.
 
     def close(self) -> None:
         try:
