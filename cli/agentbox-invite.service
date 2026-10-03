@@ -11,18 +11,17 @@
 # that is all it can do, because it is a LAN-reachable page that strangers are
 # sent links to.
 #
-# It runs as a unit rather than being started by hand because the link is now
-# delivered by email or DM, an invitation that arrives while nobody has a
-# terminal open would otherwise reach a closed port, which reads to the
-# recipient as the household being broken rather than the page being down.
+# It runs as a unit rather than being started by hand because the link is
+# delivered by email or DM. An invitation opened while nobody has a terminal
+# open would otherwise reach a closed port, which looks to the recipient like
+# the household is broken.
 #
 # Restart=always for the same reason: the person holding the link is not in a
 # position to ask anyone to restart anything.
 #
 # --unattended is not decoration. Run by hand, `serve` exits 1 with nothing
 # outstanding, because that almost always means `create` was forgotten. Under
-# Restart=always that is a crash loop every five seconds, which is how this
-# unit behaved the first time it was installed. The flag says explicitly that
+# Restart=always that would be a crash loop every five seconds. The flag says
 # an empty spool is the normal resting state here, and cli/agentbox-invite
 # records why that differs from the hand-run case.
 

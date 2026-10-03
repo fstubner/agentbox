@@ -4,7 +4,7 @@
 # Same property as the approval loop, and for a stronger reason: this process
 # holds MEMORY_REVIEW_TOKEN, which approves any memory proposal. If the
 # assistant could start, stop, signal or share a uid with it, the review gate
-# would be a formality, self-approval is exactly what that gate prevents.
+# would be a formality. Self-approval is exactly what that gate prevents.
 #
 # Install:
 #   cp cli/agentbox-portal.service ~/.config/systemd/user/
@@ -33,25 +33,22 @@ Type=simple
 # from the second.
 #
 # These files hold `op://` references, not literal secrets, the same files
-# `agentbox deploy` feeds to `op run`. systemd's EnvironmentFile does NOT
-# resolve them: it would set MEMORY_BRIDGE_TOKEN to the literal string
-# "op://Agentbox/..." and the portal would present that as a bearer token,
-# so the memory bridge answered 401 and the page said "service not
-# responding", while GOOGLE_CLIENT_ID was the literal op:// string and Google
-# returned "invalid_client". Both symptoms, one cause.
+# `agentbox deploy` feeds to `op run`. systemd's EnvironmentFile does not
+# resolve them. It would pass the literal "op://Agentbox/..." string as the
+# bearer token and the Google client id, and the memory bridge and Google would
+# both refuse it.
 #
 # So the portal is launched under `op run --env-file` (see ExecStart), which
 # resolves the references before the process starts, exactly as deploy does.
 # The service-account token that authorises that resolution lives in
 # 1password.env, sourced below; a leading dash means a box without 1Password
-# still starts (with unresolved refs, which then fail loudly rather than
-# silently, that is the bug this replaced).
+# still starts, with unresolved references that fail loudly rather than
+# silently.
 EnvironmentFile=-%h/.config/agentbox/1password.env
 
-# Broad Drive read, opted into by the operator on 2026-08-13. Without this the
-# assistant sees only files it created, which made "find that lease in my
-# Drive" unanswerable against a full Drive. Read-only: it still cannot write
-# outside its own folder, delete, or share.
+# Broad Drive read. Without this the assistant sees only files it created, so
+# "find that lease in my Drive" finds nothing. It is read-only, and the
+# assistant still cannot write outside its own folder, delete, or share.
 Environment=GOOGLE_ENABLE_DRIVE_READ_ALL=1
 
 # Who is an admin. Everyone else is a member: their own memories and their own
@@ -93,9 +90,9 @@ EnvironmentFile=-%h/.config/agentbox/portal-agent.env
 # outright; `agentbox validate` fails if this is set to something the console
 # will not accept.
 # What goes into sign-in links and invitations, so it has to resolve from a
-# phone. Loopback here meant every link delivered by email pointed the
-# recipient at their own device. mDNS rather than the LAN IP because the
-# address is handed out by DHCP and the name is not.
+# phone, where loopback would point at the recipient's own device. mDNS rather
+# than the LAN IP because the address is handed out by DHCP and the name is
+# not.
 Environment=AGENTBOX_PORTAL_URL=http://agentbox.local:8771
 # The household's private skills checkout, shown on the Capabilities page.
 # Environment=AGENTBOX_PERSONAL_PATH=%h/path/to/your-private-skills-repo

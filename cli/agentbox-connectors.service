@@ -6,9 +6,9 @@
 # a LAN-reachable page that could run containers is the worst thing that could
 # exist on this box, and `docker run -v /:/host` is a root shell.
 #
-# Splitting them used to mean the operator was a manual step in every
-# reconnect, so nobody could fix their own account without asking. Now the
-# privilege stays here and the waiting is gone.
+# The portal spools a request and this unit completes it, so people can fix
+# their own accounts without asking the operator while the privilege stays
+# here.
 
 [Unit]
 Description=Complete Agentbox connector requests

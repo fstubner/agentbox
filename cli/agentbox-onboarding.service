@@ -13,8 +13,8 @@
 # socket. So the portal writes a request and this reads it, the portal gains
 # no capability, and a bug in request handling cannot reach a container.
 #
-# That argument is currently weaker than it sounds and this unit does not fix
-# it: agentbox-portal.service runs as the operator, who is in the `docker`
+# That argument is weaker than it sounds and this unit does not fix it.
+# agentbox-portal.service runs as the operator, who is in the `docker`
 # group, so the socket is already reachable to that process. What stops it is
 # the absence of a code path, not a privilege boundary. Taking the portal out
 # of the docker group is the follow-up that makes the claim true; until then
