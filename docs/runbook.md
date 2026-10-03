@@ -894,14 +894,21 @@ cli/agentbox backup          # archive the task and memory stores, keep 14
 cli/agentbox backup list
 ```
 
-This archives the two stores holding anything the assistant cannot
-regenerate. These are the Vikunja database (a host bind mount) and durable
-memory (a Docker volume, read out through a short-lived container). Together
-they are about 3 MB.
+An archive holds four things.
+
+- The Vikunja database, from its host bind mount.
+- Durable memory, read out of its Docker volume through a short-lived
+  container.
+- The gateway's conversation history (`state.db`), copied with SQLite's backup
+  API so it is consistent.
+- The operator's env directory, `$AGENTBOX_ENV_DIR`.
+
+The env directory can hold plain-text secrets, and memory holds everyone's
+private memories, so archives are mode 600 and are not encrypted. Treat them
+like the credentials they contain.
 
 Each archive is restored as a test before old ones are pruned, so a broken run
-cannot delete the last good copy. Archives are readable only by you and are
-not encrypted.
+cannot delete the last good copy.
 
 Restoring needs nothing but tar.
 
@@ -909,9 +916,10 @@ Restoring needs nothing but tar.
 tar -xzf ~/.local/state/agentbox/backups/agentbox-<stamp>.tar.gz -C /tmp/restore
 ```
 
-Then, with both services stopped, copy `vikunja/` back over
-`$AGENT_CONTROL_PLANE_STATE_DIR/vikunja` and `memory/memory.json` into the
-`memory-bridge_memory_data` volume.
+Then, with the services stopped, copy `vikunja/` back over
+`$AGENT_CONTROL_PLANE_STATE_DIR/vikunja`, `memory/memory.json` into the
+`memory-bridge_memory_data` volume, `hermes/state.db` into the gateway profile,
+and `config/` into `$AGENTBOX_ENV_DIR` if you need the env files back.
 
 `cli/agentbox-backup.timer` runs it nightly at 03:30 as a systemd user timer.
 `Persistent=true` makes it catch up after the machine has been off, so a box

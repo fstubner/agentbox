@@ -8,8 +8,11 @@ import html
 import os
 import shutil
 import sqlite3
+import urllib.parse
 from pathlib import Path
 from typing import Any
+
+import agentbox_skills
 
 _portal: Any = None
 
@@ -19,45 +22,21 @@ def bind(portal_mod: Any) -> None:
     _portal = portal_mod
 
 
-def _parse_skill(skill_dir: Path, origin: str) -> dict[str, Any] | None:
-    skill_md = skill_dir / "SKILL.md"
-    if not skill_md.is_file():
-        return None
-    name, desc, tags = skill_dir.name, "", []
+def _hardware_summary() -> str:
+    """CPU model and memory, read from this machine rather than written down."""
+    cpu, mem_gb = "Unknown CPU", 0
     try:
-        content = skill_md.read_text(encoding="utf-8", errors="replace")
-        if content.startswith("---") and len(parts := content.split("---", 2)) >= 3:
-            for line in parts[1].splitlines():
-                k, _, v = line.partition(":")
-                k, v = k.strip(), v.strip().strip("'\"")
-                if k == "name":
-                    name = v
-                elif k == "description":
-                    desc = v
-                elif k == "tags":
-                    tags = [t.strip().strip("'\"") for t in v.strip("[]").split(",") if t.strip()]
-        if not desc:
-            for line in content.splitlines():
-                s = line.strip()
-                if s and not s.startswith(("#", "---")):
-                    desc = s
-                    break
-    except Exception:
-        desc = "Error loading skill metadata"
-    return {
-        "name": name, "desc": desc or "No description provided.",
-        "tags": tags, "origin": origin, "path": str(skill_dir),
-    }
-
-
-def load_all_skills() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    def _scan(p: Path, o: str) -> list[dict[str, Any]]:
-        return [s for d in sorted(p.iterdir()) if d.is_dir() and (s := _parse_skill(d, o))] if p.is_dir() else []
-    base = Path(__file__).resolve().parent.parent
-    personal_root = Path(os.environ.get("AGENTBOX_PERSONAL_PATH", Path.home() / "oss" / "agentbox-personal"))
-    personal = _scan(personal_root / "skills", "personal")
-    platform = _scan(base / "skills", "platform")
-    return personal, platform
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("model name"):
+                cpu = line.split(":", 1)[1].strip()
+                break
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemTotal:"):
+                mem_gb = round(int(line.split()[1]) / 1024 / 1024)
+                break
+    except OSError:
+        pass
+    return f"{cpu} · {mem_gb} GB memory" if mem_gb else cpu
 
 
 def _latest_backup() -> tuple[str, str]:
@@ -93,8 +72,7 @@ def render_capabilities(identity: str, role: str, flash: str = "",
         parts.append(
             f"<div class=card><b>{html.escape(connector['name'])}</b>"
             f"<p class=sub style='margin:.3rem 0 .8rem'>"
-            f"{'Connected' if connector['connected'] else 'Not connected'} "
-            f"&mdash; {html.escape(connector['detail'])}.</p>"
+            f"{'Connected to ' + html.escape(connector['detail']) if connector['connected'] else 'Not connected'}.</p>"
             f"<form method=post action=/connectors/start style='display:inline'>"
             f"<input type=hidden name=connector value='{html.escape(connector['key'])}'>"
             f"<button class=yes name=action value=reconnect>"
@@ -136,23 +114,25 @@ def render_capabilities(identity: str, role: str, flash: str = "",
 
     # 2. Smart Home & Household Services
     parts.append("<h2>Smart Home & Core Services</h2>")
-    parts.append(
-        "<div class=card><b>Vikunja Tasks & Projects</b>"
-        "<p class=sub style='margin:.3rem 0 .7rem'>Household shared task lists and todo items.</p>"
-        "<div class=row><span class='dot ok'></span><span class=name>Local Service on :3456</span>"
-        "<span class=when><a href='http://192.0.2.10:3456' target=_blank>open web app</a></span></div>"
-        "</div>"
-    )
-    parts.append(
-        "<div class=card><b>Home Assistant Smart Home</b>"
-        "<p class=sub style='margin:.3rem 0 .7rem'>Automations, lighting, sensors, and climate.</p>"
-        "<div class=row><span class='dot ok'></span><span class=name>Household Instance on :8123</span>"
-        "<span class=when><a href='http://192.0.2.10:8123' target=_blank>open web app</a></span></div>"
-        "</div>"
-    )
+    # Links use the host people already reach the portal on, and each dot is a
+    # live probe rather than a claim.
+    host = urllib.parse.urlparse(_portal.PUBLIC_URL).hostname or "127.0.0.1"
+    for title, blurb, port, health in (
+            ("Vikunja Tasks & Projects", "Household shared task lists and todo items.",
+             3456, "/api/v1/info"),
+            ("Home Assistant Smart Home", "Automations, lighting, sensors, and climate.",
+             8123, "/manifest.json")):
+        up = _portal.agentbox_status.probe(f"http://127.0.0.1:{port}{health}", timeout=1)
+        parts.append(
+            f"<div class=card><b>{title}</b>"
+            f"<p class=sub style='margin:.3rem 0 .7rem'>{blurb}</p>"
+            f"<div class=row><span class='dot {'ok' if up else 'fail'}'></span>"
+            f"<span class=name>{'Running' if up else 'Not answering'} on :{port}</span>"
+            f"<span class=when><a href='http://{html.escape(host)}:{port}' target=_blank>"
+            f"open web app</a></span></div></div>")
 
     # 3. Reasoning Skills
-    personal, platform = load_all_skills()
+    personal, platform = agentbox_skills.load_all_skills()
     parts.append("<h2>Reasoning Skills & Tools</h2>")
     parts.append("<p class=sub>Capabilities and specialized workflows loaded into the assistant.</p>")
 
@@ -184,6 +164,8 @@ def render_engine(identity: str, role: str, flash: str = "",
     if flash:
         parts.append(f"<div class=flash>{html.escape(flash)}</div>")
 
+    model_base = os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1")
+    model_dot = "ok" if _portal.agentbox_status.probe(f"{model_base}/models", timeout=1) else "fail"
     usage = shutil.disk_usage("/")
     free_gb = usage.free // (1024 * 1024 * 1024)
     total_gb = usage.total // (1024 * 1024 * 1024)
@@ -191,11 +173,11 @@ def render_engine(identity: str, role: str, flash: str = "",
 
     parts.append(
         "<div class=card><b>System Capacity & Hardware Envelope</b>"
-        "<div class=sub style='margin:.4rem 0 .75rem'>AMD Ryzen Embedded APU · 64 GB Unified Memory</div>"
+        f"<div class=sub style='margin:.4rem 0 .75rem'>{html.escape(_hardware_summary())}</div>"
         f"<div class=row><span class='dot {'warn' if used_pct > 85 else 'ok'}'></span>"
         f"<span class=name>Physical NVMe Disk: {free_gb} GB free ({used_pct}% used of {total_gb} GB)</span></div>"
-        f"<div class=row><span class='dot ok'></span>"
-        f"<span class=name>Local Inference Endpoint: <code>http://127.0.0.1:1234/v1</code></span>"
+        f"<div class=row><span class='dot {model_dot}'></span>"
+        f"<span class=name>Local Inference Endpoint: <code>{html.escape(model_base)}</code></span>"
         f"<span class=when style='color:var(--muted)'>port 1234</span></div>"
         "</div>"
     )
@@ -207,7 +189,7 @@ def render_engine(identity: str, role: str, flash: str = "",
         "Crash-consistent state snapshots capturing 4 tiers: memories, Vikunja tasks, "
         "Hermes conversation history (SQLite backup), and service credentials."
         "</p>"
-        f"<div class=row><span class='dot ok'></span>"
+        f"<div class=row><span class='dot {'warn' if latest_size == '0 KB' else 'ok'}'></span>"
         f"<span class=name>Latest Verified Snapshot: <b>{html.escape(latest_name)}</b></span>"
         f"<span class=when>{html.escape(latest_size)}</span></div>"
         "<div style='display:flex;gap:.5rem;margin-top:1rem;flex-wrap:wrap'>"

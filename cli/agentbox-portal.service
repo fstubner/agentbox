@@ -97,6 +97,8 @@ EnvironmentFile=-%h/.config/agentbox/portal-agent.env
 # recipient at their own device. mDNS rather than the LAN IP because the
 # address is handed out by DHCP and the name is not.
 Environment=AGENTBOX_PORTAL_URL=http://agentbox.local:8771
+# The household's private skills checkout, shown on the Capabilities page.
+# Environment=AGENTBOX_PERSONAL_PATH=%h/path/to/your-private-skills-repo
 # What Google is told, which is a different question with a different answer:
 # it refuses private IPs and .local, and accepts loopback. Consent is
 # therefore granted in a browser on this box. Set both to one https:// name
