@@ -154,6 +154,8 @@ do is read as achieved when it is not. Status measured 2026-08-19.
   plain LAN HTTP, and connects Google in a browser on the box — for people who
   live together, sitting down at it once. Pointing both variables at one
   `https://` name lifts that, and is the only thing a hostname buys.
+  `docs/runbook.md` has concrete steps for getting one without buying a domain
+  or exposing the box.
 
   These were a single setting until 2026-08-19, which made the two
   requirements mutually exclusive: a value a phone could reach broke consent,

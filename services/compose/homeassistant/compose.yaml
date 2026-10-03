@@ -46,8 +46,17 @@ services:
     # /dev/ttyUSB0 — the numbered name is assigned in probe order and will
     # move the first time another serial device is plugged in, silently
     # pointing Home Assistant at the wrong hardware.
+    #
+    # The default below is a placeholder and will not match your hardware. Set
+    # AGENTBOX_ZIGBEE_DEVICE to your own path; `ls /dev/serial/by-id/` prints
+    # it, and the name encodes the adapter model and its serial number, which
+    # is why it is stable and also why it cannot be shipped as a default.
+    #
+    # No Zigbee radio? Delete these three lines. A device mapping for hardware
+    # that is not present stops the container from starting at all, which is a
+    # confusing first failure for something you did not want.
     devices:
-      - "${AGENTBOX_ZIGBEE_DEVICE:-/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_da0a97b12e53ef1196672de0174bec31-if00-port0}:/dev/ttyZIGBEE"
+      - "${AGENTBOX_ZIGBEE_DEVICE:-/dev/serial/by-id/usb-REPLACE_WITH_YOUR_ADAPTER-if00-port0}:/dev/ttyZIGBEE"
     cpus: "2.00"
     mem_limit: 2048m
     pids_limit: 512

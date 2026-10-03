@@ -289,6 +289,38 @@ Two ways out:
 `agentbox validate` refuses a portal URL Google would reject, so this fails at
 config time rather than halfway through a consent screen in someone's browser.
 
+##### Getting a name of your own
+
+Neither option needs a domain purchase, and neither exposes the box to the
+internet.
+
+**Tailscale**, if everyone who needs remote consent can install it. MagicDNS
+gives the machine a real name and Tailscale issues a genuine certificate for
+it, so Google accepts the redirect:
+
+```bash
+sudo tailscale up
+# then in the admin console: DNS -> enable MagicDNS, and enable HTTPS
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8771
+tailscale status --json | grep -o '"DNSName":"[^"]*"'   # the name to register
+```
+
+Set `AGENTBOX_PORTAL_URL` to `https://<that name>` and register
+`https://<that name>/google/callback` on the OAuth client. Note that
+`AGENTBOX_OAUTH_REDIRECT_BASE` exists precisely so the two can differ — leave
+it on loopback if you would rather keep consent on the box.
+
+**A Cloudflare tunnel**, if they cannot. A named tunnel on a domain you own
+gives a stable https name with no port forwarding; a quick tunnel
+(`cloudflared tunnel --url http://127.0.0.1:8771`) gives one in seconds but the
+name changes every restart, which makes it fine for a one-off consent and
+useless as a registered redirect URI.
+
+**Or neither.** Consent at the box over loopback costs nothing and needs no
+network identity at all. For a household — people who share a building — that
+is somebody sitting down at it once. The only thing a hostname buys is doing it
+from somewhere else.
+
 ### Reconnecting or switching a Google account
 
 Scopes change. Drive, Drive activity and contacts were all added after Alex
