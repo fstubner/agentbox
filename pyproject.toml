@@ -1,3 +1,15 @@
+# Dual licensed, MIT or Apache-2.0 at your option: LICENSE-MIT and
+# LICENSE-APACHE. There is no [build-system] here and nothing packages this —
+# the metadata exists so the licence is machine-readable rather than only a
+# pair of files somebody has to notice.
+[project]
+name = "agentbox"
+version = "0.0.0"
+description = "A self-hosted household assistant that runs on hardware you own."
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+requires-python = ">=3.12"
+
 [tool.ruff]
 line-length = 120
 
