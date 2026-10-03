@@ -208,7 +208,7 @@ approvals go through `cli/agentbox-approvals` in Discord instead.
   them with `cli/agentbox memory`, using a credential the assistant does not
   hold.
 - **Self-reflection.** The tool server writes an outcome journal of every
-  call, including the ones the policy refused. Once a week the assistant reads
+  call, including the ones the policy refused. Every morning the assistant reads
   it and proposes lessons, which go through the same memory review.
 - **Cloud models.** Not implemented. The intended pattern is to try the local
   model first and escalate only when its answer fails validation, with the

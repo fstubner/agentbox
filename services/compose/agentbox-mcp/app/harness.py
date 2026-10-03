@@ -12,7 +12,7 @@ embedded in tool data in 10 of 10 attempts. That is the model we most want to
 hand a long email to, and handing it a long email is the exact thing that
 document warns against.
 
-The answer taken in `docs/roadmap.md` (item 8) is not to sanitise the input —
+The answer taken in `docs/roadmap.md` (under Retired) is not to sanitise the input —
 the injection is in the data, and a model that reads the data to clean it has
 already done the expensive work. It is to constrain the *dispatched* model:
 

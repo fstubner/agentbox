@@ -1,13 +1,10 @@
 # Platform baseline
 
-A known-good reference for the whole architecture, captured 2026-07-31. Its
-purpose is to make "is the platform working as expected?" answerable by
-comparison rather than by memory.
-
-Reproduce it with:
+A reference for what a healthy deployment looks like, so "is it working?" can
+be answered by comparison rather than from memory.
 
 ```
-cli/agentbox doctor      # every service below, plus freshness and readiness
+cli/agentbox doctor      # every check below, plus freshness and readiness
 cli/agentbox status      # one line per endpoint
 ```
 
@@ -16,85 +13,65 @@ records the numbers a probe cannot express.
 
 ## Services
 
-| Component | Endpoint | Severity if down |
+| Component | Check | Severity if down |
 |---|---|---|
-| Production model — `ornith-35b-q6-mtp` | `:1234/v1/models` | fail |
-| Context worker — `fastcontext-worker` | `:1235/v1/models` | warn |
-| Reason worker — `vibethinker-worker` | `:1236/v1/models` | warn |
-| Vision model — `local-qwen25-vl-3b` | `:1240/v1/models` | warn |
-| Role router | `:8765/health` | warn |
-| vikunja-bridge | `:3466/health`, `/ready` | fail |
-| google-workspace-bridge | `:3470/health`, `/ready` | fail |
-| memory-bridge | `:3471/health`, `/ready` | fail |
-| vikunja-mcp | `:3467/health` | fail |
-| memory-mcp | `:3472/health` | fail |
-| google-workspace-mcp-lite | `:3473/health` | fail |
-| Vikunja (task backend) | `:3456`, via bridge `/ready` | fail |
+| Main model | `:1234/v1/models` | fail |
+| agentbox-mcp | `:3465/health` | fail |
+| Bridges and their backing services | agentbox-mcp `/ready` | fail |
 | Control plane API | `:8000/api/evals/health` | warn |
 | Control plane UI | `:4321/` | warn |
-| Assistant gateways | `hermes-gateway-agentbox`, `hermes-assistant-gateway` | not probed |
+| Gateways | `hermes-gateway-agentbox`, `hermes-assistant-gateway` | not probed |
 
-**Why two severities.** `fail` is reserved for what the assistant needs to
-serve a request: the main model, and the bridge/MCP chain. Everything it does
-not depend on warns.
+`fail` is for what the assistant needs to answer a request, which is the model
+and the tool chain behind it. Everything else warns. A check that is red during
+normal operation is one people stop reading, so nothing optional is allowed to
+fail.
 
-The role router and both role workers warn rather than fail. They were `fail`
-until 2026-08-02, on the assumption that the router carried
-`/context/extract`. It does not — the gateway talks straight to the main model
-and the MCPs, so those three are evaluator infrastructure. The evaluator's
-`quiesce_commands` stops both workers on every compare run, so `fail` meant
-`doctor` was red by design during every benchmark, and a check that is normally
-red is a check people stop reading.
+Bridges publish no host ports, so they cannot be probed from the host. Instead
+agentbox-mcp's `/ready` asks every bridge over the container networks and names
+any that are not ready. Each bridge's own `/ready` probes the service behind
+it, so a stopped Vikunja shows up here even while the bridge in front of it is
+healthy.
 
-The gateways run as system units under a separate user and are not probed by
-`doctor`; check them with
-`systemctl is-active hermes-gateway-agentbox hermes-assistant-gateway`.
-
-## Measured behaviour
-
-Role routing is deterministic — each endpoint reaches its declared worker:
-
-| Route | Worker | Latency |
-|---|---|---|
-| `/context/extract` | fastcontext (:1235) | ~1.9 s |
-| `/reason/check` | vibethinker (:1236) | ~44.6 s |
-| `/decide/orchestrate` | main model (:1234) | ~0.5 s |
-
-`/reason/check` at ~45 s is the outlier. It is a reasoning model doing real
-work, not a fault, but it is slow enough that any interactive path through it
-needs a timeout budget set deliberately.
-
-Approval policy, `always_denied` exits 2 and unknown actions default to
-`approval_required`:
+The gateways run as system units under a separate user. Check them with
 
 ```
-policy check merge_own_pr              -> exit 2
-policy check disable_approval_gates    -> exit 2
+systemctl is-active hermes-gateway-agentbox hermes-assistant-gateway
+```
+
+## Approval policy
+
+`always_denied` exits 2, and an action the policy does not list needs
+approval.
+
+```
+policy check merge_own_pr                -> exit 2
+policy check disable_approval_gates      -> exit 2
 policy check expose_services_to_internet -> exit 2
-policy check read_repo_files           -> exit 0
-policy check send_email                -> approval_required (unknown_action_default)
+policy check read_repo_files             -> allowed
+policy check send_email                  -> approval_required (unknown_action_default)
 ```
 
-Payload sizes across both bridges, measured against real accounts:
+## Payload sizes
+
+Measured against real accounts on 2026-07-31.
 
 | Endpoint | Bytes | Items | Per item |
 |---|---|---|---|
 | `POST /v1/calendar/events` | **23022** | 10 | ~2302 |
-| `GET /v1/projects` (vikunja) | 3450 | — | — |
+| `GET /v1/projects` (vikunja) | 3450 | | |
 | `POST /v1/calendar/list` | 1818 | 3 | ~606 |
 | `POST /v1/gmail/labels/list` | 1764 | 18 | ~98 |
 | `GET /v1/tasks` (1 task, full) | 829 | 1 | 829 |
 | `POST /v1/gmail/search` | 682 | 10 | ~68 |
 | `GET /v1/tasks?view=lean` | 76 | 1 | 76 |
 
-**Calendar events dominate everything else by a wide margin** — 23 KB, roughly
-7,000 tokens, for ten events. That is 28× the full vikunja task list, and it
-lands in context every time the assistant looks at a schedule.
+Calendar events were by far the largest. Ten events came to 23 KB, about 7,000
+tokens, which is 28 times the full task list. I had first picked
+`vikunja/v1/tasks` as the projection target, but on measured traffic it was
+the second smallest payload. `calendar/events` is where projection pays.
 
-I first picked `vikunja/v1/tasks` as the projection target. On measured traffic that is the *second smallest*
-payload in the system. `calendar/events` is where projection actually pays.
-
-Field breakdown of one event (19 fields, 924 B):
+The biggest fields in one event (19 fields, 924 B):
 
 | Field | Bytes | Share |
 |---|---|---|
@@ -104,7 +81,7 @@ Field breakdown of one event (19 fields, 924 B):
 | `creator` | 82 | 8.9% |
 | `location` | 69 | 7.5% |
 
-### Measured after shipping the lean views
+### With the lean views
 
 | Path | full | lean | reduction |
 |---|---|---|---|
@@ -112,53 +89,45 @@ Field breakdown of one event (19 fields, 924 B):
 | `list_calendar_events` via MCP | 27002 B | 4105 B | **84.8%** |
 | `list_tasks` via MCP | 989 B | 100 B | **89.9%** |
 
-The calendar saving is ~5,600 tokens per schedule lookup. It beat the 74%
-estimate because dropping the response envelope (`defaultReminders`,
-`timeZone`, `accessRole`, `description`, `etag`, `kind`) stacks on top of the
-per-event projection. `nextPageToken` is deliberately retained — dropping it
-would silently truncate a multi-page calendar.
+That saves about 5,600 tokens per schedule lookup. It beat the 74% estimate
+because the response envelope (`defaultReminders`, `timeZone`, `accessRole`,
+`description`, `etag`, `kind`) is dropped as well as the per-event fields.
+`nextPageToken` is kept, because dropping it would silently cut off a calendar
+longer than one page.
 
-`status` is kept in the lean event even though a scheduling answer does not
-need it: without it a cancelled event is indistinguishable from a live one,
-which is an accuracy loss rather than a saving.
+`status` stays in the lean event even though a scheduling answer rarely needs
+it. Without it a cancelled event looks the same as a live one.
 
-**The MCP layer inflates every tool result by ~17%** (23022 B at the bridge
-becomes 27002 B through MCP) because `tool_result` serialises with
-`json.dumps(..., indent=2)`. Pretty-printing costs tokens and buys a model
-nothing. Not yet changed — it affects every tool on every MCP, so it wants its
-own before/after rather than riding along with this change.
+The MCP column was measured when tool results were pretty-printed, which added
+about 17%. They are now serialised compactly (`tool_result` in
+`services/templates/mcp/mcp_base.py`).
 
-Disk: root 43%, models on a dedicated volume at 20% (312 GB free).
+## Invariants
 
-## Invariants this baseline assumes
+Each of these is checked by tests in `services/templates/bridge/`.
 
-Verified by tests, not by inspection — see `services/templates/bridge/`:
-
-- Unset bridge token ⇒ 503, never silently open. Constant-time compare.
-- `/health` never touches the upstream, so one backing-service outage cannot
-  restart-loop the bridges in front of it.
-- `/ready` does probe the upstream and returns 503 with the reason.
+- A bridge with no token set returns 503 and never runs open. The token
+  comparison is constant-time.
+- `/health` never touches the upstream, so an outage in one backing service
+  cannot restart-loop the bridges in front of it.
+- `/ready` does probe the upstream, and returns 503 with the reason.
 - Request logs never contain the Authorization header, request or response
   bodies, or any query parameter outside `LOGGED_QUERY_PARAMS`.
-- `bridge_base.py` is byte-identical across the template and every bridge;
-  `validate` fails on drift.
+- `bridge_base.py` is byte-identical across the template and every bridge, and
+  `validate` fails if they drift.
 
 ## Known gaps
 
-- **No traffic baseline yet.** The request log now persists across deploys, but
-  the numbers above are still from synthetic calls rather than a representative
-  day of use.
-- **The gateways are not probed** by `doctor`; they are system units owned by
+- The payload numbers come from synthetic calls, not a representative day of
+  use. The request log persists across deploys, so a traffic baseline can be
+  taken once the stack has run for a while.
+- `doctor` does not probe the gateways, because they are system units owned by
   a different user.
-- **The role router and both role workers are unused by the assistant.** The
-  gateway talks directly to the main model and the MCPs. The router serves the
-  evaluator, and `doctor` warns rather than fails on all three.
 
-## Restoring from cold
+## Starting from cold
 
-Everything is `enabled`, so a reboot brings the stack up on its own. If it does
-not, order matters: model servers first (they are what the router needs), then
-router and control plane, then the gateways. Docker services restart on their
-own unless explicitly `docker stop`ped — an explicit stop overrides
-`unless-stopped` and survives a reboot, which is how Vikunja stayed down on
-2026-07-31.
+Everything is enabled, so a reboot brings the stack up on its own. If it does
+not, start the model server first, then the control plane, then the gateways.
+Docker services restart on their own unless they were stopped with
+`docker stop`. An explicit stop overrides `unless-stopped` and survives a
+reboot.
