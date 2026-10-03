@@ -1,8 +1,7 @@
 # Contributing
 
-This started as a single-operator personal project and is now built around one
-household of two; contributions that keep it useful for that use case are
-welcome.
+Agentbox is built for one household on one machine. Contributions that keep it
+useful for that are welcome.
 
 - Run `cli/agentbox validate` and the test suite (`pytest tests/`) before
   opening a PR.

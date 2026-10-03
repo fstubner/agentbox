@@ -4,126 +4,120 @@
 [![clean-room onboarding](https://github.com/fstubner/agentbox/actions/workflows/onboarding.yml/badge.svg)](https://github.com/fstubner/agentbox/actions/workflows/onboarding.yml)
 [![licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 
-A self-hosted, privacy-first AI assistant for a household running on local hardware. Agentbox runs a local LLM behind a gateway with narrow, policy-gated levers: task management, calendar and email bridges, home control, and memory that a person reviews before it is kept.
+Agentbox is an AI assistant for a household, running on a machine in the
+house. It uses a local model, and it reaches tasks, email, calendars, the
+house itself and a shared memory through a small set of tools that each do
+one narrow thing.
 
-Two people share it, with a shared household plane (joint tasks, shopping, shared scheduling) and isolated private planes (private mail, personal calendar, personal memory). Identity is bound to the authenticated session, never passed as an LLM tool argument.
+I designed it and directed AI agents to build most of it. [PRODUCT.md](PRODUCT.md)
+says what it is for and how far along each part really is.
 
-A single-operator deployment is fully supported without configuring multiple identities.
+Everyone in the household can use it. Tasks, shopping and joint scheduling are
+shared. Each person's mail, calendar detail and memories are private to them.
+Who the assistant is acting for comes from the signed-in session, and the model
+never gets to pass it as a tool argument. So an instruction hidden in an email
+cannot make it act as somebody else.
 
-The second badge is worth clicking. It runs the quickstart below on a fresh
-machine that has never seen this repository. It installs the prerequisites,
-runs setup, validates, and deploys a service with no secrets configured. If any
-step breaks, the badge goes red. The instructions are checked on every change
-rather than just written down.
+It also works for one person with no identities set up.
 
----
+The second badge runs the quickstart below on a fresh machine on every change.
+If these instructions stop working, it goes red.
 
-## Core Security & Architectural Principles
+## How it is kept safe
 
-- **Levers, not shell:** The assistant interacts exclusively through Model Context Protocol (MCP) tools with explicit schemas and contracts — never raw terminal access.
-- **Process Sandboxing (`agentbox-sandbox`):** Agent processes run inside a Bubblewrap container that mounts `/` read-only, hides operator credentials by mounting an empty tmpfs over `~/.config`, and confines write access to `~/.local/state/agentbox`.
-- **Credential Containment:** OAuth tokens and API credentials live in isolated bridge containers. The assistant never inspects raw secrets.
-- **Pluggable Secret Management:** Deploy-time secret resolution is delegated ephemerally in RAM. Out of the box, Agentbox supports Infisical (`infisical://`), Bitwarden Secrets Manager (`bws://`), Doppler (`doppler://`), 1Password (`op://`), or custom secret managers via `~/.config/agentbox/secret-wrapper`. Plain `.env` files are supported for fully-contained environments.
-- **Non-Root Proposal Sandbox:** Code modifications proposed by the assistant write to an isolated setgid repository (`builder-repo`, GID 65532) preventing direct modifications to host code.
-- **Deterministic Approval Gates:** Mutating and private-data actions require explicit operator approval defined in `policies/approval-policy.yaml`.
+- The assistant has no shell. It can only call tools with fixed schemas, over
+  MCP.
+- Anything irreversible has no tool at all. It cannot send mail, delete files,
+  unlock doors or approve its own memories.
+- Credentials live in separate bridge containers, and the assistant never sees
+  a token.
+- Every tool call is checked against `policies/approval-policy.yaml`. Most
+  tools are allowed because the bridge behind them already limits what they can
+  do. A few need the operator's approval, and a tool the policy does not list
+  needs approval by default.
+- Code the assistant proposes goes into its own repository as a branch. It
+  cannot change the code it runs on.
+- Agent processes run in a Bubblewrap sandbox. The root filesystem is
+  read-only, the operator's credentials are hidden, and the only writable place
+  is `~/.local/state/agentbox`.
 
----
+## What is in the repository
 
-## Directory Layout
-
-| Directory | Purpose |
+| Directory | What it holds |
 | :--- | :--- |
-| `cli/` | Operator CLI (`agentbox`) and sandbox launcher (`agentbox-sandbox`) |
-| `services/` | Docker Compose service stacks (Vikunja, bridges, MCP servers) |
-| `policies/` | Declarative approval, network, and tool capability policies |
-| `router/` | Retired. Routed work to small local models until they failed evaluation. See `router/README.md` |
-| `gateway/` | Gateway configuration and integration definitions |
-| `docs/` | Architecture records, runbooks, and baseline evaluations |
+| `cli/` | The `agentbox` command, the sandbox launcher, and the web portal |
+| `services/` | Docker Compose stacks for the bridges, the tool server and Vikunja |
+| `policies/` | The approval policy, plus network and secrets policies |
+| `gateway/` | Example gateway configuration |
+| `router/` | Retired. It routed work to small local models until they failed evaluation. See `router/README.md` |
+| `docs/` | Architecture, runbook, and evaluation notes |
 
----
+## Getting started
 
-## Quickstart
+### What you need
 
-### 1. Prerequisites
-
-- Linux host (Ubuntu 24.04+ or modern systemd distribution)
-- Docker & Docker Compose v2
-- Python 3.12+
+- A Linux machine with systemd, such as Ubuntu 24.04
+- Docker with Compose v2
+- Python 3.12 or later
 - Bubblewrap (`sudo apt install bubblewrap`)
 - Git
 
-### 2. Automated Machine Setup
-
-Run `agentbox setup` to configure directories, file permissions, and templates idempotently:
+### Set up the machine
 
 ```bash
 ./cli/agentbox setup
 ```
 
-This automatically:
-- Creates and locks `~/.config/agentbox` to mode `0700`.
-- Initialises state directories (`backups`, `logs`, `invites`, `portal`) to mode `0750`.
-- Clones and hardens the proposal sandbox repository with group setgid.
-- Installs default templates (`.env.example` and `secret-wrapper.example`).
-- Installs the Bubblewrap sandboxing wrapper at `cli/agentbox-sandbox`.
+This creates the config and state directories with tight permissions, sets up
+the repository the assistant proposes changes into, installs example config
+files, and installs the sandbox wrapper. Running it again is safe.
 
-### 3. Configure Secrets
+### Add secrets
 
-Place service environment files in `~/.config/agentbox/<service>.env`. You can use secret reference URIs or standard environment variables.
+Each service reads `~/.config/agentbox/<service>.env`. A value can be written
+in plain, or as a reference that your secret manager resolves when you deploy.
+1Password (`op://`), Infisical (`infisical://`), Bitwarden (`bws://`) and
+Doppler (`doppler://`) work out of the box. For anything else, copy
+`~/.config/agentbox/secret-wrapper.example` to `secret-wrapper`, make it
+executable, and put your own lookup command in it.
 
-To connect your secret manager:
-- **Infisical, Bitwarden, Doppler, or 1Password:** Use URIs such as `op://vault/service/key`, `infisical://service/key`, `bws://secret-id`, or `doppler://token`.
-- **Custom Secret Managers (Vault, SOPS, CyberArk):** Copy `~/.config/agentbox/secret-wrapper.example` to `~/.config/agentbox/secret-wrapper`, make it executable (`chmod +x`), and define your resolution command.
-
-### 4. Verification & Diagnostics
-
-Validate repository contracts, tool schema budgets, and policy consistency:
+### Check it
 
 ```bash
 ./cli/agentbox validate
 ```
 
-Audit runtime daemon health, container bridge endpoints, and containment boundaries:
+This checks the repository itself, including that the policy is consistent,
+the tool definitions fit their size budget, and the code passes lint.
 
 ```bash
 ./cli/agentbox doctor
 ```
 
-### 5. Deploying Services
+This checks the running machine. It reports which services answer, whether
+the assistant is really cut off from credentials and the Docker socket, and
+whether anything is listening on the network that should not be.
 
-Deploy any service stack with ephemeral secret injection:
+### Deploy
 
 ```bash
 ./cli/agentbox deploy <service>
 ```
 
----
-
-## Everyday Operator Commands
+## Day to day
 
 ```bash
-# View system status, bridge connections, and pending approvals
-./cli/agentbox status
-
-# Pull updated container images and redeploy
-./cli/agentbox update <service>
-
-# Review proposed changes submitted by the assistant
-./cli/agentbox proposals list
+./cli/agentbox status                 # which services are answering
+./cli/agentbox update <service>       # pull newer images and redeploy
+./cli/agentbox proposals list         # changes the assistant has proposed
 ./cli/agentbox proposals show <name>
-
-# Create an encrypted archive of state and memory stores
-./cli/agentbox backup
-
-# Run integration workflows end-to-end
-./cli/agentbox smoke
+./cli/agentbox backup                 # back up state and memory, then test the archive
+./cli/agentbox smoke                  # run real workflows end to end
 ```
 
----
-
-## License
-
-Apache-2.0
+Backups are readable only by you, and each one is restored as a test before
+older ones are pruned. They are not encrypted, so keep them somewhere that
+matters.
 
 ## Licence
 

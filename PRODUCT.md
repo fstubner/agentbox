@@ -35,11 +35,12 @@ Everything expensive is worth amortising across a lifetime of use.
 
 ## Users
 
-Two people in one home, with different privileges.
+Everyone in one household. Each person has one of two roles, and there can
+be more than one of each.
 
-- **Operator and admin** (`alex`). Runs the box, sees Operations, decides
+- **Admin** (`alex` in examples). Runs the box, sees Operations, decides
   household memories, invites people.
-- **Household member** (`sam`). Manages their own memories and accounts, and
+- **Member** (`sam` in examples). Manages their own memories and accounts, and
   cannot reach Operations.
 
 **`alex` and `sam` are the canonical example names**, in tests, docs and
@@ -59,11 +60,6 @@ planes"**. Tasks, shopping and joint scheduling are shared. Each person's
 mail, calendar detail and personal memory are private. Two separate stacks
 were explicitly rejected, because "a household assistant that cannot answer
 'when are we both free' gives up most of its value".
-
-**Decided 2026-08-18. A household of two.** `README.md`,
-`docs/architecture.md` and `CONTRIBUTING.md` had described a "single
-operator". Those were stale and now say household. The code already followed
-this reading.
 
 Distinct from that, and still true. A box with **no identities configured**
 runs in a single-operator mode, with one shared token, no identity, and every
