@@ -322,7 +322,7 @@ I rejected per-item sharing. "Sam can see this one thing of Alex's" makes
 
 The assistant calls `whoami` to find out which person it is acting for and
 which scopes it can read. The tool is `allowed`, because uncertainty about who
-it is serving causes exactly the cross-account mistakes it prevents. Memories
+it is serving causes the cross-account mistakes it prevents. Memories
 from before scopes existed have no scope and count as household.
 
 #### What a private scope protects
@@ -362,7 +362,7 @@ cli/agentbox-portal link sam --base-url http://127.0.0.1:8771
 ```
 
 There are two roles, `admin` and `member`, taken from `AGENTBOX_ADMINS`. The
-capability table is in the portal source. It is deliberately not a general
+capability table is in the portal source. It is not a general
 role system, because a second policy vocabulary next to
 `approval-policy.yaml` would mean two systems that can disagree about who may
 do what. An empty `AGENTBOX_ADMINS` makes nobody an admin, which is the safe

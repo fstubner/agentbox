@@ -8,7 +8,7 @@
 #
 # Why a service rather than an add-on: Home Assistant here is a plain
 # container, not Home Assistant OS, so there is no add-on store. The Assist
-# pipeline on this box has `stt_engine: None` for exactly that reason, and a
+# pipeline on this box has `stt_engine: None` for that reason, and a
 # satellite without one wakes, streams, and is met with silence.
 #
 # --- WHY THIS EXISTS AT ALL ---------------------------------------------

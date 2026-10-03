@@ -20,7 +20,7 @@ Use `alex` and `sam` for household members in tests, docs and config samples.
 The tests need two distinct people to check that one person's memories, mail
 and bridges are not another's, and a third invented name tends to collide with
 a fixture in a way that looks like a real failure. For someone who is
-deliberately neither, such as a newcomer or a person who cannot sign in, use
+neither, such as a newcomer or a person who cannot sign in, use
 `newcomer` or `taylor`.
 
 They are names rather than role words because `admin` and `member` are already

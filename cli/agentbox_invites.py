@@ -87,29 +87,29 @@ def invite_complete(token_id: str) -> int:
         if provision_vikunja_user(name, password):
             report(OK, f"created vikunja user '{name}'")
             print(f"      one-time password: {password}")
-            print("      Give her this once; she changes it on first login.")
+            print("      Give them this once; they change it on first login.")
 
     if "google" in chosen:
         code = record.get("google_code", "")
         redirect_uri = record.get("google_redirect_uri", "")
         if not code:
-            report(WARN, "she chose google but did not finish the consent "
+            report(WARN, "they chose google but did not finish the consent "
                          "screen, so there is no code to exchange")
-            print("      Not a problem to re-invite for: she connects Google "
-                  "herself from\n      the portal under 'Your accounts', "
-                  "which provisions the same\n      bridge. Until she does, "
-                  "she shares yours, which is wrong for mail.")
+            print("      Not a problem to re-invite for: they connect Google "
+                  "themselves from\n      the portal under 'Your accounts', "
+                  "which provisions the same\n      bridge. Until they do, "
+                  "they share yours, which is wrong for mail.")
         else:
             refresh_token = exchange_oauth_code(code, redirect_uri)
             if refresh_token and provision_google_bridge(name, refresh_token):
-                report(OK, f"provisioned {name}-google-bridge with her own "
+                report(OK, f"provisioned {name}-google-bridge with their own "
                            f"credential")
                 print(f"      Store it: op item edit Agentbox/google-{name} "
                       f"--refresh_token=<from "
                       f"{name}-google-bridge.env>")
                 print("      They have no writable calendar yet. Set "
                       "GOOGLE_ALLOWED_WRITE_CALENDAR_ID in that env file "
-                      "if she wants one.")
+                      "if they want one.")
 
     record["completed_at"] = int(time.time())
     # The secret is spent; there is no reason to keep it on disk.
@@ -156,7 +156,7 @@ def invite_drain() -> int:
             report(WARN, f"invite {token_id}: approved but no such invite")
             continue
         if not record.get("used_at"):
-            onb.settle(req, "not_submitted", "she has not filled it in yet")
+            onb.settle(req, "not_submitted", "they have not filled it in yet")
             report(WARN, f"invite {token_id}: approved before it was filled in")
             continue
         if record.get("completed_at"):

@@ -105,8 +105,8 @@ if a person reads it carefully.
 
 - **Levers, not shell.** Every capability is a tool with a defined contract.
 - **Tools are designed, not wrapped.** A tool is a model of what the assistant
-  may do, not a thinner copy of an upstream API. It should be exactly as
-  expressive as what can be verified. That is why there is no `call_service`
+  may do, not a thinner copy of an upstream API. It should be as
+  expressive as what can be verified, and no more. That is why there is no `call_service`
   and why automations take no templates. Removing dangerous parts from
   somebody else's general-purpose engine has to be re-checked on every
   upgrade, while a grammar defined here cannot express what it leaves out.

@@ -150,7 +150,7 @@ def google_bytes(method, url):
         raise BridgeError(exc.code, {"google_error": detail}) from None
 
 
-# There is no delete here on purpose. Deleting mail and files is
+# There is no delete here. Deleting mail and files is
 # always_denied and has no tool, and code that could do it would still sit in
 # the process holding the OAuth credential. Absent is stronger than unused.
 

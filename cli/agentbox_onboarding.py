@@ -66,7 +66,7 @@ def request_path(token_id: str) -> Path:
 def request(token_id: str, requested_by: str, origin: str = "") -> Path:
     """Record that an admin asked for this invite to be completed.
 
-    Deliberately does not check whether the invite exists or is completable.
+    Does not check whether the invite exists or is completable.
     That judgement belongs to the side holding the privilege; making it here
     too would mean two implementations that can disagree, and the portal's
     copy would be the one nobody re-reads when the rules change.

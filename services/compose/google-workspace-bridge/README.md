@@ -23,7 +23,7 @@ credentials.
 - `POST /v1/calendar/freebusy`
 - `POST /v1/calendar/events/create`
 
-Gmail modification is deliberately limited to marking read, archiving, and
+Gmail modification is limited to marking read, archiving, and
 adding labels from the assistant's own `agentbox/` namespace. Applying a
 label outside it is refused. Composing is limited to drafts, and sending is not
 exposed. Calendar writes are limited to the configured assistant-owned calendar, and

@@ -215,7 +215,7 @@ GROUPS = tuple(dict.fromkeys(setting.group for setting in SETTINGS))
 class SettingsStore:
     """Reads and writes the settings file. One instance per process is enough.
 
-    Deliberately not cached: the portal is a threaded HTTP server and the file
+    Not cached: the portal is a threaded HTTP server and the file
     is small, so re-reading is cheaper than reasoning about invalidation after
     a write.
     """

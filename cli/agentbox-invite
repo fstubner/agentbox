@@ -103,8 +103,8 @@ class InviteHandler(BaseHTTPRequestHandler):
         """Google hands the authorisation code back here.
 
         The code is stored, not exchanged: exchanging needs the client secret,
-        which this process deliberately does not have. `agentbox invite
-        complete` does that and provisions her bridge.
+        which this process does not have. `agentbox invite
+        complete` does that and provisions their bridge.
         """
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         state = query.get("state", [""])[0]
@@ -241,7 +241,7 @@ def cmd_create(args) -> int:
     print(f"  http://{host}:{BIND_PORT}/?i={token_id}&t={secret}\n")
     print("This link is a credential: anyone holding it can create an identity")
     print("on this box. Send it directly, not to a group chat.\n")
-    print("Then run the page while she fills it in:")
+    print("Then run the page while they fill it in:")
     print("  cli/agentbox-invite serve")
     print("and afterwards:")
     print(f"  cli/agentbox invite complete {token_id}")
@@ -270,7 +270,7 @@ def cmd_serve(args) -> int:
     InviteHandler.owner = args.owner
     if not PUBLIC_ORIGIN:
         print("note: AGENTBOX_INVITE_ORIGIN is unset, so the Google step is "
-              "skipped.\n      Set it to the URL she will actually open "
+              "skipped.\n      Set it to the URL they will actually open "
               "(e.g. http://127.0.0.1:8770 \u2014 Google refuses .local)\n      and register "
               "<that>/google/callback as a redirect URI on the OAuth client.",
               file=sys.stderr)
@@ -280,9 +280,9 @@ def cmd_serve(args) -> int:
     server = ThreadingHTTPServer((BIND_HOST, BIND_PORT), InviteHandler)
     print(f"Onboarding page on {BIND_HOST}:{BIND_PORT}, "
           f"{len(pending)} invite(s) outstanding.")
-    print("This is reachable on your LAN so she can open it from a phone.")
+    print("This is reachable on your LAN so they can open it from a phone.")
     if not args.unattended:
-        print("Stop it (Ctrl-C) once she is done; it should not run "
+        print("Stop it (Ctrl-C) once they are done; it should not run "
               "permanently.")
     try:
         server.serve_forever()
@@ -330,10 +330,10 @@ def main() -> int:
     create.add_argument("name", help="identity name, e.g. sam")
     create.add_argument("--ttl-hours", type=int, default=DEFAULT_TTL_HOURS)
     create.add_argument("--host", default="",
-                        help="hostname she will reach this box on "
+                        help="hostname they will reach this box on "
                              "(default agentbox.local)")
 
-    serve = sub.add_parser("serve", help="run the page while she fills it in")
+    serve = sub.add_parser("serve", help="run the page while they fill it in")
     serve.add_argument("--household", default="the household")
     serve.add_argument("--owner", default="The owner")
     serve.add_argument(

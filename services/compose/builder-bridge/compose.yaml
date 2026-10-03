@@ -17,7 +17,7 @@ services:
       # for its config. /tmp is a tmpfs, so this stays ephemeral.
       HOME: "/tmp"
       BRIDGE_LOG_FILE: "/logs/builder-bridge.jsonl"
-    # No host port, deliberately. This bridge is reachable only on its compose
+    # No host port. This bridge is reachable only on its compose
     # network, which the MCP gateway joins, so a leaked bridge token is
     # unusable by any process on the host. The gateway concentrating five
     # tokens is only a prize if something outside it can spend them; this is

@@ -117,7 +117,7 @@ class PortalActions:
                 provided, portal.AGENT_TOKEN):
             self._send(403, portal.page("No", "<h1>No</h1>"))
             return
-        # `account_name`, deliberately not `identity`: this names an account
+        # `account_name`, not `identity`: this names an account
         # that does not exist yet, not somebody to act as. /agent/link takes
         # the latter and is the reason that word is load-bearing here.
         identity = (form.get("account_name") or [""])[0].strip().lower()

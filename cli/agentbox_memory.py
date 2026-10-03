@@ -171,9 +171,9 @@ def memory_forget(memory_id: str, reason: str = "") -> int:
 def feedback_list(status: str = "open") -> int:
     """The improvement backlog: things to fix properly rather than remember.
 
-    Deliberately an operator surface only. If the assistant could read this it
+    An operator surface only. If the assistant could read this it
     would start explaining the behaviour instead of the behaviour changing,
-    which is exactly the patch-around this split exists to prevent.
+    which is the patch-around this split exists to prevent.
     """
     payload = memory_request("GET", f"/v1/feedback?status={urllib.parse.quote(status)}")
     if payload is None:

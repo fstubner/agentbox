@@ -64,7 +64,7 @@ def exchange_oauth_code(code: str, redirect_uri: str) -> str:
 def provision_google_bridge(identity: str, refresh_token: str) -> bool:
     """Stand up a Google bridge holding only this person's credential.
 
-    Her mail is then reached with her token and nobody else's, which is the
+    Their mail is then reached with their token and nobody else's, which is the
     whole reason for a second container rather than a second credential in the
     first one.
     """
@@ -81,8 +81,8 @@ def provision_google_bridge(identity: str, refresh_token: str) -> bool:
         f"GOOGLE_REFRESH_TOKEN={refresh_token}",
         f"GOOGLE_BRIDGE_TOKEN={bridge_token}",
         f"GOOGLE_OWNED_LABEL_PREFIX={shared.get('GOOGLE_OWNED_LABEL_PREFIX', 'agentbox/')}",
-        # Deliberately blank: she gets no writable calendar until an operator
-        # picks one. Inheriting Alex's would let her assistant write to his.
+        # Blank: they get no writable calendar until an operator
+        # picks one. Inheriting Alex's would let the new person's assistant write to it.
         "GOOGLE_ALLOWED_WRITE_CALENDAR_ID=",
     ]) + "\n", encoding="utf-8")
     env_path.chmod(0o600)

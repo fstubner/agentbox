@@ -183,7 +183,7 @@ def main() -> int:
                 save_cursor(state)
                 log(f"asked about {tool} ({capability})")
             else:
-                # Silence here once looked exactly like "the loop is broken".
+                # Silence here would look like "the loop is broken".
                 log(f"could not post approval request for {tool}")
 
         params = f"?limit=25&after={state['last_id']}" if state.get("last_id") else "?limit=10"

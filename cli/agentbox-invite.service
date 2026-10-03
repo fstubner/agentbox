@@ -5,7 +5,7 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now agentbox-invite
 #
-# Deliberately the least privileged thing on this box. cli/agentbox-invite
+# The least privileged thing on this box. cli/agentbox-invite
 # explains why at length: it has no docker socket, no 1Password token, no
 # bridge tokens, and cannot create an identity. It writes one spool file and
 # that is all it can do, because it is a LAN-reachable page that strangers are
@@ -25,7 +25,7 @@
 # an empty spool is the normal resting state here, and cli/agentbox-invite
 # records why that differs from the hand-run case.
 
-# AGENTBOX_INVITE_ORIGIN is deliberately NOT set here, so the form skips the
+# AGENTBOX_INVITE_ORIGIN is not set here, so the form skips the
 # Google step rather than offering one that breaks.
 #
 # The origin is both where Google sends the person back and where they opened

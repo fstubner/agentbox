@@ -134,7 +134,7 @@ def rules_decide(name: str, activate: bool,
                                   f"the rule file changes in any way, the approval is "
                                   f"void and it stops firing.")
             # Say so at the moment of approval, not in a document. An approved
-            # rule that silently never fires is exactly the confident-but-wrong
+            # rule that silently never fires is the confident-but-wrong
             # state this system keeps having to hunt down. Kept in step with
             # evaluator.LIVE_SOURCES by tests/test_rules_evaluator.py.
             live = ("schedule", "homeassistant")

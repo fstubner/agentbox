@@ -57,7 +57,7 @@ def lan_exposure() -> list[Check]:
 
     # The portal belongs here more than anything else does: it holds sessions
     # that can edit the admin list, and it is the surface most likely to be
-    # deliberately bound wide so a phone on the sofa can reach it. A check
+    # bound wide so a phone on the sofa can reach it. A check
     # written to catch an unintended 0.0.0.0 that cannot see the box's most
     # privileged service is checking the easy half of the problem.
     watched = {"1234": "main model", "1235": "context worker",
@@ -82,7 +82,7 @@ def lan_exposure() -> list[Check]:
                 tail = (f"{authenticated[port]}, so this is a wider surface "
                         f"rather than open data")
             else:
-                # Deliberately not "it asks for no password": that is unknown
+                # Not "it asks for no password": that is unknown
                 # for most of these, and asserting it was the bug.
                 tail = "this check cannot confirm it requires a credential"
             exposed.append(Check(

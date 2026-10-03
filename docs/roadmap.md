@@ -191,7 +191,7 @@ The alternative is a small rules grammar I own.
            if   <literal predicates, no templates, no code>
            do   <allowlisted calls to tools the assistant already has>
 
-It is deliberately not Turing-complete, so it can be checked statically. The
+It is not Turing-complete, so it can be checked statically. The
 model is only involved when a rule is written. Evaluation is plain code. Every
 `do` is an ordinary tool call, so policy gates, grants and the outcome journal
 apply without new machinery, and daily reflection sees what rules did.

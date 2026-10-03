@@ -108,7 +108,7 @@ if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
         "1", "true", "yes"):
     GOOGLE_SCOPES += " https://www.googleapis.com/auth/drive.readonly"
 
-# Same variable and default as cli/agentbox, deliberately. Two names for one
+# Same variable and default as cli/agentbox. Two names for one
 # endpoint is how a portal ends up quietly pointed at nothing.
 PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
 

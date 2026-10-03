@@ -29,7 +29,7 @@ services:
       VISION_BASE_URL: "${VISION_BASE_URL:-http://host.docker.internal:1240/v1}"
       VISION_MODEL: "${VISION_MODEL:-local-qwen25-vl-3b}"
       BRIDGE_LOG_FILE: "/logs/homeassistant-bridge.jsonl"
-    # No host port, deliberately. This bridge is reachable only on its compose
+    # No host port. This bridge is reachable only on its compose
     # network, which the MCP gateway joins, so a leaked bridge token is
     # unusable by any process on the host. The gateway concentrating five
     # tokens is only a prize if something outside it can spend them; this is

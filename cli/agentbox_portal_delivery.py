@@ -141,7 +141,7 @@ def has_delivery_channel(identity: str, address: str) -> bool:
     The origin depends on the answer and has to be decided before the link is
     minted, because the origin is baked into the record. Transmitted over a
     channel the assistant can read means ORIGIN_CHAT; printed on the admin's
-    screen for a human to carry means ORIGIN_OPERATOR, exactly as
+    screen for a human to carry means ORIGIN_OPERATOR, the same as
     `agentbox-portal link` does.
 
     Erring is safe in one direction only: if this says yes and delivery then

@@ -57,7 +57,7 @@ class BridgeUnreachable(Exception):
 
     A distinct condition from an empty queue, and it has to stay distinct. The
     defect this portal was built to fix was a queue that rendered as no rows;
-    reporting "nothing waiting" when the service is down reproduces exactly
+    reporting "nothing waiting" when the service is down reproduces
     that failure one layer up.
     """
 

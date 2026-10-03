@@ -103,7 +103,7 @@ def dispatch(name, args):
         checked = grammar.validate(proposal, _known_tools(),
                                    _known_identities())
     except grammar.RuleInvalid as exc:
-        # Deliberately a tool error rather than a stored-but-broken rule: the
+        # A tool error rather than a stored-but-broken rule: the
         # assistant can read this and try again now.
         raise ToolError(str(exc)) from None
 

@@ -4,7 +4,7 @@
 # Same property as the approval loop, and for a stronger reason: this process
 # holds MEMORY_REVIEW_TOKEN, which approves any memory proposal. If the
 # assistant could start, stop, signal or share a uid with it, the review gate
-# would be a formality. Self-approval is exactly what that gate prevents.
+# would be a formality. Self-approval is what that gate prevents.
 #
 # Install:
 #   cp cli/agentbox-portal.service ~/.config/systemd/user/
@@ -39,7 +39,7 @@ Type=simple
 # both refuse it.
 #
 # So the portal is launched under `op run --env-file` (see ExecStart), which
-# resolves the references before the process starts, exactly as deploy does.
+# resolves the references before the process starts, the same way deploy does.
 # The service-account token that authorises that resolution lives in
 # 1password.env, sourced below; a leading dash means a box without 1Password
 # still starts, with unresolved references that fail loudly rather than

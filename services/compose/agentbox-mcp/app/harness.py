@@ -130,7 +130,7 @@ def coerce(spec: dict, value):
     """Validate one field against its declared kind.
 
     Every kind either returns a value drawn from a shape the model cannot
-    choose freely, or raises. There is deliberately no passthrough kind: a
+    choose freely, or raises. There is no passthrough kind: a
     field with no contract is a field an injection can write.
     """
     kind = spec["kind"]
@@ -329,8 +329,8 @@ def run_task(name: str, text: str, transport=call_router) -> dict:
                 "carries_quoted_text": bool(task.get("carries_text")),
                 **fields}
 
-    # Deliberately no free-text fallback. Returning the model's prose on
-    # failure would hand the caller exactly the unvalidated channel this whole
+    # No free-text fallback. Returning the model's prose on
+    # failure would hand the caller the unvalidated channel this whole
     # module exists to close, and it would do it precisely when something has
     # already gone wrong.
     raise HarnessError(f"no valid answer for {name}: " + "; ".join(problems))

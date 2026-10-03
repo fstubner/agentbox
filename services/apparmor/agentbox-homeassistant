@@ -8,7 +8,7 @@
 # Home Assistant already runs with host networking, a mounted system D-Bus
 # socket, NET_ADMIN and NET_RAW. Each of those is individually defensible and
 # together they make it the most privileged container on this box, and it is
-# the one service deliberately reachable from the LAN. Turning off its last
+# the one service meant to be reachable from the LAN. Turning off its last
 # default confinement on top of that stack is a bigger step than it looks.
 #
 # `docker-default` carries no dbus rule at all, and AppArmor denies what a

@@ -120,7 +120,7 @@ def google_consent_url(state: str) -> str:
 def connector_status(identity: str) -> list[dict]:
     """What this person has connected, from configuration on disk.
 
-    Deliberately not a live probe: the bridges have no host ports, so nothing
+    Not a live probe: the bridges have no host ports, so nothing
     on this side of the socket can reach them. Whether the *credential* still
     works is a different question, answered by `agentbox doctor`, which can
     reach the containers. Saying "configured" here and meaning "healthy" would

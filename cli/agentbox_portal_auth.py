@@ -137,7 +137,7 @@ def require(role: str, capability: str, origin: str = portal.ORIGIN_EMAIL) -> No
 def _hash(secret: str) -> str:
     """Links are stored hashed, so reading this directory yields nothing usable.
 
-    A plain SHA-256 rather than a password KDF on purpose: these secrets are
+    A plain SHA-256 rather than a password KDF: these secrets are
     32 bytes from secrets.token_urlsafe, not human-chosen, so there is no
     dictionary to stretch against and no benefit worth the latency.
     """

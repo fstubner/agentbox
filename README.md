@@ -20,8 +20,9 @@ cannot make it act as somebody else.
 
 It also works for one person with no identities set up.
 
-The second badge runs the quickstart below on a fresh machine on every change.
-If these instructions stop working, it goes red.
+The second badge runs the quickstart below on a fresh machine every week and
+whenever the files it depends on change. If these instructions stop working,
+it goes red.
 
 ## What it looks like
 
