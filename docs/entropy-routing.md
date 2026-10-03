@@ -1,6 +1,6 @@
 # The actual big-brain lever: entropy-class routing of context
 
-Verified against prior art (soft-token-prior-art.md, frontier-critique.md).
+Verified against prior art (soft-token-prior-art.md).
 The reframe survived contact with the literature; two of my earlier ideas did
 not. Here is the honest, sharp version.
 
