@@ -118,7 +118,8 @@ correctly by making `config.yaml` writable and watching it go red.
 text an outsider wrote — an email body is the obvious case. A small worker
 model on this host (FastContext-4B, `:1235`) was measured obeying an
 instruction embedded in tool data in 10 of 10 attempts on a memory-reconcile
-task (n=10, single task type, measured in `agentbox-evals`). Treat that as the
+task (n=10, single task type, measured in a separate evaluation harness that
+is not public). Treat that as the
 default assumption for any model in the loop, not a quirk of one worker.
 
 The practical consequence: **do not wire `/context/extract` into the assistant's

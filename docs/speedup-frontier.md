@@ -99,7 +99,8 @@ The window holds far more than the decision needs. Losslessly or quality-gated.
     independently per turn.
 14. **The eval harness is the moat.** [now] Every one of these has a quality
     knob. The reason we can push aggressively *without* dumbing the assistant is
-    that `agentbox-evals` measures the intelligence cost of each. Speculation
+    that a separate evaluation harness, kept private, measures the
+    intelligence cost of each. Speculation
     and slot-reuse are provably lossless (assert identical output); LLMLingua,
     quant, layer-skip are quality-gated by eval. The discipline is what makes
     "faster without dumber" a measurement, not a hope.
