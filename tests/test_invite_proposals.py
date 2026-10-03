@@ -57,8 +57,10 @@ def test_inviting_somebody_to_a_name_in_use_is_refused(spool):
     it is handing somebody the account."""
     with pytest.raises(spool.NameTaken):
         spool.create_invite("alex", {"alex", "sam"})
-    made = spool.create_invite("alex", {"alex", "sam"})
-    assert made["identity"] == "alex" and made["secret"]
+    # A name nobody holds. Deliberately not one of the household's own names:
+    # this assertion is that a *free* name succeeds, so it has to be free.
+    made = spool.create_invite("newcomer", {"alex", "sam"})
+    assert made["identity"] == "newcomer" and made["secret"]
 
 
 def test_the_check_cannot_be_forgotten(spool):
@@ -131,16 +133,18 @@ def test_the_card_will_not_offer_to_send_a_colliding_name(portal, spool):
 
 
 def test_a_draft_with_nowhere_to_go_is_not_sendable(portal, spool):
-    spool.propose("alex", "Alex")
+    spool.propose("newcomer", "Newcomer")
     card = portal.render_proposals_card()
     assert "nowhere to send" in card.lower()
     assert "value=send" not in card
 
 
 def test_an_ordinary_draft_is_sendable(portal, spool):
-    spool.propose("alex", "Alex", "alex@example.com")
+    # Not one of the household's own names: proposing a name already in use is
+    # refused on purpose, so a sendable draft has to name somebody new.
+    spool.propose("newcomer", "Newcomer", "newcomer@example.com")
     card = portal.render_proposals_card()
-    assert "value=send" in card and "alex@example.com" in card
+    assert "value=send" in card and "newcomer@example.com" in card
 
 
 # --- delivery targets come from the draft, not from the identity map ----------

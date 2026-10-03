@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -231,7 +232,7 @@ def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
     spec.loader.exec_module(cli)
 
     monkeypatch.setattr(cli, "read_env_file",
-                        lambda p: {"AGENTBOX_IDENTITIES": "alex:a,sam:b,sam:c",
+                        lambda p: {"AGENTBOX_IDENTITIES": "alex:a,sam:b,taylor:c",
                                    "GOOGLE_BRIDGE_TOKEN_ALEX": "t"})
     monkeypatch.setattr(cli, "unit_environment", lambda unit: {
         "agentbox-portal": {"AGENTBOX_ADMINS": "alex",
@@ -242,12 +243,16 @@ def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
 
     assert cli.identity_list() == 0
     out = capsys.readouterr().out
-    assert "alex      admin" in out
-    assert "sam        member" in out
+    # Matched on whitespace rather than an exact column, which depended on the
+    # longest name happening to be five characters.
+    assert re.search(r"alex\s+admin", out)
+    assert re.search(r"sam\s+member", out)
     # Each person's actual route in, not a global claim about SMTP.
     assert "email" in out and "Discord DM" in out
     # And the one who has neither is named rather than left to be discovered.
-    assert "sam cannot request a link themselves" in out
+    # A third, distinct name: this assertion needs somebody with no route at
+    # all, and both of the others have one.
+    assert "taylor cannot request a link themselves" in out
 
 
 def test_identity_list_does_not_invent_a_route(monkeypatch, capsys):
