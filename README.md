@@ -1,10 +1,20 @@
 # Agentbox
 
+[![ci](https://github.com/fstubner/agentbox/actions/workflows/ci.yml/badge.svg)](https://github.com/fstubner/agentbox/actions/workflows/ci.yml)
+[![clean-room onboarding](https://github.com/fstubner/agentbox/actions/workflows/onboarding.yml/badge.svg)](https://github.com/fstubner/agentbox/actions/workflows/onboarding.yml)
+[![licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
+
 A self-hosted, privacy-first AI assistant for a household running on local hardware. Agentbox runs a local LLM behind a gateway with narrow, policy-gated levers: task management, calendar/email bridges, and role-routed worker models.
 
 Two people share it, with a shared household plane (joint tasks, shopping, shared scheduling) and isolated private planes (private mail, personal calendar, personal memory). Identity is bound to the authenticated session, never passed as an LLM tool argument.
 
 A single-operator deployment is fully supported without configuring multiple identities.
+
+The second badge is the one worth clicking. It follows this README's quickstart,
+step by step, on a machine that has never seen this repository — installs the
+prerequisites, runs setup, validates, and deploys a service with no secrets
+configured. It passes or the badge goes red, so the instructions below are
+checked rather than asserted.
 
 ---
 
@@ -114,3 +124,12 @@ Deploy any service stack with ephemeral secret injection:
 ## License
 
 Apache-2.0
+
+## Licence
+
+Dual licensed under either of
+
+- MIT ([LICENSE-MIT](LICENSE-MIT))
+- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.

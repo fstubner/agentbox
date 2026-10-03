@@ -1,11 +1,20 @@
 # Agentbox
 
-> **Reconstructed from the repository. Users answered 2026-08-18; Success and
-> the MVP cut were reviewed and framed by the household 2026-08-19.**
-> Every claim below is cited to a file in this repo or to a decision recorded
-> here. Nothing was invented to fill a heading. Written by the same agent that
-> built much of the system it describes, so the status markers in Success are
-> measurements to re-check, not a standing guarantee.
+> **This is the product contract, and every line under Success carries its
+> real status.** *Met* means verified against a running system. *Partial*
+> means true for some of the people it names and not others. *Not yet* means
+> the mechanism exists and nothing has used it in anger.
+>
+> Those markers are the point, not an apology. A product document whose claims
+> cannot be checked is worth less than one that says plainly which of them are
+> still unproven — so the uncomfortable lines are left in, dated, and cited.
+> Every claim here points at a file in this repository or at a decision
+> recorded in it. Nothing was invented to fill a heading.
+>
+> Written largely by the AI assistant that built much of the system it
+> describes, with the household answering the questions only they could. That
+> is why the status markers are measurements to re-check rather than a standing
+> guarantee, and why scope decisions are dated where they were taken.
 
 ## Purpose
 
