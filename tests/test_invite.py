@@ -173,7 +173,7 @@ def test_only_personal_connectors_can_be_chosen(inv):
 
 
 def test_completion_requires_a_submitted_invite():
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert 'record.get("used_at")' in block
     assert 'record.get("completed_at")' in block
@@ -181,7 +181,7 @@ def test_completion_requires_a_submitted_invite():
 
 def test_completion_drops_the_secret_when_done():
     """Spent credentials should not linger on disk."""
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert 'record.pop("secret", None)' in block
 
@@ -189,7 +189,7 @@ def test_completion_drops_the_secret_when_done():
 def test_vikunja_provisioning_uses_the_container_cli():
     """Registration is disabled on this deployment, so the HTTP API cannot
     create her account — and that privilege is why the web page has none."""
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def provision_vikunja_user", 1)[1].split("\ndef ", 1)[0]
     assert '"docker", "exec"' in block
     assert '"user", "create"' in block
@@ -202,7 +202,7 @@ def test_consent_is_the_only_part_that_is_not_automated():
     everything *after* consent is ours to do, and printing it as instructions
     was stopping at the hard part. She consents in the page; the exchange and
     the bridge are automatic."""
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert "exchange_oauth_code" in block
     assert "provision_google_bridge" in block
@@ -246,7 +246,7 @@ def test_the_callback_verifies_state_against_the_invite(inv):
 
 
 def test_the_exchange_lives_on_the_operator_side():
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_accounts.py")
     assert "oauth2.googleapis.com/token" in source
     block = source.split("def exchange_oauth_code", 1)[1].split("\ndef ", 1)[0]
     assert "GOOGLE_CLIENT_SECRET" in block
@@ -255,7 +255,7 @@ def test_the_exchange_lives_on_the_operator_side():
 def test_a_provisioned_bridge_holds_only_that_persons_token():
     """The reason for a second container rather than a second credential in the
     first one."""
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_accounts.py")
     block = source.split("def provision_google_bridge", 1)[1].split("\ndef ", 1)[0]
     assert "GOOGLE_REFRESH_TOKEN={refresh_token}" in block
     # A fresh bridge token per identity, not the shared one.
@@ -264,7 +264,7 @@ def test_a_provisioned_bridge_holds_only_that_persons_token():
 
 def test_a_new_identity_gets_no_writable_calendar():
     """Inheriting the operator's would let her assistant write to his."""
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_accounts.py")
     block = source.split("def provision_google_bridge", 1)[1].split("\ndef ", 1)[0]
     assert '"GOOGLE_ALLOWED_WRITE_CALENDAR_ID="' in block
 
@@ -289,7 +289,7 @@ def test_the_identity_bridge_publishes_no_host_port():
 def test_missing_consent_is_reported_rather_than_silently_shared():
     """If she skipped the Google step she falls back to the shared bridge —
     correct for shared services, wrong for mail, so it must be said."""
-    source = code_of(REPO / "cli" / "agentbox")
+    source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert "did not finish the consent" in block
     assert "wrong for mail" in block

@@ -372,7 +372,7 @@ def render_connectors(identity: str, role: str, flash: str,
     return page("Capabilities — Agentbox",
                 chrome(identity, role, origin, "/capabilities", "<h1>Capabilities</h1>"))
 
-def _ago(seconds: int) -> str:
+def time_ago(seconds: int) -> str:
     if seconds < 60:
         return f"{seconds}s ago"
     if seconds < 3600:

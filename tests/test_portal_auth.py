@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import code_of
+from conftest import code_of, portal_code
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -409,7 +409,7 @@ def test_startup_warns_when_links_cannot_be_delivered(portal):
     source = inspect.getsource(portal.cmd_serve)
     # Addresses configured with no way to deliver to them.
     assert 'SETTINGS.value("identity_emails")' in source
-    assert 'not SETTINGS.value("smtp_host")' in source
+    assert 'not config.SETTINGS.value("smtp_host")' in source
     assert "never sent" in source
     # And it names the two ways out, since the page cannot.
     assert "Discord" in source
@@ -584,7 +584,7 @@ def test_the_signed_out_page_never_echoes_the_url(portal):
 
 
 def test_requesting_a_link_redirects_without_a_message_parameter(portal):
-    source = code_of(REPO / "cli" / "agentbox-portal")
+    source = portal_code()
     block = source.split("def _request_link")[1].split("def ")[0]
     assert '"/?sent=1"' in block
     assert "urlencode({\"m\"" not in block
@@ -598,8 +598,8 @@ def test_no_page_renders_free_text_from_the_url(portal):
     signed-in page greeted the operator with a sentence cut mid-word — "…so
     ask now if y" — still there on every refresh, long after the thing it
     described had been finished."""
-    from conftest import code_of
-    source = code_of("cli/agentbox-portal")
+    from conftest import portal_code
+    source = portal_code()
     assert 'urlencode({"m"' not in source
     # The only thing read from the URL is a short key, looked up in a table.
     assert "flash_text(" in source
@@ -616,8 +616,8 @@ def test_every_key_the_portal_redirects_to_actually_exists(portal):
     happened — the silent-success failure this project keeps hunting."""
     import re
 
-    from conftest import code_of
-    source = code_of("cli/agentbox-portal")
+    from conftest import portal_code
+    source = portal_code()
     used = set(re.findall(r'[?&]m=([a-z_]+)"', source))
     used |= set(re.findall(r'message = "([a-z_]+)"', source))
     unknown = sorted(k for k in used if k not in portal.FLASHES)

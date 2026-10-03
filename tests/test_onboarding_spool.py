@@ -20,7 +20,7 @@ import time
 
 import pytest
 from conftest import REPO_ROOT as REPO
-from conftest import code_of
+from conftest import portal_code
 
 GOOD = "0123456789abcdef"          # secrets.token_hex(8) shape
 OTHER = "fedcba9876543210"
@@ -48,7 +48,7 @@ def spool(tmp_path, monkeypatch):
 
 @pytest.fixture
 def cli(tmp_path, monkeypatch, spool):
-    module = load("agentbox_cli", "agentbox", tmp_path, monkeypatch)
+    module = load("agentbox_invites_under_test", "agentbox_invites.py", tmp_path, monkeypatch)
     (tmp_path / "invites").mkdir(exist_ok=True)
     return module
 
@@ -263,7 +263,7 @@ def test_the_card_warns_when_the_google_step_was_skipped(portal, tmp_path):
 
 def test_the_portal_asks_and_does_not_act(portal):
     """The whole point of the split. Nothing on this path may run docker."""
-    body = code_of("cli/agentbox-portal").split("def _onboard")[1][:2000]
+    body = portal_code().split("def _onboard")[1][:2000]
     assert "agentbox_onboarding.request" in body
     for forbidden in ("docker", "subprocess", "invite_complete", "compose"):
         assert forbidden not in body, forbidden

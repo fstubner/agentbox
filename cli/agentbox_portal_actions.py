@@ -1,0 +1,393 @@
+"""Admin and invite actions, mixed into PortalHandler.
+
+Loaded by cli/agentbox-portal, never imported on its own. Other portal
+names are reached through `portal`, the portal module itself.
+"""
+from __future__ import annotations
+
+import hmac
+import html
+import json
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+# The portal that loaded this file, which registers it as "<portal>.<part>".
+portal = sys.modules[__name__.rpartition(".")[0]]
+
+__all__ = [
+    "PortalActions",
+]
+
+
+class PortalActions:
+    """Admin and invite actions, mixed into PortalHandler."""
+
+    def _invite(self, session, form) -> None:
+        """Add a person and send them a sign-in link.
+
+        Creating an identity is granting access, so this is withheld from
+        agent- and chat-minted links exactly like editing the admin list: the
+        assistant being able to invite somebody would be the assistant being
+        able to decide who lives here.
+
+        The link is minted ORIGIN_CHAT, not ORIGIN_OPERATOR.
+
+        The first version reasoned that an invite is an admin handing access
+        to somebody they know, the same as `agentbox-portal link`. The
+        difference it missed is the one that matters: the CLI prints a link
+        for a human to hand over, while this one is *transmitted* — by email,
+        or into a Discord DM — over channels the assistant can read. With no
+        browser nonce to bind, the downgrade in `redeem_link` never fires, so
+        an operator-privileged link sat in a mailbox the assistant holds a
+        read tool for, able to approve memories and disconnect accounts.
+
+        This module's own docstring states the rule it broke: "Whoever merely
+        reads the link cannot use it. That holds for email, for Discord, for a
+        screenshot in a chat log." The sibling path in agentbox-approvals
+        already minted ORIGIN_CHAT for exactly this reason.
+
+        Chat origin costs the invitee nothing they need on arrival: they can
+        read everything and request a browser-bound link themselves, which is
+        the only way anyone should be getting write access anyway.
+        """
+        why = portal.refusal(session["role"], "ops:invite",
+                      session.get("origin", portal.ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        name = (form.get("name") or [""])[0].strip()
+        address = (form.get("email") or [""])[0].strip()
+
+        def fail(message: str) -> None:
+            self._send(400, portal.render_admin(
+                session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
+                invite_error=message))
+
+        try:
+            name = portal.agentbox_settings.clean_names(name)
+            address = portal.agentbox_settings.clean_email_or_blank(address)
+        except portal.agentbox_settings.InvalidSetting as exc:
+            return fail(str(exc))
+        if not name or "," in name:
+            return fail("Give one name, for example sam.")
+
+        # Append rather than replace. Saving the whole map from a two-field
+        # form would silently drop everybody not mentioned in it.
+        if address:
+            existing = portal.email_map()
+            existing = {a: n for a, n in existing.items() if n != name}
+            existing[address.lower()] = name
+            pairs = ",".join(f"{n}:{a}" for a, n in sorted(existing.items()))
+            try:
+                portal.SETTINGS.save({"identity_emails": pairs})
+            except portal.agentbox_settings.InvalidSetting as exc:
+                return fail(str(exc))
+
+        # Downgrade only what actually travels. Minting ORIGIN_CHAT
+        # unconditionally closed the mailbox hole but took the hand-over path
+        # with it: on a box with no delivery channel configured — which is
+        # this one — every invite produced a link that could not approve a
+        # memory, so a new member could not do the first thing the product
+        # promises them without an operator opening a terminal.
+        travels = portal.has_delivery_channel(name, address)
+        try:
+            url, _ = portal.mint_link(
+                name, portal.PUBLIC_URL,
+                origin=portal.ORIGIN_CHAT if travels else portal.ORIGIN_OPERATOR)
+        except RuntimeError as exc:
+            return fail(str(exc))
+
+        if portal.deliver_link(name, address, url):
+            self._redirect("/admin?m=invite_sent")
+            return
+        # Nowhere to send it. Showing the admin the link is the honest
+        # fallback — the same act as the terminal command, and carrying the
+        # same origin as it, since a link handed over by a person has not
+        # passed through a channel anything else can read. The alternative is
+        # telling somebody an invite was sent when it was not.
+        self._send(200, portal.render_admin(
+            session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
+            invite_error=f"{name} has no way to receive a link yet. Hand this "
+                         f"over directly — single use, and it expires: {url}"))
+
+
+    def _propose_invite(self, form) -> None:
+        """Let the assistant draft an invitation. Sends nothing.
+
+        Modelled on _agent_link and deliberately weaker. That one mints for
+        whoever is asking and takes no identity argument, because naming a
+        person is exactly what an injected instruction would do. This one
+        *must* name somebody — an invitation is for a person who is not the
+        caller and has no session — so it cannot be made safe the same way.
+
+        What makes it safe instead is that it does not act. It writes a draft
+        that appears on Operations, where a human decides. An email saying
+        "add alex@example.com to your assistant" therefore produces something
+        an admin reads and rejects, rather than a stranger with an account.
+        """
+        provided = self.headers.get("X-Agentbox-Portal-Token", "")
+        if not portal.AGENT_TOKEN or not provided or not hmac.compare_digest(
+                provided, portal.AGENT_TOKEN):
+            self._send(403, portal.page("No", "<h1>No</h1>"))
+            return
+        # `account_name`, deliberately not `identity`: this names an account
+        # that does not exist yet, not somebody to act as. /agent/link takes
+        # the latter and is the reason that word is load-bearing here.
+        identity = (form.get("account_name") or [""])[0].strip().lower()
+        if not portal.agentbox_onboarding.IDENTITY_NAME.match(identity):
+            self._send(400, portal.page("No", "<h1>a name is required</h1>"))
+            return
+        address = (form.get("email") or [""])[0].strip()
+        user_id = (form.get("discord_user_id") or [""])[0].strip()
+        if not address and not user_id:
+            self._send(400, portal.page(
+                "No", "<h1>an email address or a Discord id is required</h1>"))
+            return
+        # Refused loudly rather than queued quietly. A flood here does not buy
+        # privilege — drafts do nothing — but it buys an admin who stops
+        # reading, and the reading is the whole safeguard.
+        if len(portal.agentbox_onboarding.proposals()) >= portal.MAX_PENDING_PROPOSALS:
+            self._send(429, portal.page(
+                "Slow down",
+                f"<h1>{portal.MAX_PENDING_PROPOSALS} invitations are already waiting "
+                f"for the household to decide on.</h1>"))
+            return
+        draft = portal.agentbox_onboarding.propose(
+            identity, (form.get("display_name") or [""])[0],
+            address, user_id, proposed_by="assistant")
+        body = json.dumps({
+            "drafted": True,
+            "id": draft["id"],
+            "note": "Nothing has been sent. It is waiting for an admin on the "
+                    "Operations page.",
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _create_invite(self, session, form) -> None:
+        """Create an invite and send whoever it names the form link.
+
+        Withheld from downgraded origins under `ops:invite`, like every other
+        door into deciding who lives here. That matters more here than on the
+        draft path: this one produces the credential, where a draft produces
+        only something to read.
+
+        The name check is not cosmetic. Completing an invite re-provisions
+        that identity's bridge with whoever answered the form, so an invite
+        naming somebody who already lives here is not an invitation — it hands
+        them that account. `create_invite` takes the existing names as a
+        required argument so this cannot be forgotten.
+        """
+        why = portal.refusal(session["role"], "ops:invite",
+                      session.get("origin", portal.ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        def fail(message: str) -> None:
+            self._send(200, portal.render_admin(
+                session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
+                new_invite_error=message))
+
+        name = (form.get("account_name") or [""])[0].strip().lower()
+        address = (form.get("email") or [""])[0].strip()
+        user_id = (form.get("discord_user_id") or [""])[0].strip()
+        try:
+            record = portal.agentbox_onboarding.create_invite(
+                name, portal.known_identities())
+        except portal.agentbox_onboarding.NameTaken:
+            return fail(f"Somebody called {html.escape(name)} already lives "
+                        f"here. Inviting them to that name would hand over "
+                        f"the account rather than create one.")
+        except portal.agentbox_onboarding.AlreadyInvited:
+            return fail(f"{html.escape(name)} already has an invite waiting, "
+                        f"and its link is below. A second one would be a "
+                        f"second credential for the same person.")
+        except ValueError as exc:
+            return fail(html.escape(str(exc)))
+
+        url = portal.agentbox_onboarding.invite_url(
+            record, portal.invite_public_host(), portal.INVITE_PORT)
+        channels = portal.deliver_invite(
+            {"identity": name, "display_name": name, "address": address,
+             "discord_user_id": user_id}, url)
+        # Always a redirect, even when there is nothing to deliver by. This
+        # used to render the link straight from the POST, which on a box with
+        # no delivery channel is every invite — so a refresh re-submitted and
+        # minted another live credential. The link is not lost by redirecting:
+        # the card below lists every outstanding invite and its link, which an
+        # admin who closed the tab could not get back before.
+        self._redirect("/admin?m="
+                       + ("invite_created" if channels else "invite_undelivered"))
+
+    def _proposal(self, session, form) -> None:
+        """Send or discard an invitation the assistant drafted.
+
+        Withheld from downgraded origins under `ops:invite`, which matters
+        more here than anywhere: without it the assistant could mint itself a
+        link, open its own draft, and approve it — the approval step would be
+        decoration.
+        """
+        why = portal.refusal(session["role"], "ops:invite",
+                      session.get("origin", portal.ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        draft = portal.agentbox_onboarding.proposal(
+            (form.get("id") or [""])[0].strip())
+        if not draft:
+            self._redirect("/admin?m=proposal_gone")
+            return
+        if (form.get("action") or [""])[0] == "discard":
+            portal.agentbox_onboarding.discard_proposal(draft)
+            self._redirect("/admin?m=proposal_discarded")
+            return
+
+        try:
+            record = portal.agentbox_onboarding.create_invite(
+                str(draft.get("identity", "")), portal.known_identities())
+        except portal.agentbox_onboarding.NameTaken:
+            # Left in place rather than discarded: the admin should see what
+            # was asked for, not have it vanish with a message.
+            self._redirect("/admin?m=proposal_name_taken")
+            return
+        except ValueError:
+            self._redirect("/admin?m=proposal_gone")
+            return
+
+        url = portal.agentbox_onboarding.invite_url(
+            record, portal.invite_public_host(), portal.INVITE_PORT)
+        channels = portal.deliver_invite(draft, url)
+        portal.agentbox_onboarding.discard_proposal(draft)
+        if channels:
+            self._redirect("/admin?m=" + urllib.parse.quote(
+                f"Invitation sent by {' and '.join(channels)}."))
+            return
+        # Nowhere to send it. The same honest fallback the invite form uses,
+        # rather than claiming a delivery that did not happen.
+        self._send(200, portal.render_admin(
+            session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
+            invite_error=f"Nothing is configured to carry that. Hand this "
+                         f"over directly \u2014 single use, and it expires: "
+                         f"{url}"))
+
+    def _onboard(self, session, form) -> None:
+        """Ask for a filled-in invite to be completed.
+
+        Withheld from agent- and chat-minted links under the same capability
+        as inviting, and for the same reason: this is that act finished. An
+        invite decides who lives here; completing it hands them a credential
+        of their own. If the assistant could do either, it could decide who
+        the household is.
+
+        This writes one file and returns. Whether the invite is actually
+        completable is `agentbox invite drain`'s judgement — it re-reads the
+        record itself — and a second copy of those rules here would be one
+        nobody updates when they change. The checks below are only enough to
+        keep the page honest about what it just did.
+        """
+        why = portal.refusal(session["role"], "ops:invite",
+                      session.get("origin", portal.ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+
+        token_id = (form.get("token_id") or [""])[0].strip()
+        # Arrives from a form and is about to become a filename. Rejected here
+        # so a malformed id is a redirect rather than a ValueError unwinding
+        # through the handler thread — the failure mode the link ids had.
+        if not portal.agentbox_onboarding.TOKEN_ID.match(token_id):
+            self._redirect("/admin?m=onboarding_unknown")
+            return
+        if not any(i["id"] == token_id for i in portal.submitted_invites()):
+            self._redirect("/admin?m=onboarding_unknown")
+            return
+        if portal.agentbox_onboarding.already_requested(token_id):
+            self._redirect("/admin?m=onboarding_duplicate")
+            return
+        try:
+            portal.agentbox_onboarding.request(
+                token_id, session["identity"],
+                session.get("origin", portal.ORIGIN_AGENT))
+        except (OSError, ValueError):
+            # Telling somebody their request was filed when it was not is the
+            # same lie the invite path refuses to tell about delivery.
+            self._redirect("/admin?m=onboarding_unknown")
+            return
+        self._redirect("/admin?m=onboarding_requested")
+
+    def _save_settings(self, session, form) -> None:
+        """Write the household settings, or re-render the form with errors.
+
+        Errors are rendered from this POST rather than carried through a
+        redirect, because a validation message quotes what the person typed.
+        Flash messages travel in the URL as *keys* into a fixed table
+        precisely so no one can craft a link that shows another admin an
+        arbitrary sentence, and echoing input through `?m=` would give that
+        back. Re-rendering also keeps the rest of the form filled in.
+        """
+        why = portal.refusal(session["role"], "ops:write_settings",
+                      session.get("origin", portal.ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+        submitted = {setting.key: (form.get(setting.key) or [""])[0]
+                     for setting in portal.agentbox_settings.SETTINGS}
+        errors: dict[str, str] = {}
+        clear = frozenset(
+            setting.key for setting in portal.agentbox_settings.SETTINGS
+            if setting.secret and (form.get(f"clear_{setting.key}") or [""])[0])
+        # `clean_admins` refuses an empty list, which stops the box being
+        # left with no administrator. It validates shape only, so `mai` for
+        # `sam` passes it and locks everyone out just as thoroughly — the
+        # same unrecoverable state by a likelier route.
+        wanted = {n.strip() for n in submitted.get("admins", "").split(",")
+                  if n.strip()}
+        unknown = sorted(wanted - portal.known_identities(also=submitted))
+        if unknown:
+            self._send(400, portal.render_admin(
+                session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
+                errors={"admins": (
+                    f"nobody here is called {', '.join(unknown)}. Invite them "
+                    f"first, or check the spelling — an admin list naming "
+                    f"only people who do not exist locks this page for "
+                    f"everyone, and cannot be undone from it.")},
+                submitted=submitted))
+            return
+        try:
+            changed = portal.SETTINGS.save(submitted, clear=clear)
+        except portal.agentbox_settings.InvalidSetting as exc:
+            # The store validates everything before writing anything, so a
+            # rejection here means nothing was stored — the form is showing
+            # the truth when it shows what was typed.
+            errors[exc.key] = str(exc)
+            self._send(400, portal.render_admin(
+                session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
+                errors=errors, submitted=submitted))
+            return
+        self._redirect("/admin?m="
+                       + ("settings_saved" if changed else "settings_unchanged"))
+
+    def _save_household(self, session, form) -> None:
+        why = portal.refusal(session["role"], "ops:write_household",
+                      session.get("origin", portal.ORIGIN_AGENT))
+        if why:
+            self._redirect(f"/admin?m={why}")
+            return
+        raw = (form.get("entities") or [""])[0]
+        try:
+            portal.HOUSEHOLD.save(raw)
+        except portal.agentbox_household.InvalidEntity as exc:
+            self._send(400, portal.render_admin(
+                session["identity"], "", session.get("origin", portal.ORIGIN_AGENT),
+                household_error=str(exc), household_submitted=raw))
+            return
+        self._redirect("/admin?m=household_saved")

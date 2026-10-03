@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import code_of
+from conftest import code_of, portal_code
 from test_portal_auth import load_portal
 
 REPO = Path(__file__).resolve().parent.parent
@@ -89,14 +89,14 @@ def test_a_changed_source_hash_is_stale(status, monkeypatch):
 
 
 def test_there_is_exactly_one_definition_of_staleness():
-    """cli/agentbox must delegate rather than carry its own copy.
+    """The CLI must delegate rather than carry its own copy.
 
     The first version of the status module wrote a second source_sha that
     hashed git history instead of file contents, and reported every service on
     the box as stale. Two implementations of "is this current" is the bug.
     """
-    cli = code_of("cli/agentbox")
-    assert "_status().source_sha(service)" in cli
+    cli = code_of("cli/agentbox_policy.py")
+    assert "agentbox_status.source_sha(service)" in cli
     assert "hashlib.sha256()" not in cli.split("def source_sha")[1][:400]
 
 
@@ -221,8 +221,8 @@ def test_an_undeliverable_invite_shows_the_link_rather_than_claiming_success(por
     must answer identically for registered and unregistered addresses — so
     this is one of the few places it can be said out loud.
     """
-    source = code_of("cli/agentbox-portal")
-    invite = source.split("def _invite")[1][:2000]
+    source = portal_code()
+    invite = source.split("def _invite(")[1].split("\n    def ")[0]
     assert "deliver_link" in invite
     assert "has no way to receive a link yet" in invite
 
@@ -344,7 +344,7 @@ def test_one_definition_of_where_a_link_can_go(portal):
     """has_delivery_channel and deliver_link each spelled out the same
     conditions. They had to agree or B1 reopened, and nothing kept them in
     sync."""
-    source = code_of("cli/agentbox-portal")
+    source = portal_code()
     assert "delivery_channels(identity, address)" in source
     body = source.split("def deliver_link")[1][:900]
     assert "delivery_channels" in body

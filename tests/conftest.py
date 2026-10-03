@@ -18,11 +18,18 @@ that one" — assert on `code_of(...)` rather than raw text.
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# The CLI is split into sibling modules under cli/. Tests import them by
+# name, the same way cli/agentbox does.
+CLI_DIR = REPO_ROOT / "cli"
+if str(CLI_DIR) not in sys.path:
+    sys.path.insert(0, str(CLI_DIR))
 
 
 def strip_comments(text: str) -> str:
@@ -87,3 +94,13 @@ def code_of(path: str | Path) -> str:
 def code():
     """Usage: `code("cli/agentbox")` -> executable text only."""
     return code_of
+
+
+def portal_code() -> str:
+    """The portal's executable text across cli/agentbox-portal and its parts.
+
+    The portal is one program split over several files, so an assertion about
+    "the portal" has to see all of them.
+    """
+    files = [CLI_DIR / "agentbox-portal", *sorted(CLI_DIR.glob("agentbox_portal_*.py"))]
+    return "\n".join(code_of(f) for f in files)

@@ -295,7 +295,7 @@ def test_a_new_entity_is_not_an_event(monkeypatch):
 
 def _load_cli():
     loader = importlib.machinery.SourceFileLoader(
-        "agentbox_cli_eval", str(REPO / "cli" / "agentbox"))
+        "agentbox_cli_eval", str(REPO / "cli" / "agentbox_rules.py"))
     spec = importlib.util.spec_from_loader("agentbox_cli_eval", loader)
     module = importlib.util.module_from_spec(spec)
     sys.modules["agentbox_cli_eval"] = module

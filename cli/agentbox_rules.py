@@ -1,20 +1,16 @@
-"""agentbox_rules — standing rules and proactive automation management.
+"""Listing, approving and removing standing rules.
 
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 200 LOC)
-- Preserves exact fingerprinting, approval file format, output text, and exit codes
+Approvals are written to the operator-owned policy mount and pin a fingerprint
+of each rule's executing fields, so an edited rule stops firing.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-from collections.abc import Callable
 from pathlib import Path
 
-OK = "OK"
-WARN = "WARN"
-FAIL = "FAIL"
+from agentbox_common import FAIL, OK, WARN, report
 
 RULES_DIR = Path(os.environ.get(
     "AGENTBOX_RULES_DIR",
@@ -28,13 +24,6 @@ RULES_APPROVED_PATH = Path(os.environ.get(
 # identical to evaluator.FINGERPRINT_FIELDS — tests/test_rules_evaluator.py
 # computes both over the same rule and fails on drift.
 RULE_FINGERPRINT_FIELDS = ("name", "identity", "when", "if", "do")
-
-
-def _rep(report_fn: Callable[[str, str], None] | None, level: str, msg: str) -> None:
-    if report_fn:
-        report_fn(level, msg)
-    else:
-        print(f"[{level.lower()}] {msg}")
 
 
 def rule_fingerprint(record: dict) -> str:
@@ -116,8 +105,7 @@ def rules_list(rules_dir: Path | None = None, approved_path: Path | None = None)
 
 def rules_decide(name: str, activate: bool,
                  rules_dir: Path | None = None,
-                 rules_approved_path: Path | None = None,
-                 report_fn: Callable[[str, str], None] | None = None) -> int:
+                 rules_approved_path: Path | None = None) -> int:
     """Approve or deactivate one rule.
 
     Approval is an entry in the operator-owned approvals file, pinning a
@@ -138,12 +126,12 @@ def rules_decide(name: str, activate: bool,
             _write_rule_approvals(entries, rules_approved_path)
         except OSError as exc:
             target = rules_approved_path or RULES_APPROVED_PATH
-            _rep(report_fn, FAIL, f"could not write {target}: {exc}")
+            report(FAIL, f"could not write {target}: {exc}")
             return 1
-        _rep(report_fn, OK, f"{'activated' if activate else 'deactivated'} rule "
+        report(OK, f"{'activated' if activate else 'deactivated'} rule "
                             f"'{name}'")
         if activate:
-            _rep(report_fn, WARN, "this rule now runs unattended, as "
+            report(WARN, "this rule now runs unattended, as "
                                   f"{record.get('identity')}, until deactivated. If "
                                   f"the rule file changes in any way, the approval is "
                                   f"void and it stops firing.")
@@ -154,21 +142,20 @@ def rules_decide(name: str, activate: bool,
             live = ("schedule", "homeassistant")
             source = str((record.get("when") or {}).get("source", ""))
             if source in live:
-                _rep(report_fn, OK, f"'{source}' events are live — this rule can fire "
+                report(OK, f"'{source}' events are live — this rule can fire "
                                     f"within a minute or two of matching")
             else:
-                _rep(report_fn, WARN, f"'{source}' events are NOT wired up yet (live: "
+                report(WARN, f"'{source}' events are NOT wired up yet (live: "
                                       f"{', '.join(live)}), so this rule is recorded "
                                       f"but cannot fire until that source lands")
         return 0
-    _rep(report_fn, FAIL, f"no rule named '{name}'")
+    report(FAIL, f"no rule named '{name}'")
     return 1
 
 
 def rules_remove(name: str,
                  rules_dir: Path | None = None,
-                 rules_approved_path: Path | None = None,
-                 report_fn: Callable[[str, str], None] | None = None) -> int:
+                 rules_approved_path: Path | None = None) -> int:
     for record in _rules(rules_dir, rules_approved_path):
         if record.get("name") == name:
             # The approval is what stops it firing, so revoke that first and
@@ -179,12 +166,12 @@ def rules_remove(name: str,
                 _write_rule_approvals(entries, rules_approved_path)
             try:
                 Path(record["_path"]).unlink()
-                _rep(report_fn, OK, f"removed rule '{name}'")
+                report(OK, f"removed rule '{name}'")
             except OSError:
-                _rep(report_fn, OK, f"revoked approval for '{name}'; it cannot fire")
-                _rep(report_fn, WARN, f"the proposal file remains at "
+                report(OK, f"revoked approval for '{name}'; it cannot fire")
+                report(WARN, f"the proposal file remains at "
                                       f"{record['_path']} (owned by the gateway) — "
                                       f"harmless, and listed as inactive")
             return 0
-    _rep(report_fn, FAIL, f"no rule named '{name}'")
+    report(FAIL, f"no rule named '{name}'")
     return 1

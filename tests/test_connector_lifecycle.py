@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import code_of
+from conftest import code_of, portal_code
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -43,7 +43,7 @@ def cli(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTBOX_PORTAL_DIR", str(tmp_path / "portal"))
     monkeypatch.setenv("AGENTBOX_ENV_DIR", str(tmp_path / "env"))
     (tmp_path / "env").mkdir(parents=True, exist_ok=True)
-    return _load("agentbox_cli", "agentbox")
+    return _load("agentbox_accounts_under_test", "agentbox_accounts.py")
 
 
 # --- consent binding -----------------------------------------------------------
@@ -55,16 +55,16 @@ def test_consent_state_is_bound_to_the_identity(portal):
     Without this, whoever's Google account Agentbox ends up reading would be
     the attacker's choice rather than the user's.
     """
-    assert portal._consent_state("alex") != portal._consent_state("sam")
-    assert portal._consent_state("alex") == portal._consent_state("alex")
+    assert portal.consent_state("alex") != portal.consent_state("sam")
+    assert portal.consent_state("alex") == portal.consent_state("alex")
 
 
 def test_consent_state_survives_a_restart(portal, tmp_path, monkeypatch):
     """Persisted, so a restart between consent and callback does not strand
     the user mid-flow with no way back."""
-    first = portal._consent_state("sam")
+    first = portal.consent_state("sam")
     reloaded = _load("agentbox_portal2", "agentbox-portal")
-    assert reloaded._consent_state("sam") == first
+    assert reloaded.consent_state("sam") == first
 
 
 def test_consent_state_is_not_derivable_from_the_path(portal):
@@ -80,15 +80,15 @@ def test_consent_state_is_not_derivable_from_the_path(portal):
     old_derivation = hmac.new(
         hashlib.sha256(str(portal.STATE.resolve()).encode()).hexdigest().encode(),
         b"google:sam", hashlib.sha256).hexdigest()
-    assert portal._consent_state("sam") != old_derivation
+    assert portal.consent_state("sam") != old_derivation
 
 
 def test_state_secret_is_random_persisted_and_private(portal):
-    secret = portal._state_secret()
+    secret = portal.state_secret()
     path = portal.STATE / "state-secret"
     assert path.exists()
     assert path.stat().st_mode & 0o777 == 0o600
-    assert portal._state_secret() == secret          # stable across calls
+    assert portal.state_secret() == secret          # stable across calls
     assert len(secret) >= 32                          # actual entropy, not a stub
 
 
@@ -143,7 +143,7 @@ def test_completed_requests_stop_showing(portal):
 def test_the_portal_cannot_exchange_a_code_itself(portal):
     """The split is the point: this half has no client secret and no route to
     one. If it could exchange, a LAN page would mint refresh tokens."""
-    source = code_of(REPO / "cli" / "agentbox-portal")
+    source = portal_code()
     assert "CLIENT_SECRET" not in source
     assert "oauth2.googleapis.com/token" not in source
 
@@ -327,7 +327,7 @@ def test_a_failed_gateway_restart_is_reported_not_swallowed(cli, monkeypatch, ca
 def test_reconnect_from_the_lan_is_refused_with_instructions(portal):
     """Google only accepts a loopback redirect, so a consent started from a
     phone completes and lands on the phone. Say so before, not after."""
-    body = portal._wrong_origin_page("192.0.2.10")
+    body = portal.wrong_origin_page("192.0.2.10")
     assert "Finish this on the box" in body
     assert "127.0.0.1" in body
     assert "ssh -L" in body

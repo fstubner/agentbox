@@ -71,8 +71,8 @@ def test_a_link_is_spooled_for_discord_when_no_smtp_exists(portal):
 def test_the_portal_never_holds_the_discord_token(portal):
     """Same split as the OAuth code: a LAN-reachable page must not hold a
     credential that can message the household."""
-    from conftest import code_of
-    source = code_of("cli/agentbox-portal")
+    from conftest import portal_code
+    source = portal_code()
     assert "DISCORD_BOT_TOKEN" not in source
     assert "discord.com/api" not in source
 

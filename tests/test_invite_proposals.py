@@ -19,7 +19,7 @@ import sys
 
 import pytest
 from conftest import REPO_ROOT as REPO
-from conftest import code_of
+from conftest import code_of, portal_code
 
 
 def load(name, filename, tmp_path, monkeypatch):
@@ -118,7 +118,7 @@ def test_the_assistant_cannot_approve_a_draft(portal):
 
 
 def test_the_handler_checks_the_session_origin(portal):
-    body = code_of("cli/agentbox-portal").split("def _proposal")[1][:900]
+    body = portal_code().split("def _proposal")[1][:900]
     assert '"ops:invite"' in body
     assert 'session.get("origin"' in body
 
@@ -154,7 +154,7 @@ def test_delivery_does_not_consult_the_identity_lookup(portal):
     """An invitee has no registered address and no paired account — that is
     what an invitation is for. Reusing deliver_link would silently send
     nothing."""
-    body = code_of("cli/agentbox-portal").split("def deliver_invite")[1][:1400]
+    body = portal_code().split("def deliver_invite")[1][:1400]
     assert "delivery_channels" not in body
     assert "chat_account_for" not in body
     assert 'record.get("address"' in body
@@ -249,7 +249,7 @@ def test_creating_an_invite_needs_no_privilege(spool, tmp_path):
 def test_the_portal_refuses_to_invite_over_an_existing_person(portal):
     """`create_invite` takes the existing names as a required argument, and
     this is the call site that has to supply them."""
-    body = code_of("cli/agentbox-portal").split("def _create_invite")[1][:1600]
+    body = portal_code().split("def _create_invite")[1][:1600]
     assert "known_identities()" in body
     assert "NameTaken" in body
 
@@ -257,7 +257,7 @@ def test_the_portal_refuses_to_invite_over_an_existing_person(portal):
 def test_creating_an_invite_is_withheld_from_the_assistant(portal):
     """It produces the credential, where a draft produces only something to
     read — so if either belongs behind a human, it is this one."""
-    body = code_of("cli/agentbox-portal").split("def _create_invite")[1][:900]
+    body = portal_code().split("def _create_invite")[1][:900]
     assert '"ops:invite"' in body
     assert 'session.get("origin"' in body
 
@@ -284,7 +284,7 @@ def test_creating_an_invite_always_redirects(portal):
     browser refresh re-submitted and minted another live credential; three
     identical submissions produced three valid links for one person.
     """
-    body = code_of("cli/agentbox-portal").split("def _create_invite")[1][:2200]
+    body = portal_code().split("def _create_invite")[1][:2200]
     assert "self._redirect" in body
     # The success path may not render a page of its own.
     assert "invite_url" not in body.split("self._redirect")[1][:400]

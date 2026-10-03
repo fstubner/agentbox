@@ -9,7 +9,7 @@ order to keep Operations from the assistant.
 from __future__ import annotations
 
 import pytest
-from conftest import code_of
+from conftest import code_of, portal_code
 from test_portal_auth import load_portal
 
 
@@ -52,7 +52,7 @@ def test_the_admin_route_passes_the_session_origin(portal):
     route silently took the default for one of them, which is why a link the
     assistant minted could read Operations at all.
     """
-    source = code_of("cli/agentbox-portal")
+    source = portal_code()
     route = source.split('parsed.path == "/admin"')[1][:600]
     assert "ops:read_health" in route
     assert 'session.get("origin"' in route
@@ -108,8 +108,8 @@ def test_the_bot_does_not_answer_the_same_message_forever(portal):
 def test_the_portal_cli_defaults_to_operator(portal):
     """Only the bot asks for chat origin. A human at a terminal handing a link
     over directly is the case operator origin exists for."""
-    source = code_of("cli/agentbox-portal")
-    assert 'default=ORIGIN_OPERATOR' in source
+    source = portal_code()
+    assert 'default=config.ORIGIN_OPERATOR' in source
 
 
 def test_a_chat_link_is_not_told_the_assistant_made_it(portal):

@@ -214,7 +214,8 @@ def test_reaping_survives_an_unreadable_file(spool, tmp_path):
 # --- F5: the gate could not see its own worst case ----------------------------
 
 
-def test_the_size_gate_sees_extensionless_files(cli):
+def test_the_size_gate_sees_extensionless_files():
+    import agentbox_validate as cli
     """The smell checker globs *.py, so the four largest files in this repo
     were invisible to it — including the two holding every HTTP handler and
     every policy check."""
@@ -224,12 +225,17 @@ def test_the_size_gate_sees_extensionless_files(cli):
     assert "cli/agentbox_status.py" in names
 
 
-def test_the_largest_files_are_recorded(cli):
+def test_the_entry_points_stay_small():
+    """Both commands were split into modules once they passed 2,400 lines.
+    Keeping them off the exceptions list means growing either one again fails
+    validate rather than quietly raising a ceiling."""
+    import agentbox_validate as cli
     for name in ("cli/agentbox", "cli/agentbox-portal"):
-        assert name in cli.LARGE_FILES, name
+        assert name not in cli.LARGE_FILES, name
 
 
-def test_the_repo_is_within_its_own_ceilings(cli):
+def test_the_repo_is_within_its_own_ceilings():
+    import agentbox_validate as cli
     """Each recorded number is a ceiling, not a blessing: they may shrink and
     must not grow."""
     oversized, grown = cli.file_size_drift()

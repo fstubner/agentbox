@@ -1,22 +1,18 @@
-"""agentbox_identity — household identity and connector management.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 300 LOC)
-- Preserves exact environment paths, permissions (0o600), output strings, and exit codes
-"""
+"""Identities: one bearer token per person in the gateway env."""
 from __future__ import annotations
 
 import re
 import secrets
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
+
+from agentbox_common import env_dir, report
 
 IDENTITY_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
 
 
-def identity_env_path(env_dir_fn: Callable[[], str]) -> Path:
-    return Path(env_dir_fn()) / "agentbox-mcp.env"
+def identity_env_path() -> Path:
+    return Path(env_dir()) / "agentbox-mcp.env"
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -77,28 +73,17 @@ def unit_environment(unit: str) -> dict:
     return out
 
 
-def identity_list(env_dir_fn: Callable[[], str],
-                  report_fn: Callable[[str, str], None] | None = None,
-                  read_env_fn: Callable[[Path], dict[str, str]] | None = None,
-                  unit_env_fn: Callable[[str], dict] | None = None) -> int:
-    def _rep(level: str, msg: str) -> None:
-        if report_fn:
-            report_fn(level, msg)
-        else:
-            print(f"[{level.lower()}] {msg}")
+def identity_list() -> int:
 
-    read_env = read_env_fn or read_env_file
-    unit_env = unit_env_fn or unit_environment
-
-    values = read_env(identity_env_path(env_dir_fn))
+    values = read_env_file(identity_env_path())
     identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
     if not identities:
-        _rep("WARN", "no identities configured — running single-operator")
+        report("WARN", "no identities configured — running single-operator")
         print("\nAdd one with: cli/agentbox identity add <name>")
         return 0
 
-    portal = unit_env("agentbox-portal")
-    approvals = unit_env("agentbox-approvals")
+    portal = unit_environment("agentbox-portal")
+    approvals = unit_environment("agentbox-approvals")
     admins = {n.strip() for n in portal.get("AGENTBOX_ADMINS", "").split(",")
               if n.strip()}
     emails = dict(pair.split(":", 1) for pair in
@@ -139,38 +124,27 @@ def identity_list(env_dir_fn: Callable[[], str],
     return 0
 
 
-def identity_add(name: str, env_dir_fn: Callable[[], str],
-                 report_fn: Callable[[str, str], None] | None = None,
-                 read_env_fn: Callable[[Path], dict[str, str]] | None = None,
-                 write_env_fn: Callable[[Path, str, str], None] | None = None) -> int:
-    def _rep(level: str, msg: str) -> None:
-        if report_fn:
-            report_fn(level, msg)
-        else:
-            print(f"[{level.lower()}] {msg}")
-
-    read_env = read_env_fn or read_env_file
-    write_env = write_env_fn or write_env_value
+def identity_add(name: str) -> int:
 
     if not IDENTITY_NAME.match(name):
-        _rep("FAIL", "identity must be lowercase letters, digits, dash or "
+        report("FAIL", "identity must be lowercase letters, digits, dash or "
                      "underscore, starting with a letter")
         return 2
-    path = identity_env_path(env_dir_fn)
+    path = identity_env_path()
     if not path.exists():
-        _rep("FAIL", f"no gateway env at {path}; deploy agentbox-mcp first")
+        report("FAIL", f"no gateway env at {path}; deploy agentbox-mcp first")
         return 1
-    values = read_env(path)
+    values = read_env_file(path)
     identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
     if name in identities:
-        _rep("FAIL", f"identity '{name}' already exists")
+        report("FAIL", f"identity '{name}' already exists")
         return 1
 
     token = secrets.token_hex(32)
     identities[name] = token
-    write_env(path, "AGENTBOX_IDENTITIES",
+    write_env_value(path, "AGENTBOX_IDENTITIES",
               ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
-    _rep("OK", f"added identity '{name}'")
+    report("OK", f"added identity '{name}'")
 
     first_identity = len(identities) == 1
     print(f"\n  token: {token}\n")
@@ -191,31 +165,20 @@ def identity_add(name: str, env_dir_fn: Callable[[], str],
     return 0
 
 
-def identity_remove(name: str, env_dir_fn: Callable[[], str],
-                    report_fn: Callable[[str, str], None] | None = None,
-                    read_env_fn: Callable[[Path], dict[str, str]] | None = None,
-                    write_env_fn: Callable[[Path, str, str], None] | None = None) -> int:
-    def _rep(level: str, msg: str) -> None:
-        if report_fn:
-            report_fn(level, msg)
-        else:
-            print(f"[{level.lower()}] {msg}")
+def identity_remove(name: str) -> int:
 
-    read_env = read_env_fn or read_env_file
-    write_env = write_env_fn or write_env_value
-
-    path = identity_env_path(env_dir_fn)
-    values = read_env(path)
+    path = identity_env_path()
+    values = read_env_file(path)
     identities = parse_identities(values.get("AGENTBOX_IDENTITIES", ""))
     if name not in identities:
-        _rep("FAIL", f"no identity '{name}'")
+        report("FAIL", f"no identity '{name}'")
         return 1
     del identities[name]
-    write_env(path, "AGENTBOX_IDENTITIES",
+    write_env_value(path, "AGENTBOX_IDENTITIES",
               ",".join(f"{n}:{t}" for n, t in sorted(identities.items())))
-    _rep("OK", f"removed identity '{name}'; redeploy agentbox-mcp to apply")
+    report("OK", f"removed identity '{name}'; redeploy agentbox-mcp to apply")
     if not identities:
-        _rep("WARN", "no identities remain — the gateway falls back to "
+        report("WARN", "no identities remain — the gateway falls back to "
                      "AGENTBOX_MCP_SHARED_TOKEN")
     print(f"\nTheir memories are NOT deleted. They are still scoped to "
           f"'{name}'\nand simply unreachable. Remove them deliberately if "

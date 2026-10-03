@@ -72,7 +72,7 @@ def render_people_card(flash_error: str = "") -> str:
         f"<button class=yes>Invite</button></form>{error}</div></div>")
 
 
-def _field(setting, value: str, error: str) -> str:
+def form_field(setting, value: str, error: str) -> str:
     kind = "password" if setting.secret else "text"
     shown = "" if setting.secret else value
     note = ""
@@ -110,7 +110,7 @@ def render_settings_card(errors: dict, submitted: dict) -> str:
     sections = []
     for group in _portal.agentbox_settings.GROUPS:
         fields = "".join(
-            _field(setting,
+            form_field(setting,
                    submitted.get(setting.key, _portal.SETTINGS.value(setting.key)),
                    errors.get(setting.key, ""))
             for setting in _portal.agentbox_settings.SETTINGS

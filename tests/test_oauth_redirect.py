@@ -18,7 +18,7 @@ import importlib.util
 import sys
 
 from conftest import REPO_ROOT as REPO
-from conftest import code_of
+from conftest import portal_code
 
 
 def load(tmp_path, monkeypatch, **env):
@@ -73,7 +73,7 @@ def test_both_halves_of_the_flow_send_the_same_string():
     separately is how they drift — and the drift only shows up as a refusal
     from Google, minutes later, in somebody else's browser.
     """
-    source = code_of("cli/agentbox-portal")
+    source = portal_code()
     assert source.count("oauth_redirect_uri()") >= 2
     # Neither may go back to deriving it from the public URL.
     assert "PUBLIC_URL.rstrip('/')}/google/callback" not in source

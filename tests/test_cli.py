@@ -50,7 +50,8 @@ def test_policy_unknown_action_defaults_to_approval_required(cli, capsys):
 
 
 def test_load_policy_has_all_tiers(cli):
-    tiers = cli.load_policy()
+    import agentbox_policy
+    tiers = agentbox_policy.load_policy()
     assert set(tiers) == {"allowed", "approval_required", "always_denied"}
     assert tiers["allowed"] and tiers["approval_required"] and tiers["always_denied"]
 
@@ -60,7 +61,8 @@ def test_validate_passes_on_clean_repo(monkeypatch, cli):
     # concern with its own version skew, and `deploy` is where a broken file
     # actually has to be caught.
     monkeypatch.setenv("AGENTBOX_VALIDATE_SKIP_COMPOSE", "1")
-    assert cli.validate() == 0
+    import agentbox_validate
+    assert agentbox_validate.validate() == 0
 
 
 def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
@@ -71,17 +73,9 @@ def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
     reporting "router unreachable", which reads like a network fault rather
     than a service somebody turned off.
     """
-    import importlib.machinery
-    import importlib.util
     import subprocess
-    import sys
-    from pathlib import Path
-    repo = Path(__file__).resolve().parents[1]
-    loader = importlib.machinery.SourceFileLoader("abx_hint", str(repo / "cli" / "agentbox"))
-    spec = importlib.util.spec_from_loader("abx_hint", loader)
-    cli = importlib.util.module_from_spec(spec)
-    sys.modules["abx_hint"] = cli
-    spec.loader.exec_module(cli)
+
+    import agentbox_doctor as cli
 
     # The portal stands in for the router here. The router was the service
     # this check was written for, and it is retired now, but the distinction
@@ -107,23 +101,14 @@ def test_the_tool_schema_budget_is_enforced_and_current():
     """A comment in mcp_base put this cost at ~2,250 tokens per turn. By
     2026-08-14 it measured 7,778 — 3.5x, drifted silently while the project
     maintained a document on context economy. Nothing measured it."""
-    import importlib.machinery
-    import importlib.util
-    import sys
-    from pathlib import Path
-    repo = Path(__file__).resolve().parents[1]
-    loader = importlib.machinery.SourceFileLoader("abx_budget", str(repo / "cli" / "agentbox"))
-    spec = importlib.util.spec_from_loader("abx_budget", loader)
-    cli = importlib.util.module_from_spec(spec)
-    sys.modules["abx_budget"] = cli
-    spec.loader.exec_module(cli)
+    import agentbox_validate as cli
 
     count, tokens, worst = cli.tool_schema_cost()
     assert count > 0, "could not assemble the tool surface"
     assert tokens <= cli.TOOL_SCHEMA_TOKEN_BUDGET, (
         f"{tokens} tokens over budget; biggest: {worst}")
     # And the stale figure is gone from the shared base.
-    base = code_of(repo / "services/templates/mcp/mcp_base.py")
+    base = code_of("services/templates/mcp/mcp_base.py")
     assert "~2,250 tokens per turn" not in base
 
 
@@ -136,7 +121,7 @@ def test_validate_gates_on_lint(monkeypatch):
     known-bad change has to stop.
     """
     from conftest import code_of
-    source = code_of("cli/agentbox")
+    source = code_of("cli/agentbox_validate.py")
     block = source.split("def validate(")[1].split("\ndef ")[0]
     assert 'shutil.which("ruff")' in block
     assert '"ruff", "check"' in block
@@ -147,7 +132,7 @@ def test_validate_gates_on_lint(monkeypatch):
 def test_a_missing_linter_does_not_read_as_a_pass():
     """A check that cannot run must not masquerade as one that passed."""
     from conftest import code_of
-    block = code_of("cli/agentbox").split("def validate(")[1].split("\ndef ")[0]
+    block = code_of("cli/agentbox_validate.py").split("def validate(")[1].split("\ndef ")[0]
     lint = block[block.index('shutil.which("ruff")'):]
     assert "ruff not installed" in lint
     assert "report(WARN" in lint
@@ -164,7 +149,7 @@ def test_floating_tags_are_reported_as_they_age():
     built here and had no notion of upstream ones.
     """
     from conftest import code_of
-    source = code_of("cli/agentbox")
+    source = code_of("cli/agentbox_doctor.py")
     assert "def third_party_images(" in source
     assert "IMAGE_STALE_DAYS" in source
     # Reported in doctor, not just available as a function.
@@ -180,7 +165,7 @@ def test_update_is_separate_from_deploy():
     candidate causes instead of one.
     """
     from conftest import code_of
-    source = code_of("cli/agentbox")
+    source = code_of("cli/agentbox_deploy.py")
     assert "def update(service: str)" in source
     deploy = source.split("def deploy(service:")[1].split("\ndef ")[0]
     # deploy only pulls when explicitly asked
@@ -193,7 +178,7 @@ def test_pull_reuses_deploys_secret_resolution():
     of compose.yaml — which is exactly what a duplicated invocation got wrong
     here the first time."""
     from conftest import code_of
-    source = code_of("cli/agentbox")
+    source = code_of("cli/agentbox_deploy.py")
     update = source.split("def update(service: str)")[1].split("\ndef ")[0]
     # update delegates rather than building its own compose command
     assert "deploy(service, pull=True)" in update
@@ -204,7 +189,7 @@ def test_update_resolves_service_aliases():
     """`cli/agentbox update home-assistant` must resolve to the real service
     directory `services/compose/homeassistant` rather than failing."""
     from conftest import code_of
-    source = code_of("cli/agentbox")
+    source = code_of("cli/agentbox_deploy.py")
     assert "SERVICE_ALIASES" in source
     assert '"home-assistant": "homeassistant"' in source
     assert "SERVICE_ALIASES.get(service, service)" in source
@@ -214,7 +199,7 @@ def test_third_party_images_reports_compose_service_name():
     """Doctor's update hint must name the actual compose service directory,
     not guess from the image tag where hyphens differ."""
     from conftest import code_of
-    source = code_of("cli/agentbox")
+    source = code_of("cli/agentbox_doctor.py")
     doctor = source.split("def doctor(")[1].split("\ndef ")[0]
     assert "Update: cli/agentbox update {service}" in doctor
 
@@ -225,16 +210,7 @@ def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
     environment variables across two systemd units, so answering "can Sam sign
     in?" meant looking in four places and reasoning about it.
     """
-    import importlib.machinery
-    import importlib.util
-    import sys
-    from pathlib import Path
-    repo = Path(__file__).resolve().parents[1]
-    loader = importlib.machinery.SourceFileLoader("abx_ident", str(repo / "cli" / "agentbox"))
-    spec = importlib.util.spec_from_loader("abx_ident", loader)
-    cli = importlib.util.module_from_spec(spec)
-    sys.modules["abx_ident"] = cli
-    spec.loader.exec_module(cli)
+    import agentbox_identity as cli
 
     monkeypatch.setattr(cli, "read_env_file",
                         lambda p: {"AGENTBOX_IDENTITIES": "alex:a,sam:b,taylor:c",
@@ -262,16 +238,7 @@ def test_identity_list_answers_can_this_person_sign_in(monkeypatch, capsys):
 
 def test_identity_list_does_not_invent_a_route(monkeypatch, capsys):
     """SMTP configured but no address for that person is not a way in."""
-    import importlib.machinery
-    import importlib.util
-    import sys
-    from pathlib import Path
-    repo = Path(__file__).resolve().parents[1]
-    loader = importlib.machinery.SourceFileLoader("abx_ident2", str(repo / "cli" / "agentbox"))
-    spec = importlib.util.spec_from_loader("abx_ident2", loader)
-    cli = importlib.util.module_from_spec(spec)
-    sys.modules["abx_ident2"] = cli
-    spec.loader.exec_module(cli)
+    import agentbox_identity as cli
     monkeypatch.setattr(cli, "read_env_file",
                         lambda p: {"AGENTBOX_IDENTITIES": "sam:b"})
     monkeypatch.setattr(cli, "unit_environment", lambda unit: {
@@ -288,7 +255,7 @@ def test_setup_command_registered_in_cli():
     source = code_of("cli/agentbox")
     assert 'sub.add_parser("setup"' in source
     assert 'args.cmd == "setup"' in source
-    assert "def setup() -> int:" in source
+    assert "agentbox_setup.setup(" in source
 
 
 def test_setup_creates_secured_directories_and_templates(tmp_path):
@@ -335,7 +302,7 @@ def test_setup_creates_secured_directories_and_templates(tmp_path):
 def test_deploy_supports_custom_secret_wrapper_and_providers():
     """`agentbox deploy` delegates through custom secret wrapper or native providers."""
     from conftest import code_of
-    source = code_of("cli/agentbox")
+    source = code_of("cli/agentbox_deploy.py")
     deploy_code = source.split("def deploy(service:")[1].split("\ndef ")[0]
     assert "AGENTBOX_SECRET_WRAPPER" in deploy_code
     assert 'Path(env_dir) / "secret-wrapper"' in deploy_code

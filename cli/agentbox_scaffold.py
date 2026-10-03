@@ -1,28 +1,14 @@
-"""agentbox_scaffold — builder sandbox bridge generator.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 200 LOC)
-- Preserves exact Dockerfile/compose/README generation, port allocation, branch creation, output strings, and exit codes
-"""
+"""`agentbox scaffold`: generate a new bridge from the template, commit it to a branch, and stop."""
 from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 
-OK = "OK"
-WARN = "WARN"
-FAIL = "FAIL"
+from agentbox_common import FAIL, OK, WARN, report
+from agentbox_validate import validate
 
 SCAFFOLD_PORT_RANGE = range(3480, 3500)
-
-
-def _rep(report_fn: Callable[[str, str], None] | None, level: str, msg: str) -> None:
-    if report_fn:
-        report_fn(level, msg)
-    else:
-        print(f"[{level.lower()}] {msg}")
 
 
 def used_ports(repo_path: Path) -> set[int]:
@@ -34,28 +20,26 @@ def used_ports(repo_path: Path) -> set[int]:
 
 
 def scaffold(name: str, port: int | None, upstream_env: str | None,
-             repo_path: Path | None = None,
-             validate_fn: Callable[[], int] | None = None,
-             report_fn: Callable[[str, str], None] | None = None) -> int:
+             repo_path: Path | None = None) -> int:
     repo = repo_path or Path(__file__).resolve().parents[1]
 
     if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", name):
-        _rep(report_fn, FAIL, "name must be lowercase letters, digits and hyphens (e.g. todoist)")
+        report(FAIL, "name must be lowercase letters, digits and hyphens (e.g. todoist)")
         return 1
     service = f"{name}-bridge"
     target = repo / "services" / "compose" / service
     if target.exists():
-        _rep(report_fn, FAIL, f"{service} already exists at {target.relative_to(repo)}")
+        report(FAIL, f"{service} already exists at {target.relative_to(repo)}")
         return 1
 
     taken = used_ports(repo)
     if port is None:
         port = next((p for p in SCAFFOLD_PORT_RANGE if p not in taken), None)
         if port is None:
-            _rep(report_fn, FAIL, f"no free port in {SCAFFOLD_PORT_RANGE.start}-{SCAFFOLD_PORT_RANGE.stop - 1}")
+            report(FAIL, f"no free port in {SCAFFOLD_PORT_RANGE.start}-{SCAFFOLD_PORT_RANGE.stop - 1}")
             return 1
     elif port in taken:
-        _rep(report_fn, FAIL, f"port {port} is already mapped by another service")
+        report(FAIL, f"port {port} is already mapped by another service")
         return 1
 
     upper = name.upper().replace("-", "_")
@@ -136,17 +120,17 @@ def scaffold(name: str, port: int | None, upstream_env: str | None,
         "    assert mod.UPSTREAM_TOKEN is not mod.BRIDGE_TOKEN or mod.UPSTREAM_TOKEN == \"\"\n",
         encoding="utf-8")
 
-    _rep(report_fn, OK, f"scaffolded {service} on 127.0.0.1:{port}")
-    if validate_fn and validate_fn() != 0:
-        _rep(report_fn, FAIL, "generated service does not pass validate; leaving it in place to inspect")
+    report(OK, f"scaffolded {service} on 127.0.0.1:{port}")
+    if validate() != 0:
+        report(FAIL, "generated service does not pass validate; leaving it in place to inspect")
         return 1
 
     branch = f"scaffold/{service}"
     proc = subprocess.run(["git", "checkout", "-b", branch], cwd=repo,
                           capture_output=True, text=True)
     if proc.returncode != 0:
-        _rep(report_fn, WARN, f"could not create branch {branch}: {proc.stderr.strip()}")
-        _rep(report_fn, WARN, "files are written; commit them yourself")
+        report(WARN, f"could not create branch {branch}: {proc.stderr.strip()}")
+        report(WARN, "files are written; commit them yourself")
         return 0
     subprocess.run(["git", "add", str(target), str(test_path)], cwd=repo, check=False)
     subprocess.run(["git", "commit", "-q", "-m",
@@ -155,7 +139,7 @@ def scaffold(name: str, port: int | None, upstream_env: str | None,
                     f"Not deployed and not merged: review against\n"
                     f"skills/adding-a-bridge/SKILL.md before either."],
                    cwd=repo, check=False)
-    _rep(report_fn, OK, f"committed on branch {branch} — not merged, not deployed")
+    report(OK, f"committed on branch {branch} — not merged, not deployed")
     print(f"\nNext: edit services/compose/{service}/app/bridge.py, then open a PR.\n"
           f"Nothing runs this service until someone reviews it and runs "
           f"`cli/agentbox deploy {service}`.")

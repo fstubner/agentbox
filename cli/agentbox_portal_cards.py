@@ -20,7 +20,7 @@ def bind(portal_mod: Any) -> None:
 def render_status_card() -> str:
     """What is actually running, rather than a paragraph about why it matters."""
     snap = _portal.agentbox_status.cached()
-    age = _portal._ago(max(0, _portal.now() - snap.taken_at))
+    age = _portal.time_ago(max(0, _portal.now() - snap.taken_at))
 
     problems = sorted(snap.problems,
                       key=lambda c: 0 if c.severity == _portal.agentbox_status.FAIL else 1)

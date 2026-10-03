@@ -32,7 +32,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from conftest import code_of
+from conftest import code_of, portal_code
 
 REPO = Path(__file__).resolve().parents[1]
 GATEWAY = os.environ.get("AGENTBOX_GATEWAY_URL", "http://127.0.0.1:3465")
@@ -225,7 +225,7 @@ def test_google_scopes_match_between_onboarding_and_setup():
     setup = (REPO / "services/compose/google-workspace-bridge"
                     "/oauth-setup.py").read_text()
     invite = code_of(REPO / "cli" / "agentbox-invite")
-    portal = code_of(REPO / "cli" / "agentbox-portal")
+    portal = portal_code()
     for scope in ("gmail.modify", "calendar", "drive.file"):
         assert scope in setup and scope in invite and scope in portal, \
             f"{scope} is not declared in all three onboarding paths"
