@@ -23,6 +23,20 @@ It also works for one person with no identities set up.
 The second badge runs the quickstart below on a fresh machine on every change.
 If these instructions stop working, it goes red.
 
+## What it looks like
+
+Each person reviews what the assistant wants to remember about them before it
+is stored. Household memories are reviewed by an admin.
+
+![The portal's inbox, with two memory proposals waiting for review](docs/images/portal-inbox.png)
+
+Stored memories keep their history, so a fact that changed shows what it
+replaced.
+
+![The knowledge base, listing household and private memories](docs/images/portal-knowledge.png)
+
+The screenshots use sample data.
+
 ## How it is kept safe
 
 - The assistant has no shell. It can only call tools with fixed schemas, over
