@@ -1,8 +1,7 @@
-"""Memory MCP: the assistant proposes and reads; it cannot approve or store.
+"""Memory: the assistant proposes and reads, and cannot approve or store.
 
-Approval and direct writes are operator actions behind a review token the
-assistant never holds — see memory-bridge. Exposing them here once meant the
-review gate did not exist, guarded only by a sentence in a tool description.
+Approving and writing directly are operator actions behind a review token the
+assistant never holds. See memory-bridge.
 """
 from __future__ import annotations
 

@@ -1,31 +1,25 @@
 #!/usr/bin/env python3
-"""Speech out loud, on the host, behind a constraint the model cannot argue with.
+"""Speaking out loud on the host, behind a limit the model cannot argue with.
 
-The speakers are Bluetooth devices attached to this machine, not something a
-container can reach, so this runs on the host as the `agentbox` user — the same
-user the gateway runs as, and a member of `audio` because that is what
-bluealsa's D-Bus policy requires. agentbox-mcp calls it over
-host.docker.internal, the same way the Home Assistant bridge reaches Home
-Assistant.
+The speakers are Bluetooth devices on this machine, which a container cannot
+reach, so this runs on the host as the `agentbox` user, which is in the `audio`
+group as bluealsa requires. agentbox-mcp calls it through
+host.docker.internal, as the Home Assistant bridge reaches Home Assistant.
 
 ## Quiet hours are a constraint, not a policy tier
 
-A tier is checked once and can be granted; `agentbox grant speak_aloud` would
-make 3am speech possible, and an approval only helps if a human reads carefully
-before saying yes. So the refusal lives here, in the process that owns the
-speaker, in the same shape as the climate clamp: outside the window, there is
-no argument that produces sound.
+A tier can be granted, and `agentbox grant speak_aloud` would allow speech at
+3am. So the refusal lives here, in the process that owns the speakers, like
+the climate limit. Outside the allowed hours nothing produces sound.
 
-It refuses rather than queues. A message that arrives at 7am having been
-helpfully deferred is worse than one that never played — nobody wants yesterday's
-reminder read out while they make coffee, and a queue turns "the assistant was
-quiet last night" into "the assistant will ambush me later".
+It refuses rather than queues. Nobody wants yesterday's reminder read out at
+7am.
 
 ## The text is the assistant's own words
 
-Speaking is how an injected email reaches a person who is not looking at a
-screen. The tool takes text the assistant composed; it is not a way to play
-back a document, and there is no route that takes a file or a URL.
+Speech reaches someone who is not looking at a screen, which makes it a route
+for an injected email. The tool takes text the assistant composed, and has no
+way to play back a document, file or URL.
 """
 from __future__ import annotations
 
@@ -73,9 +67,8 @@ def _parse_window(value: str):
 def in_quiet_hours(now: datetime.time | None = None) -> bool:
     """Whether speech is currently refused.
 
-    Handles a window that crosses midnight, which is the normal case and the
-    one a naive `start <= now <= end` gets backwards — 22:00-07:00 would then
-    be quiet for exactly no minutes of the day.
+    Handles a window that crosses midnight, the usual case, where a simple
+    `start <= now <= end` would make 22:00 to 07:00 never quiet.
     """
     window = _parse_window(QUIET_HOURS)
     if window is None:

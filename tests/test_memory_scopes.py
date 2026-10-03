@@ -1,13 +1,7 @@
-"""Tests for identity-scoped memory: private planes plus one household plane.
+"""Tests for memory scopes: a private scope per person, plus the household.
 
-The store was a single flat list, so a second person's memories would have
-mixed with the first's — and worse, been *readable* by them. That is the
-failure this closes.
-
-Two scopes rather than arbitrary sharing, deliberately. "Sam can see this one
-thing of Alex's" is a per-item ACL, and per-item ACLs are how sharing becomes
-impossible to reason about: the operator cannot answer "what can she see?"
-without reading every row.
+Two scopes rather than sharing between named people. Per-item sharing makes
+"what can Sam see?" impossible to answer without reading every row.
 """
 from __future__ import annotations
 
@@ -66,7 +60,7 @@ def test_private_aliases_resolve_to_the_caller(mem):
 
 
 def test_writing_into_another_persons_plane_is_refused(mem):
-    """Not sharing — impersonation."""
+    """Writing into someone else's scope is impersonation, not sharing."""
     with pytest.raises(mem.BridgeError) as exc:
         mem.resolve_scope({"scope": "alex"}, "sam")
     assert exc.value.status == 403
@@ -179,13 +173,9 @@ def test_whoami_reports_single_operator_honestly(mem):
 
 
 def test_operator_review_sees_every_scope(mem):
-    """The reviewer must see what they are the only one able to approve.
-
-    Regression: scoping shipped with the operator treated as an ordinary
-    unidentified caller, so visible_scopes("") returned {household} and every
-    private proposal was invisible to the only account that could approve it.
-    Private memory was write-only, and silently — an unreachable queue and an
-    empty one both render as no rows.
+    """The reviewer must see every proposal, since they are the only one who
+    can approve them. Otherwise private memory would be write-only, and an
+    unreachable queue looks the same as an empty one.
     """
     items = [{"scope": "alex", "statement": "a"},
              {"scope": "sam", "statement": "b"},
@@ -202,8 +192,8 @@ def test_operator_review_sees_every_scope(mem):
 def test_operator_flag_comes_from_the_review_token_not_a_header(mem):
     """Claiming to be the operator must require the operator's secret.
 
-    If a plain header conferred it, the assistant could set it and read every
-    identity's private memory — the isolation would be a naming convention.
+    If a plain header were enough, the assistant could set it and read every
+    person's private memory.
     """
     import inspect
     source = inspect.getsource(mem.is_operator)

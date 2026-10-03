@@ -1,15 +1,10 @@
-"""Where people reach the portal, and what Google is told, are two questions.
+"""Where people reach the portal and what Google is told are two settings.
 
-One setting answered both for a long time, and their requirements cannot both
-be met. `AGENTBOX_PORTAL_URL` goes into sign-in links and invitations, so it
-has to resolve from a phone. Google refuses a private IP or a `.local` name as
-a redirect URI and accepts loopback — which on somebody's phone is their
-phone.
-
-Pointed at a name a phone can reach, consent broke. Pointed at loopback, every
-delivered link went nowhere. That collision is why this looked like it needed
-Tailscale or a domain to adopt at all, and splitting it is what makes a box
-with no infrastructure work.
+`AGENTBOX_PORTAL_URL` goes into sign-in links and invitations, so it must
+resolve from a phone. Google refuses a private IP or a `.local` name as a
+redirect and accepts loopback, which on a phone is the phone. One setting
+cannot meet both requirements, and keeping them separate is what lets a box
+with no extra infrastructure work.
 """
 from __future__ import annotations
 
@@ -46,9 +41,8 @@ def test_the_public_url_no_longer_decides_the_redirect(tmp_path, monkeypatch):
 
 
 def test_the_default_is_the_one_that_always_works(tmp_path, monkeypatch):
-    """Loopback needs no domain, no TLS and no VPN — it means consent is
-    granted in a browser on this box, which for a household is somebody
-    sitting down at it once."""
+    """Loopback needs no domain, TLS or VPN. Consent happens in a browser on
+    this box, which for a household means sitting down at it once."""
     portal = load(tmp_path, monkeypatch)
     assert portal.oauth_redirect_uri().startswith("http://127.0.0.1")
 
@@ -68,10 +62,8 @@ def test_a_trailing_slash_does_not_produce_a_double(tmp_path, monkeypatch):
 
 
 def test_both_halves_of_the_flow_send_the_same_string():
-    """Google compares the redirect URI at consent with the one at token
-    exchange, and both with what is registered. Two call sites building it
-    separately is how they drift — and the drift only shows up as a refusal
-    from Google, minutes later, in somebody else's browser.
+    """Google compares the redirect URI at consent and at token exchange, and
+    both with the registered one, so it is built in one place.
     """
     source = portal_code()
     assert source.count("oauth_redirect_uri()") >= 2

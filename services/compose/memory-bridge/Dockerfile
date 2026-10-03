@@ -14,9 +14,8 @@ COPY services/compose/memory-bridge/app/memory_activity.py /app/memory_activity.
 COPY services/templates/bridge/app/bridge_base.py /app/bridge_base.py
 COPY services/templates/mcp/policy_gate.py /app/policy_gate.py
 
-# This ran as root until 2026-08-03 — the only service that did, and the one
-# holding durable memory and the review gate. `validate` now fails on a
-# Dockerfile without a non-root USER so it cannot recur.
+# Runs as an unprivileged user. `validate` fails any Dockerfile without a
+# non-root USER.
 USER 65532:65532
 
 EXPOSE 8080

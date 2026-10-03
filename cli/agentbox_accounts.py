@@ -16,16 +16,13 @@ from agentbox_identity import read_env_file, write_env_value
 
 
 def exchange_oauth_code(code: str, redirect_uri: str) -> str:
-    """Turn the authorisation code the onboarding page captured into a refresh
+    """Exchange the authorisation code from the onboarding page for a refresh
     token, using the client secret the page never had.
 
-    This is why onboarding is two phases. The page can start Google's consent
-    flow and receive the code — a code is useless on its own — but exchanging
-    it needs the client secret, which belongs on the operator side. So she
-    consents in the browser and the credential is minted here.
-
-    Codes expire in about ten minutes, which is the one timing constraint in
-    the flow: run `invite complete` while she is still in the room.
+    The page can start Google's consent and receive the code, which is useless
+    on its own. The exchange needs the client secret, which stays on the
+    operator side. Codes expire after about ten minutes, so `invite complete`
+    must run while the person is still there.
     """
     values = service_env_values("google-workspace-bridge",
                                 ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"))
@@ -114,22 +111,12 @@ def provision_google_bridge(identity: str, refresh_token: str) -> bool:
 
 
 def gateway_routing_applied(identity: str) -> bool:
-    """Make the gateway actually use the routing just written.
+    """Make the gateway use the routing just written.
 
-    Writing the env file is not applying it: the gateway reads its environment
-    at container start, so until it is recreated the new per-identity route is
-    invisible and calls keep going to the shared bridge — with whatever
-    credential that one holds.
-
-    That is not a theoretical gap. On 2026-08-12 a reconnect succeeded end to
-    end, wrote a fresh refresh token, restarted the identity's own bridge, and
-    reported success — while every Drive call kept 403ing for five hours,
-    because the gateway had started before the routing existed and was still
-    talking to the shared bridge's stale token. The flow was correct in every
-    step except the one that made it take effect.
-
-    A failure here is reported, never swallowed: a half-applied reconnect that
-    claims success is precisely what produced that five-hour gap.
+    The gateway reads its environment when its container starts, so writing
+    the env file is not enough. Until it is recreated, calls keep going to the
+    shared bridge with whatever credential that holds, while the reconnect
+    appears to have worked. A failure here is reported, never swallowed.
     """
     suffix = identity.upper().replace("-", "_")
     expected = f"http://{identity}-google-bridge:8080"
@@ -141,12 +128,9 @@ def gateway_routing_applied(identity: str) -> bool:
             capture_output=True, text=True, timeout=30, check=False)
         return out.stdout.strip() if out.returncode == 0 else ""
 
-    # The URL and the TOKEN both have to match what is on disk. Checking only
-    # the URL was a real bug: a reconnect recreates the identity's bridge with
-    # a fresh bridge token, the URL is unchanged, so this reported "already
-    # routing correctly" and left the gateway holding the old token. Every
-    # Google call for that person then failed 401 — a reconnect that appeared
-    # to succeed and broke the thing it was fixing.
+    # Both the URL and the token must match what is on disk. A reconnect gives
+    # the person's bridge a new token at the same URL, so checking only the URL
+    # would leave the gateway with the old token and every call failing 401.
     on_disk = read_env_file(gateway_env)
     token_matches = (running_value(f"GOOGLE_BRIDGE_TOKEN_{suffix}")
                      == on_disk.get(f"GOOGLE_BRIDGE_TOKEN_{suffix}", ""))
@@ -214,7 +198,7 @@ def revoke_google_token(refresh_token: str) -> bool:
         with urllib.request.urlopen(request, timeout=20):
             return True
     except urllib.error.HTTPError as exc:
-        # 400 invalid_token means it was already dead — the desired end state.
+        # 400 invalid_token means it was already dead, which is the goal.
         return exc.code == 400
     except Exception:  # noqa: BLE001
         return False
@@ -223,21 +207,12 @@ def revoke_google_token(refresh_token: str) -> bool:
 def connectors_sync(quiet: bool = False) -> int:
     """Complete every connector request people raised in the portal.
 
-    This exists because the two-phase split was solving the right problem the
-    wrong way round. The portal must not hold the docker socket — a
-    LAN-reachable page that can run containers is the worst thing on this box.
-    But making the *operator* the manual step meant Sam could not reconnect her
-    own account without finding Alex, which defeats the point of a
-    self-service portal.
+    The portal must not hold the Docker socket, so the privileged half runs
+    here, on a timer, as the operator. That way a person can reconnect their
+    own account without waiting for anyone.
 
-    So the privilege stays here and the waiting goes away: this runs on a timer
-    as the operator's own user, picks up what the portal spooled, and finishes
-    it. The portal still holds no secret and no socket. The person just does not
-    have to ask anyone.
-
-    Timer interval matters: Google expires authorisation codes at about ten
-    minutes, so anything under a couple of minutes is fine and thirty seconds
-    is comfortable.
+    Google expires authorisation codes after about ten minutes, so the timer
+    runs every thirty seconds.
     """
     pending = portal_requests()
     if not pending:

@@ -1,8 +1,8 @@
 """The settings page: who may write it, and what a rejection does.
 
-The store's own validation is covered in test_settings_store.py. What matters
-here is the seam between the form and the store — the place where a value
-stops being text somebody typed and starts deciding who is an admin.
+The store's own validation is covered in test_settings_store.py. These cover
+the seam between the form and the store, where typed text starts deciding who
+is an admin.
 """
 from __future__ import annotations
 
@@ -29,12 +29,10 @@ def test_a_member_cannot_write_settings(portal):
 
 
 def test_an_agent_minted_link_cannot_change_settings(portal):
-    """The escalation this exists to stop.
-
-    If a link the assistant produced could edit `admins`, the assistant could
-    make any identity an admin; if it could edit `identity_emails`, it could
-    point somebody's sign-in link at a mailbox it reads. Admin role is not
-    enough — the origin has to be one a person actually asked for.
+    """If an assistant-made link could edit `admins`, the assistant could make
+    anyone an admin. If it could edit `identity_emails`, it could send someone's
+    sign-in link to a mailbox it reads. The admin role is not enough, and the
+    link must also be one a person asked for.
     """
     for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
         assert not portal.can(portal.ADMIN, "ops:write_settings", origin)
@@ -89,10 +87,9 @@ def test_a_blank_secret_keeps_the_stored_one(portal):
 
 
 def test_every_setting_appears_on_the_page(portal):
-    """The renderer is table-driven; this fails if it stops being.
-
-    A setting that exists in the table but not on the page is worse than one
-    that is missing entirely — it looks configurable and is not.
+    """The page is built from the settings table, so a setting in the table
+    must appear on the page. One that looks configurable and is not would be
+    worse than one that is missing.
     """
     body = portal.render_admin("alex", "").decode()
     for setting in portal.agentbox_settings.SETTINGS:
@@ -136,12 +133,9 @@ def test_household_policy_is_not_in_the_portal_state_directory(portal, tmp_path)
 
 
 def test_a_member_is_not_told_their_link_is_the_problem(portal):
-    """Found by testing the live box, not by a unit test.
-
-    `can` collapses two gates into one boolean, and all three admin-only
-    handlers assumed a refusal meant the origin. A member was told to sign in
-    from a different link — which produces exactly the same refusal, because
-    the link was never the issue.
+    """`can` combines two gates into one yes or no. A member refused an
+    admin-only action must be told about their role, not sent to sign in with a
+    different link that would be refused the same way.
     """
     assert portal.refusal(portal.MEMBER, "ops:write_settings",
                           portal.ORIGIN_OPERATOR) == "admin_only"
@@ -168,15 +162,13 @@ def test_every_refusal_reason_has_a_message(portal):
 
 
 def test_connecting_a_chat_account_is_withheld_from_agent_links(portal):
-    """Found by enabling /agent/link and driving it, not by reading the code.
+    """Pairing a chat account is withheld from assistant-made links, like
+    unlinking.
 
-    Unlinking was withheld because "moving where somebody's sign-in links
-    arrive is not a convenience". Pairing was not — and pairing is the same
-    act in the more dangerous direction: unlinking removes a channel, pairing
-    points one somewhere new. The code it mints is shown on a page any
-    agent-minted session can read, so an attacker who can inject into the
-    assistant and control any non-bot Discord account could have had that
-    person's sign-in links delivered to them.
+    Pairing points sign-in links somewhere new, the more dangerous direction.
+    The pairing code is shown on a page any assistant-made session can read, so
+    someone who could inject into the assistant and controlled a Discord
+    account could otherwise have that person's links sent to them.
     """
     for origin in (portal.ORIGIN_AGENT, portal.ORIGIN_CHAT):
         assert not portal.can(portal.ADMIN, "connector:pair_chat", origin)
@@ -196,12 +188,9 @@ def test_pairing_and_unlinking_are_withheld_together(portal):
 
 
 def test_the_admin_list_cannot_be_saved_empty(portal):
-    """Found by an independent acceptance pass.
-
-    A stored value beats the environment fallback by design, so one blank save
-    took the box from "alex is an admin" to nobody is — Operations unreachable
-    for everyone, no confirmation in front of it, and no route back through the
-    UI. Recovery meant hand-editing settings.json on the box.
+    """A stored value beats the environment fallback, so one blank save would
+    leave nobody an admin, with Operations unreachable and no way back through
+    the page.
     """
     settings = sys.modules["agentbox_settings"]
     portal.SETTINGS.save({"admins": "alex"})
@@ -215,8 +204,8 @@ def test_the_admin_list_cannot_be_saved_empty(portal):
 
 
 def test_handing_over_is_still_allowed(portal):
-    """The guard is against abolishing administration, not transferring it —
-    a non-empty list saves even when it drops the person saving it."""
+    """The guard stops abolishing administration, not handing it over. A
+    non-empty list saves even without the person saving it."""
     portal.SETTINGS.save({"admins": "alex"})
     portal.SETTINGS.save({"admins": "sam"})
     assert portal.admin_names() == {"sam"}
@@ -276,9 +265,8 @@ def test_expired_credentials_are_reaped(portal, tmp_path):
 
 
 def test_an_admin_list_of_strangers_is_refused(portal):
-    """`clean_admins` validates shape, so `mai` for `sam` passed it and locked
-    everyone out just as thoroughly as an empty list — the same unrecoverable
-    state by a likelier route."""
+    """`clean_admins` only checks shape, so a misspelt name would lock everyone
+    out as thoroughly as an empty list."""
     portal.SETTINGS.save({"admins": "alex",
                           "identity_emails": "alex:alex@example.com"})
     known = portal.known_identities()
@@ -300,19 +288,15 @@ def test_an_identity_that_cannot_sign_in_is_shown(portal, monkeypatch):
 
 
 def test_the_module_docstring_describes_the_route_the_assistant_has(portal):
-    """A trust claim that has quietly stopped being true is worse than none —
-    it is the thing somebody checks instead of the code.
+    """The module docstring must say where the identity binding really lives.
 
-    Asserted positively. The first version of this test grepped for the
-    absence of the old sentence, which fails two ways: the correction quotes
-    that sentence in a historical note, and `code_of` strips docstrings, so
-    the assertion would have passed without reading anything at all.
+    Asserted positively, because a check that the old sentence is absent would
+    pass without reading anything, since `code_of` strips docstrings.
     """
     doc = sys.modules["agentbox_portal"].__doc__ or ""
     assert "POST /agent/link" in doc
-    # The first correction over-claimed in the other direction: it said the
-    # endpoint "cannot name somebody else", which is not true — it takes an
-    # identity in the body, and the binding lives in the MCP tool that calls
-    # it. The docstring must say where the property actually lives.
+    # The endpoint takes an identity in the body, and the binding lives in the
+    # MCP tool that calls it, so the docstring must not claim the endpoint
+    # cannot name somebody else.
     assert "the identity binding lives" in doc.lower()
     assert "cannot name somebody else" not in doc

@@ -1,33 +1,28 @@
 """Household scenarios: does the assistant actually help, and how much of it works?
 
-`smoke` answers "is the plumbing sound" — every seam, every refusal, every
-guardrail. It passes on a box that helps nobody, because a house with no
-devices and an unconsented Drive still has intact seams. This answers the
-different question: **if a person asked the ten things they would actually
-ask, how many could the assistant answer today?**
+`smoke` checks the plumbing: every seam, refusal and guardrail. It passes on a
+box that helps nobody, because a house with no devices and no Drive consent
+still has intact seams. This answers a different question. If a person asked
+the ten things they would actually ask, how many could the assistant answer
+today?
 
-The distinction matters because the two failures look identical from inside
-`smoke` and opposite from the kitchen. "controllable is empty" and "Drive
-403s" are not bugs — the seams are fine — they are the difference between
-installed and useful, and nothing measured that difference until a week of
-the journal showed `whoami` outnumbering every real tool.
+An empty allowlist or a Drive 403 is not a bug in the plumbing. It is the
+difference between installed and useful, and this measures that.
 
-Each scenario is a sentence a household member might say, the tool that would
-answer it, and a verdict function that reads the live result. A scenario is:
+Each scenario is something a household member might say, the tool that would
+answer it, and a verdict on the live result.
 
-- **ready** — it answered, with something real behind it (a calendar with
-  events, a house with controllable devices, a mailbox that searched);
-- **empty** — it worked but there is nothing there yet (no events today, no
-  controllable devices). Honest, not a failure, but not usefulness either;
-- **blocked** — it could not answer, with the reason a person can act on
-  (needs Drive re-consent, needs a device onboarded, needs SMTP).
+- **ready** means it answered with something real behind it, such as a
+  calendar with events, a house with controllable devices or a mailbox that
+  searched.
+- **empty** means it worked but there is nothing there yet, such as no events
+  today. Not a failure, but not useful either.
+- **blocked** means it could not answer, with a reason a person can act on,
+  such as needing Drive consent, a device onboarded or SMTP.
 
-The score is `ready / total`. It is meant to start low and climb as the
-config gaps close — a target, not a grade. Run it weekly beside the journal
-read below.
-
-This is deliberately data, not cleverness: adding a scenario is appending one
-entry, so the set grows with what the household actually asks for.
+The score is `ready / total`. It is meant to start low and rise as settings
+are filled in. Run it weekly beside the journal summary below. Adding a
+scenario means appending one entry.
 """
 from __future__ import annotations
 
@@ -40,9 +35,8 @@ READY, EMPTY, BLOCKED = "ready", "empty", "blocked"
 class Scenario:
     """One thing a person would ask, and how to tell whether it was answered.
 
-    `verdict(ok, payload)` returns (state, detail). It never raises — a
-    scenario that throws would read as a suite bug rather than a house that
-    cannot yet answer, which is the exact confusion this file exists to end.
+    `verdict(ok, payload)` returns (state, detail) and never raises, so a
+    scenario that cannot be answered never looks like a bug in the suite.
     """
 
     def __init__(self, asked: str, tool: str, args: dict,
@@ -55,10 +49,9 @@ class Scenario:
         # What closes the gap when this is blocked or empty. Printed as the
         # next action, so the report doubles as a to-do list.
         self.needs = needs
-        # Optional: prepare(tool_call, token) -> args or None. For scenarios
-        # that need a real object to act on — triage needs an actual message
-        # id, or it tests Gmail's error path instead of the dispatch path.
-        # Returning None means there is nothing to act on: verdict on
+        # Optional prepare(tool_call, token) returns args, or None. For
+        # scenarios that need a real object to act on, such as a real message
+        # id. None means there is nothing to act on, and the verdict on
         # (True, None) should read that as empty.
         self.prepare = prepare
 
@@ -66,11 +59,8 @@ class Scenario:
 def _has_items(label: str, key: str | None = None, needs: str = ""):
     """Verdict: ready if the payload has rows, empty if it worked but is bare.
 
-    A dict payload requires `key`. The first live run scored "ready: 4
-    lights" against a house with zero lights, because the bridge returns
-    {"entities": [], "total": 0, ...} and len() of that dict counted its
-    keys — the scenario runner confidently reporting readiness that did not
-    exist, in the tool built to end exactly that. A dict with no key is now
+    A dict payload needs `key`. Counting a dict's length would count its keys,
+    so a house with no lights would score as ready. A dict without the key is
     an unexpected-shape verdict, never a count.
     """
     def check(ok: bool, payload: Any) -> tuple[str, str]:
@@ -95,10 +85,8 @@ def _has_items(label: str, key: str | None = None, needs: str = ""):
 def _recent_message_id(tool_call, token):
     """Find a real message with readable text to summarise.
 
-    Without this, the triage scenario sent a fake id and Gmail's 400 arrived
-    before the dispatch ever ran — the one scenario meant to exercise the
-    model router was testing Gmail's error path instead, while reporting the
-    router as the thing blocked.
+    With a made-up id, Gmail's error would arrive first and the scenario would
+    be testing that error rather than the summary.
     """
     ok, payload = tool_call("agentbox-mcp", "search_gmail",
                             {"query": "in:anywhere", "max_results": 5}, token)
@@ -107,10 +95,10 @@ def _recent_message_id(tool_call, token):
     messages = payload.get("messages") if isinstance(payload, dict) else payload
     if not isinstance(messages, list) or not messages:
         return None
-    # Screen candidates through clean_gmail — bridge calls, no model
-    # inference — because the newest message anywhere is often a calendar
-    # invite or image-only mail with no extractable text, and "that one
-    # message was unreadable" must not score the whole summary path blocked.
+    # Screen candidates with clean_gmail, which calls the bridge with no
+    # model, because the newest message is often an invite or image-only mail
+    # with no text, and one unreadable message must not mark summaries
+    # blocked.
     for message in messages:
         message_id = message.get("id") or message.get("message_id")
         if not message_id:
@@ -158,12 +146,8 @@ SCENARIOS = [
     Scenario(
         "Summarise that email without me reading it.",
         "clean_gmail", {},
-        # The cleaned body of a real message found by prepare, which the main
-        # model then summarises. This used to go through triage_email and a
-        # small worker, which kept the body out of the conversation. That route
-        # is retired with the router (see router/README.md). The body now
-        # enters the conversation, but the question still has an answer, and
-        # this checks that it does.
+        # The cleaned body of a real message found by prepare, for the main
+        # model to summarise. This checks that the question has an answer.
         lambda ok, p: (READY, f"{len(p['clean_text'])} characters ready to summarise")
         if ok and isinstance(p, dict) and p.get("clean_text")
         else (BLOCKED, str(p)[:110]),
@@ -252,8 +236,8 @@ def _run_one(scenario, tool_call, token: str) -> tuple[str, str]:
 
 
 def run(tool_call, token: str) -> dict:
-    """Run every scenario against the live gateway. Pure data back, no I/O —
-    the caller prints, so this stays testable with a fake tool_call.
+    """Run every scenario against the live gateway and return the results. The
+    caller prints, so this can be tested with a fake tool_call.
     """
     results = []
     for s in SCENARIOS:
@@ -285,10 +269,8 @@ HOUSEHOLD_TOOLS = frozenset({
 
 
 def usage_summary(records: list[dict]) -> dict:
-    """Fold the outcome journal into household vs self-management vs failures.
-
-    `records` is the parsed journal — passed in rather than read here so a
-    test can hand it a fixture and the caller owns the file path.
+    """Sort the outcome journal into household use, self-management and
+    failures. Takes parsed records, so a test can pass a fixture.
     """
     household = failures = self_mgmt = 0
     by_tool: dict[str, int] = {}

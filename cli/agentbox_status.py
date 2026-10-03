@@ -1,32 +1,25 @@
-"""What is actually running, as data rather than as printed lines.
+"""What is running, as data rather than printed lines.
 
-`doctor` has known all of this for a long time, but it knows it in the form of
-text on a terminal. That made the Operations page carry a card headed
-"Connector health" whose entire content was a paragraph explaining why
-checking health would be a good idea — the one thing an admin opening that
-page wants, described rather than shown.
+`doctor` prints this for a terminal and the portal's Operations page renders
+it, from the same snapshot, so the two cannot disagree about whether the box
+is healthy.
 
-So the facts live here, in a shape both can use: `doctor` keeps its prose and
-its carefully-argued severities, and the portal renders the same snapshot as a
-page. One definition, so the two cannot drift into disagreeing about whether
-the box is healthy.
+## It only reads
 
-## Why this reads and never writes
+Everything here is `docker ps`, an HTTP GET or a stat. Nothing restarts,
+deploys or changes a container. The portal is the most privileged web page on
+the box, and a restart button would make every bug in it much more expensive.
+Seeing that something is broken is useful on a phone, and fixing it can need a
+terminal.
 
-Everything here is `docker ps`, an HTTP GET, or a stat. Nothing restarts,
-deploys, or changes a container. The portal is the most privileged web surface
-on the box — it holds sessions that can edit the admin list — and giving it a
-button that restarts services would make every bug in it a great deal more
-expensive. Seeing that something is broken is useful on a phone; fixing it can
-want a terminal.
-
-Every subprocess is a fixed argv with no shell and no interpolated input.
+Every subprocess is a fixed argument list with no shell and no interpolated
+input.
 
 ## Freshness
 
-Snapshots are cached briefly and stamped with when they were taken. A status
-page that silently serves a minute-old picture of a box that just fell over is
-worse than no status page, so the age is rendered rather than hidden.
+Snapshots are cached briefly and stamped with when they were taken. The age is
+shown, because quietly serving a minute-old picture of a box that just fell
+over would be worse than no status at all.
 """
 from __future__ import annotations
 
@@ -56,9 +49,8 @@ from agentbox_status_checks import (  # noqa: F401
 REPO = Path(__file__).resolve().parent.parent
 
 
-# What the assistant needs in order to answer at all, and what merely makes it
-# better. Kept here so the page and the terminal cannot disagree about which is
-# which — the severities are reasoned about at length in cli/agentbox.
+# What the assistant needs in order to answer at all, and what only makes it
+# better. Kept here so the page and the terminal agree.
 ENDPOINTS: dict[str, tuple[str, str]] = {
     "main model": (
         os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models",
@@ -111,22 +103,12 @@ def endpoint_checks(timeout: float = 4) -> list[Check]:
 def source_sha(service: str) -> str:
     """Hash exactly the files the Dockerfile copies, plus the compose file.
 
-    Derived from the Dockerfile's own COPY lines rather than a directory walk,
-    so it measures precisely what determines the image. Shared sources live in
-    services/templates and policies/ and are copied from the repo root at build
-    time — reading the COPY lines means the hash follows them without anyone
-    maintaining a second list.
+    Read from the Dockerfile's own COPY lines, so it covers exactly what
+    determines the image, including shared sources copied from the repository
+    root, with no second list to maintain. Documentation is not included, so
+    editing a README does not mark a service stale.
 
-    This replaced a directory walk that hashed the README, so a doc edit marked
-    a service stale. A freshness check that fires on documentation is one people
-    learn to click past, and this one exists because a security fix once sat in
-    git for three weeks without reaching the running container.
-
-    Lives here rather than in cli/agentbox because the portal needs the same
-    answer. A second implementation was written for this page and got it wrong
-    — it hashed git history instead of file contents and reported every service
-    on the box as stale, which is precisely the drift this module exists to
-    prevent.
+    It lives here so `doctor` and the portal use one definition.
     """
     svc_dir = REPO / "services" / "compose" / service
     dockerfile = svc_dir / "Dockerfile"
@@ -168,11 +150,10 @@ class Service:
 def opted_out() -> set[str]:
     """Services the household has said it does not run.
 
-    Read from the settings store rather than inferred, because absence in
-    `docker ps -a` cannot distinguish a service never deployed from one whose
-    container was removed five minutes ago — and treating those the same
-    means either `docker compose down` reads as healthy or the dashboard is
-    permanently red over a deliberate choice.
+    Read from the settings rather than inferred. A missing container cannot
+    tell a service never deployed from one removed five minutes ago, and
+    treating them the same would either hide `docker compose down` or leave
+    the page permanently red over a deliberate choice.
     """
     raw = os.environ.get("AGENTBOX_NOT_DEPLOYED")
     if raw is None:
@@ -200,11 +181,8 @@ def services() -> list[Service]:
     fmt = ('{{.Names}}\t{{.Label "agentbox.service"}}\t'
            '{{.Label "agentbox.source_sha"}}\t{{.Status}}')
     try:
-        # `-a`, not bare `ps`. Without it the list is derived entirely from
-        # what is running, so a crashed bridge does not turn red — it
-        # disappears, and the page then reports "Everything is running"
-        # because nothing is left to complain about. A status page whose
-        # failure mode is silence is worse than none.
+        # `-a`, so a crashed container shows as stopped rather than vanishing
+        # and leaving the page to report that everything is running.
         out = subprocess.run(["docker", "ps", "-a", "--format", fmt],
                              capture_output=True, text=True, timeout=15).stdout
     except (OSError, subprocess.SubprocessError):
@@ -216,9 +194,8 @@ def services() -> list[Service]:
         if len(parts) < 4:
             continue
         container, service, sha, status = (p.strip() for p in parts[:4])
-        # Containers without our labels are somebody else's, and identity
-        # bridges are per-person rather than per-service — neither belongs on
-        # a household status page.
+        # Containers without our labels belong to something else, and
+        # per-person bridges are not household services.
         if not service or service.startswith("identity-"):
             continue
         if not (REPO / "services" / "compose" / service).is_dir():
@@ -235,12 +212,10 @@ def services() -> list[Service]:
             stale=bool(sha and current and sha != current),
             status=status))
 
-    # A service that has never been deployed has no container to enumerate,
-    # so it cannot appear above at all. Reported explicitly rather than left
-    # out: "absent" and "healthy" must not render identically.
-    # `docker ps -a` can return several containers for one service — an old
-    # exited one beside the running replacement. Keep the running one, or the
-    # dashboard carries a permanently red row for a container nobody uses.
+    # A service never deployed has no container, so it is reported
+    # explicitly. Absent must not look the same as healthy.
+    # `docker ps -a` can list an old exited container beside its running
+    # replacement, so keep the running one.
     best: dict[str, Service] = {}
     for service in found:
         current = best.get(service.name)
@@ -295,11 +270,8 @@ class Snapshot:
 def docker_check() -> Check:
     """Whether container state could be read at all.
 
-    `services()` returns [] when docker cannot be reached, and an empty list
-    of services is indistinguishable from a healthy one — `all([])` is True,
-    so the page said "Everything is running" precisely when it knew least.
-    Not knowing has to be a finding, or silence becomes the safest-looking
-    answer.
+    When docker cannot be reached, `services()` is empty, and an empty list
+    would read as everything running. Not knowing has to show as a problem.
     """
     try:
         result = subprocess.run(["docker", "ps", "-q"], capture_output=True,

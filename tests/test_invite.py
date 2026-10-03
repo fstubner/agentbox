@@ -1,9 +1,9 @@
 """Tests for invite-based onboarding.
 
-The invite link is a credential: it authorises creating an identity on someone's
-home server, which buys more than a bridge token does. So the tests that matter
-are the ones about refusing it — expired, spent, wrong secret, unknown id — and
-about the collecting page having no authority of its own.
+An invite link authorises creating an identity on someone's home server, which
+is worth more than a bridge token. So the tests that matter are about refusing
+it, whether expired, used, wrong or unknown, and about the collecting page
+having no authority of its own.
 """
 from __future__ import annotations
 
@@ -80,13 +80,10 @@ def test_an_expired_invite_is_refused(inv):
 
 
 def test_a_spent_invite_is_refused(inv):
-    """Single use. Otherwise a forwarded link creates a second identity.
+    """Single use, or a forwarded link would create a second identity.
 
-    The refusal is what matters and is unchanged. What it *says* was corrected
-    on 2026-08-20: it used to tell them to ask for a new link, when they had
-    already done the only thing being asked of them and the next move is the
-    admin's. A refusal that misdirects the person reading it produces a second
-    credential nobody needed.
+    The message must not tell them to ask for a new link. They already did the
+    one thing asked of them, and the next step is the admin's.
     """
     make(inv, used_at=inv.now())
     record, reason = inv.valid_invite("abc123", "s3cret")
@@ -111,16 +108,15 @@ def test_the_saved_invite_is_not_world_readable(inv, tmp_path):
 
 
 def test_the_page_cannot_provision_anything(inv):
-    """The collecting half must not hold the privileges. A LAN-reachable page
-    with a docker socket would be the worst service on the box — `docker
+    """The collecting half must not hold the privileges. A web page on the LAN
+    with the Docker socket would be the worst service on the box, since `docker
     inspect` reads every bridge credential."""
     import ast
     source = script_code("agentbox-invite")
     tree = ast.parse(source)
 
-    # Imported modules, not source text — the module docstring legitimately
-    # explains at length why docker is absent, and an earlier version of this
-    # test tripped over its own explanation.
+    # Imported modules, not source text, because the module docstring explains
+    # at length why Docker is absent.
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -157,7 +153,7 @@ def test_shared_services_are_stated_not_offered(inv):
 
 
 def test_google_is_marked_external(inv):
-    """The one thing we cannot provision for her — she must consent herself."""
+    """The one thing nobody can set up for the person. They must consent."""
     assert inv.CONNECTORS["google"]["external"] is True
     assert inv.CONNECTORS["vikunja"]["external"] is False
 
@@ -187,8 +183,8 @@ def test_completion_drops_the_secret_when_done():
 
 
 def test_vikunja_provisioning_uses_the_container_cli():
-    """Registration is disabled on this deployment, so the HTTP API cannot
-    create her account — and that privilege is why the web page has none."""
+    """Registration is off, so the HTTP API cannot create the account, and that
+    privilege is why the web page has none."""
     source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def provision_vikunja_user", 1)[1].split("\ndef ", 1)[0]
     assert '"docker", "exec"' in block
@@ -196,12 +192,9 @@ def test_vikunja_provisioning_uses_the_container_cli():
 
 
 def test_consent_is_the_only_part_that_is_not_automated():
-    """Superseded an earlier version that printed OAuth steps as homework.
-
-    We can neither create a Google account nor consent on her behalf — but
-    everything *after* consent is ours to do, and printing it as instructions
-    was stopping at the hard part. She consents in the page; the exchange and
-    the bridge are automatic."""
+    """Nobody else can create a Google account or consent for the person, but
+    everything after consent is automatic. They consent in the page, and the
+    exchange and the bridge follow."""
     source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert "exchange_oauth_code" in block
@@ -212,9 +205,8 @@ def test_consent_is_the_only_part_that_is_not_automated():
 
 # --- automatic connector provisioning -------------------------------------------
 #
-# "She picks Gmail and it works" is the whole point of onboarding. The parts
-# that can be automated now are; the one that cannot — her consent — happens in
-# the page rather than being printed as homework.
+# Picking Gmail and having it work is the point of onboarding. Everything that
+# can be automated is, and consent happens in the page.
 
 
 def test_the_page_can_start_google_consent_but_not_finish_it(inv):
@@ -270,9 +262,9 @@ def test_a_new_identity_gets_no_writable_calendar():
 
 
 def test_the_identity_bridge_joins_the_existing_network():
-    """A per-identity network would mean editing the gateway's compose every
-    time somebody joins — and a config the onboarding flow rewrites is one that
-    will eventually be rewritten wrongly."""
+    """A network per person would mean editing the gateway's compose file every
+    time someone joins, and a file the onboarding flow rewrites will eventually
+    be rewritten wrongly."""
     compose = (REPO / "services" / "compose" / "google-workspace-bridge"
                / "identity.compose.yaml").read_text()
     assert "google-workspace-bridge_default" in compose
@@ -287,8 +279,8 @@ def test_the_identity_bridge_publishes_no_host_port():
 
 
 def test_missing_consent_is_reported_rather_than_silently_shared():
-    """If she skipped the Google step she falls back to the shared bridge —
-    correct for shared services, wrong for mail, so it must be said."""
+    """Skipping the Google step falls back to the shared bridge, which is right
+    for shared services and wrong for mail, so it must be said."""
     source = code_of(REPO / "cli" / "agentbox_invites.py")
     block = source.split("def invite_complete", 1)[1].split("\ndef ", 1)[0]
     assert "did not finish the consent" in block

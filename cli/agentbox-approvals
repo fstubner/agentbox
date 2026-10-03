@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
-"""Discord approval loop for agentbox.
+"""The Discord approval loop.
 
-When a tool is refused for want of approval, the MCP records it. This process
-posts that to Discord, waits for the operator to reply, and writes the grant.
+When a tool is refused for lack of approval, agentbox-mcp records it. This
+process posts the request to Discord, waits for the operator to reply, and
+writes the grant.
 
-Why a separate process, and not the assistant asking:
+## Why a separate process
 
 The assistant is in the same Discord. If it could ask for its own approval, an
-instruction embedded in an email could make it ask — and a plausible-looking
-request is exactly what a human clicks through. So the approval path must not
-pass through the model at any point. This process:
+instruction in an email could make it ask, and a plausible request is what a
+person clicks through. So approval never passes through the model. This
+process
 
-- runs as the operator, not as the agentbox user;
-- reads the request from a file the assistant can only append to;
-- accepts replies **only** from configured Discord user ids, ignoring every
-  message authored by a bot — including the assistant's own;
+- runs as the operator, not as the agentbox user,
+- reads requests from a place the assistant can only add to,
+- accepts replies only from configured Discord user ids, and ignores every
+  message written by a bot, including the assistant's own,
 - writes the grant to a directory the assistant's containers mount read-only.
 
-MCP elicitation would put this in the conversation natively, but the server
-would need a streaming transport it does not have, and 2026-07-28 replaces
-elicitation with MRTR anyway. This is the same outcome without building
-machinery the specification is retiring.
+MCP elicitation would put this in the conversation, but it needs a streaming
+transport this server does not have, and the 2026-07-28 revision replaces it
+with MRTR.
 
-Stdlib only: Discord's REST API is enough for post-and-poll, and an approval
-loop does not need a gateway websocket.
+Standard library only. Discord's REST API is enough to post and poll.
 """
 from __future__ import annotations
 
@@ -88,9 +87,8 @@ def clear_pending(tool: str) -> None:
 OUTCOME_DIR = Path(os.environ.get(
     "AGENTBOX_LOG_DIR", str(Path("~/.local/state/agentbox/logs").expanduser())))
 
-# The same settings the portal writes. Imported as an ordinary module — it is
-# a plain .py sitting beside this script, and this script runs as the operator,
-# which is the only user that can read the file at all.
+# The same settings the portal writes, from a module beside this script. It
+# runs as the operator, the only user who can read the file.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from agentbox_approvals_discord import (  # noqa: E402, F401
     API,
@@ -126,12 +124,10 @@ from agentbox_approvals_memory import (  # noqa: E402, F401
 
 
 def record_denial(tool: str, user_id: str) -> None:
-    """A denial is the strongest signal the system gets and used to vanish.
+    """Record a refusal in the outcome journal.
 
-    An approval goes through `agentbox grant`, which records it. Saying no just
-    deleted the pending file, so the record showed tools that were approved and
-    nothing about the ones that were not — which would make any tier argument
-    read from this journal systematically wrong in one direction.
+    Approvals are recorded by `agentbox grant`. Recording refusals too keeps
+    the journal from showing only the yeses.
     """
     try:
         OUTCOME_DIR.mkdir(parents=True, exist_ok=True)
@@ -162,12 +158,9 @@ def main() -> int:
     state = load_cursor()
 
     while True:
-        # Re-read rather than trusting the startup values, and take the new
-        # ones as they are. Falling back to the last good list on an empty
-        # read would make revocation the one setting that is not live — an id
-        # removed on the portal would keep approving things until somebody
-        # restarted a service they do not know exists. An empty list here
-        # means nobody can approve, which is the correct way to be wrong.
+        # Read the current list each time and use it as it is, so removing an
+        # id on the portal takes effect at once. An empty list means nobody can
+        # approve, which is the safe way to be wrong.
         channel = approval_channel()
         operators = approval_operators()
         complete_pairings(token)
@@ -207,9 +200,9 @@ def main() -> int:
             words = str(message.get("content", "")).strip().split()
             if not words:
                 continue
-            # Memory review shares this loop, and therefore shares every
-            # property that makes it safe — bots already skipped above, so an
-            # injected assistant cannot approve its own memory by typing.
+            # Memory review shares this loop and its protections. Bot messages
+            # are already skipped above, so the assistant cannot approve its own
+            # memory by typing.
             if handle_memory_reply(words[0].lower(),
                                    words[1].strip("`") if len(words) > 1 else "",
                                    channel, token, state,

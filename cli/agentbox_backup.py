@@ -46,15 +46,10 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
     else:
         _rep("WARN", f"vikunja state not found at {vikunja_src}")
 
-    # The memory store lives in a docker volume, so it is read out through a
-    # throwaway container rather than from the host filesystem.
-    #
-    # The container chowns what it copied back to this user before exiting.
-    # Without that the files land owned by the container's uid, this process
-    # cannot delete them, and the cleanup below fails — which is exactly what
-    # happened for thirteen consecutive runs: thirteen archives, thirteen
-    # orphaned staging directories, the oldest owned by root, each holding a
-    # readable copy of every private household memory.
+    # Memory lives in a Docker volume, so it is read out through a short-lived
+    # container, which hands ownership of the copies back to this user before
+    # exiting. Otherwise the clean-up below cannot delete them, and staging
+    # directories holding everyone's private memories would pile up.
     volume = os.environ.get("AGENTBOX_MEMORY_VOLUME", "memory-bridge_memory_data")
     proc = subprocess.run(
         ["docker", "run", "--rm", "-v", f"{volume}:/src:ro",
@@ -108,8 +103,7 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
         _rep("WARN", f"config directory not found at {config_src}")
 
     subprocess.run(["tar", "-czf", str(archive), "-C", str(staging), "."], check=False)
-    # Private memories, so not group- or world-readable. The staging tree was
-    # mode 644 and the archives 664 until 2026-08-14.
+    # Private memories, so readable by the owner only.
     archive.chmod(0o600)
 
     # Not ignore_errors: a cleanup that cannot run is the whole defect above,
@@ -143,15 +137,10 @@ def backup(keep: int = 14, report: Callable[[str, str], None] | None = None) -> 
 def restore_check(archive_name: str = "", report: Callable[[str, str], None] | None = None) -> int:
     """Rehearse a restore: unpack an archive and prove it could rebuild state.
 
-    Untested restore is the standard way people find out they have no backups.
-    `tar -tzf` proved only that the file was readable — not that the memory
-    store parses, not that it holds anything, not that Vikunja's data came
-    along. Nothing verified any of that, and no restore had ever been run.
-
-    Deliberately a drill, not a live restore. Putting data back means stopping
-    services and overwriting a volume, which is the operator's decision to make
-    deliberately; this answers the question that has to be answered *before*
-    that, which is whether the archive is worth restoring at all.
+    Checks that the memory store parses and holds data and that Vikunja's data
+    is present, not just that the file opens. It is a rehearsal, not a real
+    restore, which means stopping services and overwriting a volume, and stays
+    the operator's decision.
     """
     def _rep(level: str, msg: str) -> None:
         if report:

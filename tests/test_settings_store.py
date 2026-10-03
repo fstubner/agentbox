@@ -1,8 +1,8 @@
 """Household settings, and the rules that keep them from becoming a hazard.
 
-Two of these decide privilege — who is an admin, and where a sign-in link is
-delivered — so the interesting tests are not "does it save" but "what happens
-when somebody submits nonsense", and "can the assistant reach it".
+Two of them decide privilege, who is an admin and where a sign-in link goes, so
+the interesting tests are about submitting nonsense and whether the assistant
+can reach them.
 """
 from __future__ import annotations
 
@@ -132,9 +132,8 @@ def test_saving_reports_only_what_changed(store):
 
 def test_device_permissions_are_not_in_the_portal_only_file():
     """The settings file is safe because no container mounts it. Device
-    permissions must be readable by the Home Assistant bridge, so putting them
-    there would mean mounting that directory in — handing the assistant a
-    route to the admin list."""
+    permissions must be readable by the Home Assistant bridge, so they live
+    elsewhere rather than giving the assistant a route to the admin list."""
     # Named explicitly rather than pattern-matched: "identity_emails"
     # contains the substring "entit", and a test that passes by accident is
     # worse than no test.

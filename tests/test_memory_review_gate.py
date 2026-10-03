@@ -1,14 +1,9 @@
-"""Tests for the memory review gate (architecture extension point #2).
+"""Tests for the memory review gate.
 
-The invariant: the assistant may PROPOSE a memory; it may not approve one and
-it may not write straight to durable memory. Those require an operator
-credential the assistant does not hold.
-
-Before this gate existed the memory MCP exposed both approve_memory_proposal
-and write_memory, so the assistant could accept its own proposals or skip the
-queue entirely. The only thing standing in the way was a sentence in the tool
-description — "after explicit user approval" — which is documentation, not
-enforcement. These tests exist so that cannot silently come back.
+The assistant may propose a memory. It may not approve one or write straight
+to durable memory, because both need an operator credential the assistant does
+not hold. These tests make sure an approve or direct-write tool cannot come
+back, since a sentence in a tool description is not enforcement.
 """
 from __future__ import annotations
 
@@ -96,8 +91,8 @@ def test_approval_with_wrong_review_token_is_forbidden(gated):
 
 
 def test_direct_write_to_memory_is_forbidden(gated):
-    """The bypass path matters as much as the approve path — a queue you can
-    skip is not a queue."""
+    """Skipping the queue matters as much as approving, because a queue that
+    can be skipped is not a queue."""
     _, base = gated
     with pytest.raises(urllib.error.HTTPError) as exc:
         call(base, "/v1/memories", body={"statement": "sneaky"})
@@ -126,7 +121,7 @@ def test_operator_can_reject_and_queue_shrinks(gated):
 
 
 def test_unset_review_token_fails_closed(tmp_path):
-    """With no operator token configured, approval is impossible — durable
+    """With no operator token configured, nothing can be approved, so durable
     memory stops accepting writes rather than accepting them from anyone."""
     module = load_bridge(tmp_path, "")
     server, base = serve(module)

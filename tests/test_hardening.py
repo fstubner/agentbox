@@ -1,10 +1,4 @@
-"""Fixes from the audit of 2026-08-19.
-
-Grouped by where they came from rather than by subsystem, because they share a
-provenance: each one is something the running system did that reading the code
-had not shown. That is worth keeping visible — the next audit will find its own
-set, and this file is the record of what the last one cost.
-"""
+"""Hardening found by running the system rather than by reading the code."""
 from __future__ import annotations
 
 import importlib.machinery
@@ -60,9 +54,9 @@ class Request:
 
 
 def test_a_content_length_that_is_not_a_number_is_refused(portal):
-    """It raised ValueError before any authentication or routing, so the
-    thread died and the client got nothing — while a well-formed request got
-    a page. That difference is measurable from outside.
+    """A bad length must not kill the handler, which would leave a malformed
+    request unanswered while a valid one gets a page, a difference anyone
+    outside can measure.
     """
     for bad in ("abc", "1.5", "0x10", "12 34", "+5"):
         assert portal.PortalHandler._read_form(Request(bad)) is None, bad
@@ -86,8 +80,8 @@ def test_a_well_formed_body_still_parses(portal):
 
 
 def test_every_malformed_request_answers_the_same_way(portal):
-    """Which part was wrong is not the client's business — the same reasoning
-    the invite page refuses under, and the link ids after them."""
+    """Which part was wrong is not the client's business, as on the invite
+    page and for link ids."""
     answers = {portal.PortalHandler._read_form(Request(bad))
                for bad in ("abc", "-1", "999999999")}
     assert answers == {None}
@@ -191,8 +185,8 @@ def test_a_completed_invite_is_kept_permanently(spool, tmp_path):
 
 
 def test_settled_requests_age_out_but_not_quickly(spool):
-    """History, not a credential — so a window rather than a purge. The
-    question it answers is 'who let this person in'."""
+    """History, not a credential, so it is kept for a window rather than
+    deleted. It answers "who let this person in"."""
     spool.request("d" * 16, "alex")
     [record] = spool.pending()
     spool.settle(record, "completed")
@@ -215,10 +209,9 @@ def test_reaping_survives_an_unreadable_file(spool, tmp_path):
 
 
 def test_the_size_gate_sees_extensionless_files():
+    """Generic size checkers only look at *.py, so the extensionless CLI
+    scripts must be measured too."""
     import agentbox_validate as cli
-    """The smell checker globs *.py, so the four largest files in this repo
-    were invisible to it — including the two holding every HTTP handler and
-    every policy check."""
     names = {str(p.relative_to(cli.REPO)) for p in cli.source_files()}
     assert "cli/agentbox" in names
     assert "cli/agentbox-portal" in names
@@ -235,26 +228,23 @@ def test_the_entry_points_stay_small():
 
 
 def test_the_repo_is_within_its_own_ceilings():
+    """Each recorded number is a ceiling. Files may shrink and must not grow."""
     import agentbox_validate as cli
-    """Each recorded number is a ceiling, not a blessing: they may shrink and
-    must not grow."""
     oversized, grown = cli.file_size_drift()
     assert not oversized, oversized
     assert not grown, grown
 
 
-# --- from the independent acceptance pass, 2026-08-20 -------------------------
+# --- found by an independent acceptance pass --------------------------------
 
 
 def test_a_finished_invitee_is_not_told_to_ask_for_a_new_link(tmp_path,
                                                               monkeypatch):
     """They already did the only thing asked of them.
 
-    The DONE page is the POST response, so a refresh — or tapping the link
-    again in the message it arrived in — lands on this message, and it used to
-    say "ask for a new one". That is the wrong instruction given to the least
-    technical person in the flow, and it invites a second credential for
-    somebody who needs none.
+    The confirmation page is the POST response, so a refresh or a second tap on
+    the link lands here. It must not tell them to ask for a new link, which
+    would create a second credential for no reason.
     """
     invite = load("agentbox_invite", "agentbox-invite", tmp_path, monkeypatch)
     token_id = "e" * 16
@@ -271,11 +261,8 @@ def test_a_finished_invitee_is_not_told_to_ask_for_a_new_link(tmp_path,
 
 
 def test_operations_does_not_claim_the_portal_is_unauthenticated():
-    """It authenticates every route, including unknown ones.
-
-    Stating otherwise put something false at the top of the operator's health
-    view, about the most privileged service on the box — and a warning that is
-    wrong is one people learn to dismiss.
+    """It authenticates every route, including unknown ones, so the health view
+    must not warn otherwise. A false warning gets ignored.
     """
     import importlib.util
     spec = importlib.util.spec_from_file_location(

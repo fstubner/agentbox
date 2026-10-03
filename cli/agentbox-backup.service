@@ -18,7 +18,7 @@ ExecStart=%h/oss/agentbox/cli/agentbox backup --keep 14
 
 # The archive is verified with `tar -tzf` before old ones are pruned, so a
 # failed run cannot delete the last good copy. A non-zero exit here means the
-# backup did not happen — which is worth seeing in `systemctl --user status`
+# backup did not happen, which is worth seeing in `systemctl --user status`
 # rather than swallowing.
 NoNewPrivileges=true
 PrivateTmp=true

@@ -1,8 +1,5 @@
-"""The landing page, which used to open straight onto a memory queue.
-
-For somebody signing in for the first time that was a list of statements about
-themselves, from a thing nothing had introduced, with two buttons.
-"""
+"""The landing page, which introduces the assistant before showing anything
+that needs a decision."""
 from __future__ import annotations
 
 import sys
@@ -65,15 +62,8 @@ def test_only_admins_are_shown_the_box(portal):
 
 
 def test_an_evaluation_alone_is_not_alarming(portal, monkeypatch):
-    """The original intent, kept; the assertion that encoded a bug, dropped.
-
-    This test used to require "Paused for an evaluation" *and* the absence of
-    the word "down" while a FAIL check was in the snapshot — that is, it
-    asserted the masking. A test can lock in a defect as firmly as code does,
-    and this one did: it passed for four days while the page hid outages.
-
-    What the intent was worth keeping: an evaluation with nothing actually
-    wrong should not paint the page red.
+    """An evaluation with nothing actually wrong does not paint the page red,
+    and a real failure is never hidden by one.
     """
     status = portal.agentbox_status
     monkeypatch.setattr(status, "cached", lambda: status.Snapshot(
@@ -98,10 +88,8 @@ def test_a_real_outage_still_says_so(portal, monkeypatch):
 
 
 def test_every_setting_has_a_one_line_hint(portal):
-    """The long rationale is worth keeping and worth folding away. A setting
-    added without a hint falls back to showing the long form, so this is a
-    style rule rather than a correctness one — but it is the whole point of
-    the change."""
+    """Every setting has a short hint, with the full reasoning folded away. A
+    setting without one would show the long text instead."""
     settings = sys.modules["agentbox_settings"]
     missing = [s.key for s in settings.SETTINGS if not s.hint]
     assert missing == [], missing
@@ -123,14 +111,11 @@ def test_the_rationale_is_still_on_the_page_just_folded(portal):
 
 
 def test_an_evaluation_never_hides_a_real_problem(portal, monkeypatch):
-    """Found by an independent acceptance pass.
+    """A running benchmark must not hide problems on the status card.
 
-    The status card used to suppress every problem row whenever a benchmark
-    was running, on the assumption that a running evaluation meant a
-    deliberately-stopped stack. `certify` runs without quiescing production,
-    so the page announced a paused evaluation above six healthy services —
-    and would have hidden a genuine outage on the one page whose job is to
-    show it.
+    A certification run does not stop production, so assuming an evaluation
+    meant a deliberately stopped stack would hide real outages on the page
+    whose job is to show them.
     """
     status = portal.agentbox_status
     monkeypatch.setattr(status, "cached", lambda: status.Snapshot(
@@ -153,11 +138,7 @@ def test_a_healthy_box_during_an_evaluation_reads_as_healthy(portal, monkeypatch
 
 def test_the_home_page_does_not_hide_an_outage_behind_an_evaluation(portal,
                                                                     monkeypatch):
-    """The residual half of the same bug, found on re-review.
-
-    The Operations card was fixed first; this row was left with `evaluating`
-    short-circuiting `failing`, so a down service stayed masked on the page
-    people actually open.
+    """The same applies to the home page's status row, which people see first.
     """
     status = portal.agentbox_status
     monkeypatch.setattr(status, "cached", lambda: status.Snapshot(

@@ -1,12 +1,12 @@
-"""Speaking aloud, through the household's Bluetooth speakers.
+"""Speaking aloud through the household's Bluetooth speakers.
 
-The speakers are attached to the host, not to a container, so this reaches
-cli/agentbox-speaker over host.docker.internal — the same shape as the Home
-Assistant bridge reaching Home Assistant.
+The speakers are attached to the host, not a container, so this reaches
+cli/agentbox-speaker through host.docker.internal, as the Home Assistant bridge
+reaches Home Assistant.
 
 Quiet hours live in that service rather than in approval-policy.yaml. A policy
-tier can be granted; a constraint in the process holding the speaker cannot be
-argued past, which is the right property for something that wakes people up.
+tier can be granted, but a limit in the process holding the speaker cannot be
+argued past, which is right for something that can wake people up.
 """
 from __future__ import annotations
 

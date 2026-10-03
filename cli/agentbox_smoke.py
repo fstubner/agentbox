@@ -17,23 +17,19 @@ from agentbox_policy import load_tool_map
 
 # --- smoke: end-to-end workflows against the running system -----------------
 #
-# `doctor` answers "is everything up". This answers "does anything work", which
-# is a different question and the one that was never asked: every test in
-# tests/ runs against fixtures, so the whole MCP -> bridge -> upstream path had
-# no coverage at all. A service can pass every readiness probe and still refuse
-# every call, and until this existed that would have looked healthy.
+# `doctor` answers "is everything up". This answers "does anything work". The
+# tests in tests/ run against fixtures, so this is what covers the real path
+# from agentbox-mcp to the bridges and upstream. A service can pass every
+# readiness probe and still refuse every call.
 #
-# Rules, because this runs against live accounts:
-#   - Vikunja is test data, so task workflows create and clean up.
-#   - Google is real data, so only reads run here. Nothing drafts, labels or
+# It runs against live accounts, so it follows these rules.
+#   - Vikunja holds test data, so task workflows create and then clean up.
+#   - Google holds real data, so only reads run. Nothing drafts, labels or
 #     archives.
-#   - Memory proposals are inert by design, so proposing is safe; the proposal
-#     is left for the operator to reject, since deleting it needs the operator
-#     token this process should not be holding.
+#   - Memory proposals do nothing until approved, so proposing is safe. The
+#     proposal is rejected through the operator's review path.
 
-# Port and the env var each MCP reads its token from. The names are not
-# uniform — every service picked its own prefix — so this mapping is the only
-# place that knows, rather than each caller guessing.
+# Port and the environment variable holding each server's token.
 MCP_PORTS = {"agentbox-mcp": 3465}
 MCP_TOKEN_VARS = {"agentbox-mcp": "AGENTBOX_MCP_SHARED_TOKEN"}
 
@@ -75,10 +71,8 @@ def mcp_rpc(service: str, method: str, params: dict | None = None,
         except Exception:
             return {"error": {"code": exc.code, "message": exc.reason}}
     except urllib.error.URLError as exc:
-        # Nothing listening. Optional services (Home Assistant) are simply not
-        # deployed on every box, and smoke should report that rather than
-        # crash — a suite that dies on an absent optional service is one people
-        # stop running.
+        # Nothing listening. Optional services such as Home Assistant are not
+        # deployed everywhere, so report that rather than crash.
         return {"error": {"code": -1, "message": f"not reachable: {exc.reason}",
                           "unreachable": True}}
 
@@ -129,10 +123,9 @@ def smoke() -> int:
         check(f"{service} discovery", "2026-07-28" in versions,
               ", ".join(versions) if versions else str(envelope.get("error", "no response")))
 
-    # The regression that mattered most: with no token configured the check
-    # used to be skipped entirely, and an unauthenticated curl from the host
-    # returned real Gmail data. An MCP holds its bridge's credential, so
-    # failing open here launders that credential to any local process.
+    # With no token configured the server must refuse rather than skip the
+    # check. It holds bridge tokens, so failing open would hand them to any
+    # local process.
     for service in live:
         envelope = mcp_rpc(service, "tools/list", token=None)
         check(f"{service} refuses unauthenticated calls", "error" in envelope,
@@ -146,8 +139,8 @@ def smoke() -> int:
         names = [t.get("name") for t in tools]
         check(f"{service} lists tools", bool(names), f"{len(names)} tools")
         unmapped = [n for n in names if n not in tool_map]
-        # `not unmapped` is vacuously true for an empty list, so an MCP that
-        # returned nothing used to report its tools were all tiered.
+        # `not unmapped` is true for an empty list, so an empty tool list must
+        # not pass as fully mapped.
         check(f"{service} tools all tiered", bool(names) and not unmapped,
               f"unmapped: {', '.join(unmapped)}" if unmapped else
               ("" if names else "no tools to check"))
@@ -266,8 +259,8 @@ def smoke() -> int:
     check("assistant can read its own activity", ok, "" if ok else str(window))
     if ok and isinstance(window, dict):
         tools_seen = window.get("tools") or {}
-        # This very run generated the calls above, so an empty window means the
-        # journal is not being written — a silently broken reflection loop.
+        # This run made the calls above, so an empty window means the journal
+        # is not being written and reflection has nothing to read.
         check("journal has this run's calls in it", bool(tools_seen),
               f"{window.get('total_calls', 0)} calls in {window.get('window_days')}d")
         # The privacy property, checked against live data rather than a fixture.
@@ -294,13 +287,11 @@ def smoke() -> int:
 
 
 def scenarios() -> int:
-    """The household test: of the things a person would actually ask, how many
-    can the assistant answer today, and what closes each remaining gap?
+    """Of the things a person would actually ask, how many can the assistant
+    answer today, and what would close each remaining gap?
 
-    `smoke` proves the seams hold; this proves (or disproves) usefulness. It
-    exists because a week of the outcome journal showed `whoami` outnumbering
-    every household tool — the plumbing was perfect and almost nobody was
-    being helped. Run it weekly; the score should climb as gaps close.
+    `smoke` checks the seams hold. This checks usefulness. Run it weekly, and
+    the score should rise as gaps close.
     """
     import importlib.util as _ilu
     spec = _ilu.spec_from_file_location(

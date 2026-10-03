@@ -16,14 +16,9 @@ __all__ = [
     "flash_text",
 ]
 
-# Messages the portal shows after an action, keyed rather than spelled out in
-# the URL.
-#
-# `?m=<free text>` was truncated at 120 characters, so a redirect meant for a
-# signed-in page greeted the operator with "…so ask now if y" — a sentence cut
-# mid-word, still there on every refresh, long after the thing it described
-# had been finished. Keys fix all three: the text lives here in full, nothing
-# from the URL is ever rendered, and adding a message cannot lengthen a URL.
+# Messages shown after an action, looked up by key rather than taken from the
+# URL. The text lives here in full, nothing from the URL is ever shown, and a
+# long message cannot lengthen a URL.
 FLASHES = {
     "memory_saved": "Memory saved.",
     "memory_saved_edited": "Memory saved, with your edit.",
@@ -117,14 +112,13 @@ FLASHES = {
 }
 
 def origin_refusal(origin: str, action: str) -> str:
-    """Which flash explains an action refused for how this session signed in.
+    """Which message explains an action refused because of how this session
+    signed in.
 
-    Both origins are downgraded, for different reasons, and saying the wrong
-    one sends a person to do something that will not help. Somebody who DMed
-    the bot `link` is told "this link was created by the assistant" — which is
-    untrue, and the fix it implies (ask for your own link) is the one they
-    already did. Their link is limited because it was not opened in the
-    browser that asked for it.
+    Both origins are downgraded, for different reasons, and naming the wrong
+    one sends a person to do something that will not help. A chat-delivered
+    link is limited because it was opened in a different browser, not because
+    the assistant made it.
     """
     prefix = "chat_link" if origin == portal.ORIGIN_CHAT else "agent_link"
     return f"{prefix}_cannot_{action}"

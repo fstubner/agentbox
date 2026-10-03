@@ -107,31 +107,26 @@ def send_invite_email(address: str, url: str, display_name: str = "") -> tuple[b
 
 # --- delivery ------------------------------------------------------------------
 #
-# A sign-in link has to reach a person; how is a household preference, not a
-# security property. What makes the link safe is that it is bound to the
-# browser that asked for it — a nonce cookie set at request time, required at
-# redemption — so a link sitting in a Discord DM or an inbox is useless to
-# anyone who merely reads it, including the assistant, which can read both.
+# How a sign-in link reaches a person is a household preference, not a security
+# property. The link is safe because it is bound to the browser that asked for
+# it, so a link in a Discord DM or an inbox is useless to anyone who only reads
+# it, including the assistant, which can read both.
 #
-# That is why Discord delivery is safe here and worth having: it needs no SMTP
-# credential, no personal address in the From line, and it lands where the
-# household already talks to the assistant.
+# That makes Discord delivery safe and useful. It needs no SMTP credential or
+# personal sending address, and arrives where the household already talks to
+# the assistant.
 #
-# The portal does not hold the Discord bot token. It writes a delivery request
-# to the same spool the connector flow uses, and cli/agentbox-approvals — which
-# runs as the operator, holds the token, and never passes through the model —
-# sends the DM. Same two-phase split, same reason: a LAN-reachable page should
-# not hold a credential that can message the household.
+# The portal does not hold the bot token. It writes a delivery request, and
+# cli/agentbox-approvals, which runs as the operator, holds the token and
+# never passes anything through the model, sends the DM. A page on the LAN
+# should not hold a credential that can message the household.
 
 def delivery_channels(identity: str, address: str) -> list[str]:
     """Which channels could carry a link to this person, in order.
 
-    The single definition. `has_delivery_channel` and `deliver_link` used to
-    each spell out the same conditions, and they had to agree or blocker B1
-    reopened: a predicate saying "nowhere to send it" while delivery succeeds
-    mints an operator-privileged link and then transmits it. Nothing kept
-    them in sync — a third channel added to one and not the other was all it
-    would take.
+    The one definition, used by both `has_delivery_channel` and
+    `deliver_link`. If they disagreed, a link judged undeliverable could be
+    made with operator privilege and then sent anyway.
     """
     channels = []
     if (portal.SETTINGS.value("smtp_host") or os.environ.get("AGENTBOX_RELAY_URL")) and address:
@@ -193,7 +188,7 @@ def deliver_link(identity: str, address: str, url: str) -> bool:
     return delivered
 
 def discord_identities() -> set[str]:
-    """Identities reachable by Discord DM — paired, or configured the old way."""
+    """Identities reachable by Discord DM, paired or configured the old way."""
     out = set(portal.load_chat_links()["linked"])
     for pair in os.environ.get("AGENTBOX_DISCORD_IDENTITIES", "").replace(
             " ", ",").split(","):
@@ -212,15 +207,12 @@ def invite_public_host() -> str:
 def deliver_invite(record: dict, url: str) -> list[str]:
     """Send an invitation. Returns the channels that accepted it.
 
-    `deliver_link` resolves an identity to an address and a Discord account.
-    Neither exists yet for somebody being invited — that is what an invitation
-    is for — so the targets come from the proposal an admin approved, and the
-    identity lookup is deliberately not consulted.
+    The person has no identity here yet, so the targets come from the
+    proposal an admin approved rather than from an identity lookup.
 
-    The URL is a credential: whoever opens it can fill in the form as the
-    named person. It is bounded rather than protected, the same way an
-    assistant-minted sign-in link is — what the form produces is a *submitted*
-    invite, which creates nothing until an admin approves it on Operations.
+    The URL lets whoever opens it fill in the form as the named person. That
+    only produces a submitted invite, which creates nothing until an admin
+    approves it on Operations.
     """
     channels = []
     address = str(record.get("address", ""))
@@ -255,15 +247,11 @@ INVITE_DIR = Path(os.environ.get(
     str(Path("~/.local/state/agentbox/invites").expanduser())))
 
 def submitted_invites() -> list[dict]:
-    """Invites somebody filled in that nobody has completed yet.
+    """Invites that were filled in and not yet completed.
 
-    A read and nothing else. The portal may see that an onboarding is waiting
-    and may ask for it to be finished; the deciding and the doing belong to
-    `agentbox invite drain`, which re-derives all of this for itself.
-
-    The secret is deliberately not carried out of the record — this renders a
-    page, and the one field that would let somebody impersonate the invitee
-    has no business on it.
+    Read only. The portal can show that an onboarding is waiting and ask for
+    it to be finished, while `agentbox invite drain` decides and does it.
+    The secret is left out, because this renders a page.
     """
     out = []
     try:

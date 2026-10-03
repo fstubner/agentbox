@@ -1,41 +1,31 @@
-"""Onboarding approvals: the portal asks, a privileged worker decides.
+"""Onboarding approvals: the portal asks, and a privileged worker decides.
 
-Completing an invite creates a Vikunja account, exchanges an OAuth code, and
-runs `docker compose up` for a new per-identity bridge. `cli/agentbox-invite`
-put that behind a terminal on purpose, arguing that a LAN-reachable page
-holding the docker socket is the worst thing that could run on this box.
+Completing an invite creates a Vikunja account, exchanges an OAuth code and
+starts a per-person bridge with `docker compose up`. A web page on the LAN
+must never hold the Docker socket, so the portal only triggers completion. The
+privilege stays with a separate worker.
 
-The household decided on 2026-08-19 that onboarding should not need a
-terminal. That does not overrule the argument — it moves where completion is
-*triggered* from without moving where its privilege *lives*.
+## Two gates
 
-## The two gates
+The portal writes one file naming an invite. It runs no Docker command, holds
+no bridge token, and gains nothing, because writing into a directory is a
+request, not authority. A separate unit reads the file, re-derives everything
+itself, and acts.
 
-The portal writes one file naming an invite. It runs no docker command, holds
-no bridge token, and gains no capability it did not already have: writing into
-a directory is not authority, it is a request. A separate unit reads that
-file, re-derives everything for itself, and acts.
+The worker trusts one field of what the portal wrote, which invite is meant,
+and re-reads that invite to decide everything else. The approver, time and
+origin are recorded for auditing and never treated as permission.
 
-The worker therefore trusts exactly one field of what the portal wrote — which
-invite is meant — and re-reads that invite from the invite spool to decide
-anything else. Approver, timestamp and origin are recorded for the audit trail
-and are never consulted as permission. This is the same split the MCP layer
-and the bridges already use, where the non-consuming check is advisory and the
-consuming one is authoritative.
+## What this limits
 
-## What this bounds
+A request can only name an invite an operator created and the invitee filled
+in. Nothing here can conjure an identity, so the most a compromised portal
+could do is complete an onboarding a person had already started.
 
-A request can only ever name an invite that an operator already created and
-that the invitee already filled in. Nothing here can conjure an identity from
-an empty spool, so the worst a compromised portal achieves is completing an
-onboarding that a human had already set in motion — not inventing one.
-
-Approvals expire. A file that sits in the spool because the worker was down
-for a week should not fire when it comes back, so `MAX_REQUEST_AGE` is checked
-against the approval, never against the invite: bounding our own staleness
-does not change when an invite is valid, which stays `cli/agentbox`'s call.
-
-Stdlib only, like everything else that runs on this host.
+Approvals expire. A request left in the spool while the worker was down for a
+week should not fire when it returns, so `MAX_REQUEST_AGE` is checked against
+the approval. Whether the invite itself is still valid stays cli/agentbox's
+decision.
 """
 from __future__ import annotations
 
@@ -53,9 +43,8 @@ from agentbox_onboarding_store import (  # noqa: F401
     spool_dir,
 )
 
-# Invite ids are `secrets.token_hex(8)`. Anchored and fixed-width, because
-# this string arrives from an HTTP form and is about to become a filename —
-# the same lesson as the portal's link ids, which reached a path unchecked.
+# Invite ids are `secrets.token_hex(8)`. Anchored and fixed-width, because the
+# string comes from an HTTP form and will become a filename.
 TOKEN_ID = re.compile(r"^[0-9a-f]{16}$")
 
 # An approval is a decision made at a moment. A week later it is a stale file,
@@ -190,14 +179,11 @@ class AlreadyInvited(ValueError):
 
 
 def outstanding(identity: str = "", now: int | None = None) -> list[dict]:
-    """Invites that are still live: nobody has used them and they have time.
+    """Invites still live: unused and not expired.
 
-    Each one is a credential — the runbook says so in as many words — so
-    knowing which are outstanding is not bookkeeping. Without it, minting was
-    unbounded: three identical submissions produced three simultaneously valid
-    links for one person, and on a box with no delivery channel the page that
-    shows the link is rendered by the POST itself, so a browser refresh did it
-    silently.
+    Each one is a credential, so this is how the number of live links per
+    person is limited. Otherwise repeated submissions, or a refresh, would
+    each create another valid link.
     """
     now = int(time.time()) if now is None else now
     want = (identity or "").strip().lower()
@@ -226,14 +212,12 @@ def outstanding(identity: str = "", now: int | None = None) -> list[dict]:
 
 def create_invite(identity: str, existing: set[str],
                   ttl_hours: int = INVITE_TTL_HOURS) -> dict:
-    """Mint an invite record. Unprivileged: this writes one file.
+    """Create an invite record. Unprivileged, as it writes one file.
 
-    `existing` is required rather than looked up, so no caller can forget it.
-    An invite names the identity its holder will become, and completing one
-    for a name already in use would re-provision that person's bridge with
-    whoever answered the form — handing an attacker `alex` rather than
-    creating an `alex`. There is no legitimate reason to invite somebody to a
-    name that is taken, so this refuses rather than disambiguating.
+    `existing` is required so no caller can forget it. Completing an invite
+    for a name already in use would rebuild that person's bridge with whoever
+    filled in the form and hand them the account. There is no good reason to
+    invite someone to a taken name, so this refuses.
     """
     identity = (identity or "").strip().lower()
     if not IDENTITY_NAME.match(identity):
@@ -276,10 +260,8 @@ def propose(identity: str, display_name: str, address: str = "",
             discord_user_id: str = "", proposed_by: str = "") -> dict:
     """Record an invitation the assistant drafted. Sends nothing.
 
-    Deliberately does not check whether the name is free. That check belongs
-    where the invite is actually minted, and doing it here as well would let
-    the two disagree — with this copy, the one an admin reads, being the
-    optimistic one.
+    It does not check whether the name is free. That check happens where the
+    invite is created, and a second copy here could disagree with it.
     """
     import secrets as _secrets
     record = {

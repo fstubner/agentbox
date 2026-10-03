@@ -1,12 +1,9 @@
-"""Tests for the consolidated MCP gateway and its identity model.
+"""Tests for agentbox-mcp and its identity model.
 
-The property that matters: **identity is the credential, not an argument.**
-Whoever presents alex's token is alex, and there is no way to ask to be
-someone else — so an instruction embedded in an email cannot switch accounts,
-because switching would require a token the process was never given.
-
-If that ever regresses, one compromised context reaches both people's mail
-instead of one, which is the entire cost of going multi-user.
+Identity is the credential, not an argument. Whoever presents alex's token is
+alex, and there is no way to ask to be someone else, so an instruction in an
+email cannot switch accounts. If that regressed, one compromised conversation
+could reach everyone's mail.
 """
 from __future__ import annotations
 
@@ -33,7 +30,8 @@ os.environ.setdefault("AGENTBOX_RUNTIME_POLICY",
 
 
 def load_gateway(identities: str = ""):
-    """Fresh module — identity_tokens is bound at class definition."""
+    """A fresh module, since identity_tokens is bound when the class is
+    defined."""
     os.environ["AGENTBOX_IDENTITIES"] = identities
     os.environ["AGENTBOX_MCP_SHARED_TOKEN"] = "shared-secret"
     spec = importlib.util.spec_from_file_location(
@@ -50,13 +48,11 @@ def gw():
 
 @pytest.fixture
 def open_gate(monkeypatch):
-    """Neutralise the policy gate for tests about *identity resolution*.
+    """Neutralise the policy gate for tests about identity resolution.
 
-    policy_gate binds its paths as default arguments at import, and another
-    test module imports it first with the in-container defaults — so every
-    tool looks unmapped and is denied, dispatch never runs, and these tests
-    would be asserting on a gate they are not about. test_policy_gate owns
-    that behaviour.
+    policy_gate binds its paths at import, and another test module imports it
+    first with the container defaults, so every tool would be denied and these
+    tests would be about a gate they do not cover. test_policy_gate does.
     """
     import mcp_base
     monkeypatch.setattr(mcp_base.policy_gate, "check", lambda *a, **k: None)
@@ -84,12 +80,9 @@ def rpc(base, method, params=None, token=None):
 
 
 def test_every_integration_contributes_tools(gw):
-    """Derived from the registry rather than a hardcoded list.
-
-    A snapshot here fails on every new integration and gets "fixed" by pasting
-    the name in, which tests nothing. The property worth holding is that
-    something registered contributes tools — a module wired in but silently
-    exporting none is the bug this catches.
+    """Checked against the registry rather than a fixed list, which would
+    break on every new integration and be fixed by pasting in the name. What
+    matters is that every registered integration contributes tools.
     """
     owners = set(gw.TOOL_OWNER.values())
     assert owners == set(gw.INTEGRATIONS)
@@ -172,9 +165,8 @@ def test_the_shared_token_does_not_work_once_identities_exist(gw):
 
 
 def test_no_argument_can_set_the_identity(gw, open_gate):
-    """The property the whole design rests on. A tool argument named
-    `identity`, `as`, or anything else must not influence who the call acts
-    as — otherwise injected content could name an account."""
+    """No tool argument, whether called `identity`, `as` or anything else, may
+    change who the call acts for, or injected content could name an account."""
     server, base = serve(gw.AgentboxMcp)
     try:
         seen = {}
@@ -267,8 +259,8 @@ def test_identity_routes_to_a_per_identity_bridge(gw, monkeypatch):
     assert captured["auth"] == "Bearer sam-bridge-token"
     assert captured["identity"] == "sam"
 
-    # Alex has no override, so he falls back to the shared bridge — correct
-    # for services that genuinely are shared.
+    # alex has no override, so falls back to the shared bridge, which is
+    # right for shared services.
     gw._client.CURRENT_IDENTITY.set("alex")
     client("GET", "/v1/x")
     assert captured["url"].startswith("http://shared-google:8080")
@@ -371,7 +363,7 @@ def test_identity_scoped_grants_only_match_their_identity():
                                 consumed_path=consumed, identity="sam")
         assert not pg.consume_grant("archive_gmail", grants,
                                     consumed_path=consumed, identity="alex")
-        # And an unscoped grant still covers anyone — the pre-identity default.
+        # An unscoped grant still covers anyone.
         grants.write_text(json.dumps({"grants": [{
             "tool": "archive_gmail", "expires_at": time.time() + 60,
             "single_use": False}]}))

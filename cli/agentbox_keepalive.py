@@ -1,50 +1,36 @@
 """Bring the local model stack back up when nothing is deliberately holding it down.
 
-## What this is actually for
+## What this is for
 
-The stack does not crash. It is stopped, on purpose, by evaluation runs: a
-compare run cannot share 16 GB of unified memory with the production model, so
-`agentbox-eval` quiesces production, runs, and restores it afterwards. That is
-correct and there is no way around it on this hardware — both models do not
-fit.
+The stack is stopped on purpose by evaluation runs, because a benchmark model
+and the production model cannot both be loaded. `agentbox-eval` stops
+production, runs, and restores it afterwards.
 
-The failure mode is narrower than "it keeps going down". It is that the
-restore is the *last* thing a run does, so anything that stops a run from
-finishing leaves production stopped:
+Restoring is the last thing a run does, so anything that stops a run finishing
+leaves production down. SIGINT, SIGTERM and SIGHUP are handled by the
+evaluator. This covers what a process cannot handle from inside itself.
 
-  - the run is killed with SIGKILL, which no handler can intercept
-  - the box loses power or reboots mid-run
-  - the run dies in a way that skips its own `finally`
+  - the run is killed with SIGKILL
+  - the machine loses power or reboots mid-run
+  - the run dies in a way that skips its own clean-up
 
-SIGINT, SIGTERM and SIGHUP are already handled in the evaluator's lifecycle
-manager and do restore correctly — SIGHUP was added after three runs left the
-stack down for hours, the last for thirteen. This covers what is left, which
-is the class of failures a process cannot handle from inside itself.
+## Why not Restart=always
 
-## Why a watchdog rather than Restart=always
-
-`Restart=always` does not help: systemd does not restart a unit that was
-stopped deliberately, and every one of these stops is deliberate. The stop is
-not the bug. Nobody putting it back is.
+systemd does not restart a unit that was stopped deliberately, and every one of
+these stops is deliberate. The stop is not the problem, and nothing putting it
+back is.
 
 ## Why it cannot fight an evaluation
 
-It stands down whenever an evaluation process exists. A run holds its process
-for its entire duration — quiesce happens inside the run, not before it — so
-the presence of that process is a reliable "someone means this to be down".
+It stands down whenever an evaluation process exists, since a run holds its
+process for its whole duration. It checks before and after starting anything,
+so a run that begins mid-restore is not raced. When in doubt it does nothing,
+because a late restore costs minutes and a corrupted benchmark costs a day.
 
-Checked before *and* after starting anything: a run that begins while this is
-mid-flight would otherwise race, and losing that race means starting a model
-that steals memory from a benchmark and silently corrupts its numbers. On any
-doubt this does nothing, because a late restore costs minutes and a corrupted
-comparison costs a day.
+## Turning it off
 
-## The escape hatch
-
-`~/.local/state/agentbox/keepalive-disabled` stops it entirely. An operator
-doing maintenance needs a way to keep the stack down that does not involve
-racing a timer, and "delete the file" is easier to remember at 2am than a
-systemctl incantation.
+`~/.local/state/agentbox/keepalive-disabled` stops it entirely, for
+maintenance that needs the stack to stay down.
 """
 from __future__ import annotations
 
@@ -53,9 +39,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Ordered: models first, then the things that talk to them. Starting a router
-# before the workers it routes to would have it answering for a stack that is
-# not there yet — the same ordering the evaluator's own restore uses.
+# Started in order, models first and then what talks to them.
 PRODUCTION_UNITS = (
     "agentbox-production-model.service",
     "nemohermes-docker-bridge.service",
@@ -77,13 +61,9 @@ def _run(argv: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
 
 
 def evaluation_running() -> bool:
-    """Whether an evaluation currently owns the machine.
-
-    Delegates to agentbox_status, which reads argv from /proc rather than
-    grepping command lines — see its docstring for the five processes that a
-    substring match mistook for a benchmark, and the four days this watchdog
-    spent standing down because of them.
-    """
+    """Whether an evaluation currently owns the machine. Delegates to
+    agentbox_status, which reads argv from /proc rather than grepping command
+    lines."""
     return agentbox_status.evaluation_running()
 
 
@@ -124,14 +104,12 @@ def main(argv: list[str] | None = None) -> int:
     quiet = "--quiet" in (argv if argv is not None else sys.argv[1:])
 
     def say(message: str) -> None:
-        """Log a no-op the first time it happens, then stay quiet about it.
+        """Log a no-op the first time, then stay quiet about it.
 
-        The unit runs `--quiet` every two minutes, so the reason for standing
-        down was never written down — and a watchdog that silently does
-        nothing looks exactly like a watchdog that is working. It stood down
-        for four days that way. Logging every tick would be 30 lines an hour
-        during a long benchmark, which is its own kind of invisible, so this
-        logs transitions: a changed reason is news, a repeated one is not.
+        The unit runs every two minutes, so logging every tick would bury the
+        reason in noise, and logging nothing makes a watchdog that is standing
+        down look like one that is working. It logs only when the reason
+        changes.
         """
         if not quiet:
             print(message, file=sys.stderr)

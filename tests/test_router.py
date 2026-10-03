@@ -134,13 +134,11 @@ def test_final_text_empty_choices(stack):
 
 
 def test_each_role_forwards_the_instruction(stack, monkeypatch):
-    """The seam the harness escalation depends on.
+    """Every role must forward `instruction`.
 
-    The harness sends its schema demand in `instruction` and escalates from the
-    context worker to the main model. `decide_orchestrate` silently dropped the
-    field, so the escalation target never saw the contract and every retry
-    failed validation. Assert all three roles actually forward it — a stub that
-    echoes the last 20 characters would not have caught this.
+    The harness sends its schema in `instruction` and escalates to the main
+    model, so the main model must see it too, or every retry fails validation.
+    A stub echoing part of the text would not catch a role that drops it.
     """
     _, mod = stack
     captured = {}

@@ -1,44 +1,33 @@
 """Household settings that belong to the household, not to a config file.
 
-Who is an admin, where sign-in links are sent, how mail goes out — these are
-decisions the people living here make, and every one of them used to require
-an operator editing a systemd unit and restarting a service. That is the
-operator's job leaking into the household's, for no security benefit: none of
-these values is safer for being in a unit file.
+Who is an admin, where sign-in links go and how mail is sent are decisions for
+the people who live here, so they are edited on the portal rather than in a
+systemd unit. None of these values is safer for being in a unit file.
 
-## Why a table rather than a page per setting
+## One table rather than a page per setting
 
-The portal had grown three hand-rolled JSON stores by the time this was
-written — connector requests, chat pairings, rule approvals — each with its
-own load, save, permissions and validation. A fourth and fifth would have been
-copy-paste, and copy-paste is how the fail-open auth bug shipped in this
-codebase: five near-identical things drifted apart.
+A setting is declared once, in SETTINGS, with a validator, and the portal
+renders and saves it generically. There is no per-setting page code to forget
+to guard.
 
-So a setting is declared once, here, and the portal renders and writes it
-generically. Adding one is a single entry in SETTINGS with a validator. There
-is no per-setting UI code to forget to guard.
+## Where the values live
 
-## Where the values live, and why not in the same place as everything else
+`~/.local/state/agentbox/portal/settings.json`, mode 600, owned by the
+operator and mounted into no container. That is the security property.
+`admins` decides who may approve a memory, and `identity_emails` decides where
+a sign-in link goes. If the assistant could write either, it could make itself
+an admin or redirect someone's link to a mailbox it reads. No tool reaches this
+file, no container mounts it, and the portal only writes it for a session that
+a chat-delivered link cannot get.
 
-`~/.local/state/agentbox/portal/settings.json`, mode 0600, owned by the
-operator's user and mounted into no container.
-
-That last part is the security property, not an accident. `admins` decides who
-may approve a memory; `identity_emails` decides where a sign-in link is
-delivered. If the assistant could write either, it could make itself an admin
-or point somebody's link at a mailbox it reads. It has no route to this file:
-no MCP tool reaches it, no container mounts it, and the portal that does write
-it requires a session that a chat-delivered link cannot obtain.
-
-Settings that a *container* must read cannot live here for exactly that
-reason — see `household.py` for those, which go on the read-only policy mount
-instead.
+Settings a container must read go on the read-only policy mount instead. See
+`agentbox_household.py`.
 
 ## Precedence
 
-Stored value, then the legacy environment variable, then the default. The env
-var is still honoured so a box configured before this existed keeps working
-and can be migrated by saving the form once.
+The stored value, then the old environment variable, then the default. The
+environment variable is still read, so an older box keeps working until the
+form is saved once.
 """
 from __future__ import annotations
 
@@ -65,20 +54,17 @@ from agentbox_settings_values import (  # noqa: F401
 
 @dataclass(frozen=True)
 class Setting:
-    """One household setting: how to store it, show it, and check it.
+    """One household setting: how to store it, show it and check it.
 
-    `clean` is the whole of the validation. It returns the value to store or
-    raises InvalidSetting with a sentence a person can act on — never a
-    coerced value, because silently accepting a near-miss is how a setting
-    ends up meaning something nobody chose.
+    `clean` is all of the validation. It returns the value to store, or raises
+    InvalidSetting with a sentence a person can act on. It never coerces a
+    near miss into something nobody chose.
     """
 
     key: str
     label: str
-    # The long form: why this setting is the way it is. Kept, because every
-    # one of these paragraphs is the record of a decision somebody will
-    # otherwise re-litigate — but folded away behind "Why", because an admin
-    # adding their partner should not have to read three of them first.
+    # The reasoning behind the setting, folded away under "Why" so an admin
+    # adding someone does not have to read it first.
     help: str
     clean: Callable[[str], str]
     # One line, shown next to the field. When empty the long form is shown
@@ -93,14 +79,6 @@ class Setting:
     admin_only: bool = True
     default: str = ""
     group: str = "General"
-
-
-# --- validators ----------------------------------------------------------------
-#
-# Each one is total: it returns a cleaned value or raises. None of them
-# silently drops part of the input, because a list that quietly loses an entry
-# is worse than a rejection — the person believes they configured something
-# they did not.
 
 
 # --- the settings themselves ---------------------------------------------------
@@ -222,11 +200,9 @@ SETTINGS: tuple[Setting, ...] = (
     ),
 )
 
-# Deliberately not here: the Discord bot token. It stays in 1Password, which
-# gives rotation and an audit trail and keeps it off this disk entirely.
-# Moving it into this file to save a lookup would be trading a managed secret
-# for a local one — the opposite direction from everything else in this table,
-# which moves *configuration* out of local files and leaves credentials alone.
+# The Discord bot token is not here. It stays in the secret manager, which
+# handles rotation and auditing. This table moves configuration out of local
+# files and leaves credentials alone.
 
 BY_KEY = {setting.key: setting for setting in SETTINGS}
 GROUPS = tuple(dict.fromkeys(setting.group for setting in SETTINGS))
@@ -245,9 +221,8 @@ class SettingsStore:
     """
 
     directory: Path
-    # None means "read os.environ when asked". A snapshot taken at
-    # construction would freeze the legacy fallback at import time, which is
-    # both surprising and untestable — the store is built once at startup.
+    # None means read os.environ when asked, rather than freezing the fallback
+    # when the store is built at startup.
     environ: dict | None = None
 
     def _env(self) -> dict:
@@ -280,12 +255,10 @@ class SettingsStore:
 
     def save(self, submitted: dict[str, str],
              clear: frozenset[str] = frozenset()) -> list[str]:
-        """Validate and store. Returns the keys that actually changed.
+        """Validate and store. Returns the keys that changed.
 
-        Every value is validated before anything is written, so a form with
-        one bad field changes nothing rather than applying the good half — a
-        half-applied settings page is how somebody ends up with an admin list
-        they did not intend.
+        Every value is checked before anything is written, so a form with one
+        bad field changes nothing, rather than applying half of it.
         """
         stored = self._stored()
         cleaned: dict[str, str] = {}
@@ -294,11 +267,9 @@ class SettingsStore:
             if setting is None:
                 continue
             if setting.secret and raw == "" and key not in clear:
-                # Blank means "keep what is there" — otherwise every save of
-                # the form would wipe the password, since the field is never
-                # echoed back. `clear` is how a caller says it meant empty:
-                # without it a stored secret can be replaced forever and
-                # removed never.
+                # Blank means keep what is there, because a password field is
+                # never shown back and every save would otherwise wipe it.
+                # `clear` is how a caller says it really meant empty.
                 continue
             try:
                 cleaned[key] = setting.clean(raw)

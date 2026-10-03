@@ -64,10 +64,8 @@ def _sibling(name: str):
     spec = _importlib_util.spec_from_file_location(
         name, Path(__file__).resolve().parent / f"{name}.py")
     module = _importlib_util.module_from_spec(spec)
-    # Registered before execution, not after: @dataclass resolves
-    # sys.modules[cls.__module__] while the class body runs, and gets None if
-    # the module is not there yet. Loading a module by path without this works
-    # right up until the module contains a dataclass.
+    # Registered before running, because @dataclass looks the module up in
+    # sys.modules while the class body runs.
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
@@ -168,17 +166,9 @@ def cmd_link(args) -> int:
 def reap_expired() -> tuple[int, int]:
     """Delete session and link records that can no longer authenticate anyone.
 
-    Nothing removed these, so they accumulated: 34 sessions and 5 link records
-    were still on disk days after every one of them had expired. None of it is
-    exploitable — redemption checks `expires_at` and `used_at` regardless — but
-    each file holds an identity and a secret hash, and keeping a credential
-    record past the point where it can authorise anything is a disclosure
-    surface with no remaining purpose.
-
-    Runs at startup rather than on a timer: the portal restarts often enough,
-    and a reaper that needs its own scheduler is a second thing to keep alive.
-    Failure here is not worth refusing to serve over — an unreadable record is
-    skipped, not fatal.
+    They cannot be used once expired, but each holds an identity and a secret
+    hash, so there is no reason to keep them. Runs at startup rather than on a
+    timer, and skips any record it cannot read.
     """
     sessions = links = 0
     for directory, counter in (("sessions", "s"), ("links", "l")):
@@ -207,10 +197,8 @@ def reap_expired() -> tuple[int, int]:
 
 def cmd_serve(args) -> int:
     config.STATE.mkdir(parents=True, exist_ok=True)
-    # Mint the consent-state secret now, not on the first reconnect click. If
-    # this directory is unwritable the process should fail here at startup,
-    # where systemd shows it — not as a 500 halfway through someone's OAuth
-    # flow days later.
+    # Create the consent-state secret now rather than on the first reconnect,
+    # so an unwritable directory fails at startup where systemd shows it.
     auth.state_secret()
     dead_sessions, dead_links = reap_expired()
     if dead_sessions or dead_links:
@@ -225,11 +213,10 @@ def cmd_serve(args) -> int:
               f"{dead_invites} expired invite(s)", file=sys.stderr)
     httpd = ThreadingHTTPServer((args.host, args.port), server.PortalHandler)
     print(f"[ok] portal on http://{args.host}:{args.port}", file=sys.stderr)
-    # Said loudly at startup because it cannot be said at the point of failure.
-    # The sign-in page answers identically whether or not delivery worked —
-    # anything else would reveal which addresses are registered — so an
-    # unconfigured SMTP host produces a link nobody receives and a page that
-    # looks like it worked. This is the only place a human finds out.
+    # Said at startup because it cannot be said when it matters. The sign-in
+    # page answers the same way whether or not delivery worked, so without a
+    # mail server links are made, nobody receives them, and the page looks
+    # fine. This is the only place a person finds out.
     if config.SETTINGS.value("identity_emails") and not config.SETTINGS.value("smtp_host"):
         print("[warn] sign-in addresses are configured but no mail server is: "
               "links will be minted and never sent, and the page cannot say so "

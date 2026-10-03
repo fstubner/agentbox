@@ -1,6 +1,6 @@
-"""One module per integration: TOOLS plus a dispatch(name, args).
+"""One module per integration, each with TOOLS and dispatch(name, args).
 
-Each module is the assistant-facing definition of one bridge's surface — the
-designed grammar, not a wrapper. The gateway assembles them into a single tool
-registry and refuses to start on a name collision.
+Each module defines what the assistant can do with one bridge, designed rather
+than wrapped. The server combines them into one registry and refuses to start
+if two tools share a name.
 """

@@ -48,7 +48,7 @@ def call(base, path, token=None, body=None, method="POST"):
 
 
 def test_unset_token_fails_closed():
-    """The motivating bug: empty token must NOT authenticate — expect 503."""
+    """An empty token must not authenticate. The bridge answers 503."""
     server, base = serve(make_handler(""))
     try:
         call(base, "/v1/thing", token="", body={"v": 1})

@@ -1,27 +1,19 @@
 """What the assistant is allowed to actuate in the house.
 
-Separate from `agentbox_settings.py` for one reason, and it is a security
-reason rather than a tidiness one: a *bridge* has to read this, and bridges
-run in containers.
+Kept apart from `agentbox_settings.py` because a bridge has to read it, and
+bridges run in containers. The settings file is safe because no container
+mounts it. Putting device permissions there would mean mounting it into the
+Home Assistant bridge, giving the assistant a route to every setting.
 
-The settings file lives in the portal's state directory precisely because no
-container mounts it — that is what stops the assistant making itself an admin
-or redirecting a sign-in link. Putting device permissions in the same file
-would mean mounting that directory into the Home Assistant bridge, which would
-hand the assistant a route to every setting in it.
+So this goes on the read-only policy mount, like grants. The portal, owned by
+the operator, writes it, and the bridge reads it and cannot write it.
 
-So this goes on the policy mount instead: the same read-only volume the grants
-file uses, for the same reason. The portal (operator-owned) writes it; the
-bridge reads it and cannot write it. Writing where the assistant can write
-confers no authority anywhere in this system, and this keeps that true.
-
-## What this does not do
+## What this cannot do
 
 It cannot widen anything the bridge refuses in code. Locks, alarms and covers
-are `SECURITY_DOMAINS` and are rejected regardless of what appears here —
-naming one is not an error, it simply has no effect. That belt is deliberate:
-a settings page that could unlock a door would make every other control in
-this system conditional on the portal never being compromised.
+are in `SECURITY_DOMAINS` and are refused whatever appears here. Naming one has
+no effect. A settings page that could unlock a door would make every other
+control depend on the portal never being compromised.
 """
 from __future__ import annotations
 

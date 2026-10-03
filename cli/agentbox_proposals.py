@@ -21,15 +21,13 @@ PROPOSAL_REFSPEC = "refs/heads/proposal/*:refs/remotes/assistant/*"
 
 
 def builder_git(*args: str, capture: bool = True) -> subprocess.CompletedProcess:
-    """git in the operator's repo, reading proposals out of the builder clone.
+    """git in the operator's repository, reading proposals from the builder's
+    clone.
 
-    The clone is owned by the operator with group 65532, setgid and
-    group-writable — the same shape as policy-state and logs, and for the same
-    reason. The obvious alternative, chowning it to the container uid, makes
-    git refuse to read it from here as "dubious ownership", and that cannot be
-    waived with `-c safe.directory`: git ignores that setting from the command
-    line on purpose, so an attacker-controlled argv cannot disable the check.
-    Fixing ownership is the fix; suppressing the warning was never available.
+    The clone is owned by the operator with group 65532, setgid and group
+    writable, like policy-state and logs. Owning it by the container's uid
+    instead makes git refuse to read it from here, and `-c safe.directory`
+    cannot override that from the command line, by design.
     """
     return subprocess.run(["git", *args], cwd=str(REPO), text=True,
                           capture_output=capture, timeout=120)
@@ -85,13 +83,11 @@ def proposals_show(name: str) -> int:
 
 
 def proposals_merge(name: str) -> int:
-    """Merge a proposal onto a local branch — never onto main directly.
+    """Merge a proposal onto a local branch, never straight onto main.
 
-    The assistant cannot merge (`merge_own_pr` is always_denied) and this does
-    not weaken that: it lands the work on a branch for you to test and push
-    yourself. Merging straight to main here would make the operator's approval
-    a single keystroke on an unread diff, which is the thing the whole review
-    gate exists to prevent.
+    The assistant cannot merge, and this keeps it that way. The work lands on a
+    branch for you to test and push. Merging straight to main would make
+    approval one keystroke on an unread diff.
     """
     if not proposals_fetch():
         return 1

@@ -1,7 +1,7 @@
-"""Vikunja MCP: task management over the vikunja bridge.
+"""Task management through the Vikunja bridge.
 
-Every write here is reversible and nothing deletes — marking a task for cleanup
-adds a comment rather than removing anything.
+Every write can be undone and nothing deletes. Marking a task for clean-up adds
+a comment rather than removing anything.
 """
 from __future__ import annotations
 

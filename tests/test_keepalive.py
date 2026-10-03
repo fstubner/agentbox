@@ -204,10 +204,7 @@ def test_the_evaluator_itself_still_counts(ka):
         ["/opt/evals/.venv/bin/agentbox-eval", "certify"],
         ["python", "-m", "agentbox_evals"],
     ):
-        # No escape clause. The first version of this test read
-        # `... or argv[1] == "-m"`, which made the module form pass without
-        # being detected at all — a test that excused its own failure and
-        # implied coverage that did not exist.
+        # No escape clause, so the module form must actually be detected.
         assert status.looks_like_evaluator(argv), argv
 
 

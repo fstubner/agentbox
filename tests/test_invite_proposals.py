@@ -1,14 +1,13 @@
 """The assistant may write an invitation. It may not decide who lives here.
 
 `request_signin_link` takes no identity argument, because naming a person is
-exactly what an instruction embedded in an email would do. An invitation
-cannot be built that way — it is *for* somebody with no session and no
-identity — so the binding that keeps the other tool safe is unavailable here.
+what an instruction in an email would do. An invitation has to name someone
+with no session, so that protection is not available here.
 
-What replaces it is that the tool does not act. It writes a draft; a human on
-Operations decides. These tests are about that substitution holding: the draft
-sends nothing, the assistant cannot approve its own draft, and an invitation
-naming somebody who already lives here is refused rather than delivered.
+Instead the tool does not act. It writes a draft, and a person on Operations
+decides. These tests check that the draft sends nothing, that the assistant
+cannot approve its own draft, and that an invitation naming someone who already
+lives here is refused.
 """
 from __future__ import annotations
 
@@ -151,9 +150,8 @@ def test_an_ordinary_draft_is_sendable(portal, spool):
 
 
 def test_delivery_does_not_consult_the_identity_lookup(portal):
-    """An invitee has no registered address and no paired account — that is
-    what an invitation is for. Reusing deliver_link would silently send
-    nothing."""
+    """An invitee has no registered address or paired account yet, so reusing
+    deliver_link would quietly send nothing."""
     body = portal_code().split("def deliver_invite")[1][:1400]
     assert "delivery_channels" not in body
     assert "chat_account_for" not in body
@@ -208,13 +206,11 @@ def test_the_tool_requires_somewhere_to_send_it(portal, tmp_path,
 
 
 def test_the_proposed_name_is_not_called_identity(portal):
-    """`identity` means "who the assistant is acting as", and never comes from
-    an argument — test_portal_tool pins that against the whole module.
+    """`identity` means who the assistant is acting for, and never comes from
+    an argument, which test_portal_tool checks across the module.
 
-    This tool names an account that does not exist yet, which is a different
-    thing that happened to want the same word. Renaming it is what let both
-    be true; calling it `identity` again would trip that test, and the fix
-    would look like relaxing it.
+    This tool names an account that does not exist yet, a different thing, so
+    it uses a different word.
     """
     source = code_of(
         "services/compose/agentbox-mcp/app/integrations/portal.py")
@@ -238,8 +234,8 @@ def test_the_tool_is_tiered_in_the_policy(portal):
 
 
 def test_creating_an_invite_needs_no_privilege(spool, tmp_path):
-    """Which is why it had no business needing a shell. One JSON record — no
-    docker socket, no bridge token, nothing this page could not already do."""
+    """It writes one JSON record, with no Docker socket and no bridge token,
+    nothing this page could not already do."""
     record = spool.create_invite("newcomer", {"alex", "sam"})
     written = tmp_path / "invites" / f"{record['id']}.json"
     assert written.exists()
@@ -255,8 +251,8 @@ def test_the_portal_refuses_to_invite_over_an_existing_person(portal):
 
 
 def test_creating_an_invite_is_withheld_from_the_assistant(portal):
-    """It produces the credential, where a draft produces only something to
-    read — so if either belongs behind a human, it is this one."""
+    """It produces the credential, while a draft only produces something to
+    read, so this is the one that most needs a person behind it."""
     body = portal_code().split("def _create_invite")[1][:900]
     assert '"ops:invite"' in body
     assert 'session.get("origin"' in body
@@ -277,12 +273,8 @@ def test_the_form_says_nothing_is_created_until_approved(portal):
 
 
 def test_creating_an_invite_always_redirects(portal):
-    """Found by an independent acceptance pass.
-
-    The undeliverable path rendered the link straight from the POST — and with
-    no delivery channel configured, which is this box, that is every invite. A
-    browser refresh re-submitted and minted another live credential; three
-    identical submissions produced three valid links for one person.
+    """Creating an invite always redirects, so a refresh cannot resubmit and
+    make another live link.
     """
     body = portal_code().split("def _create_invite")[1][:2200]
     assert "self._redirect" in body
@@ -326,7 +318,7 @@ def test_the_admin_can_still_reach_a_link_after_a_refresh(portal, spool):
 
 
 def submitted_invite(tmp_path, token_id, identity, display_name):
-    """An invite somebody filled in — what the approval card is built from."""
+    """An invite someone filled in, which the approval card is built from."""
     path = tmp_path / "invites" / f"{token_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
@@ -336,13 +328,9 @@ def submitted_invite(tmp_path, token_id, identity, display_name):
 
 
 def test_the_approval_card_names_the_account_not_only_the_typed_name(portal, tmp_path):
-    """Found by an independent acceptance pass.
-
-    The card showed `display_name or identity or id`, and the form requires a
-    display name — so the account name was never shown. An invitee could type
-    "sam" and the approving admin would read "sam", while the thing being
-    approved was an identity and a bridge for whatever account name the invite
-    actually carried.
+    """The approval card shows the account name being created, separately from
+    the display name the invitee typed, because the account is what is being
+    approved.
     """
     submitted_invite(tmp_path, "a" * 16, "stranger", "sam")
     card = portal.render_onboarding_card()

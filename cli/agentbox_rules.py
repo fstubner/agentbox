@@ -20,9 +20,8 @@ RULES_APPROVED_PATH = Path(os.environ.get(
     "AGENTBOX_RULES_APPROVED",
     os.path.expanduser("~/.local/state/agentbox/policy/rules-approved.json")))
 
-# What an approval pins: the fields that execute and say as whom. Must stay
-# identical to evaluator.FINGERPRINT_FIELDS — tests/test_rules_evaluator.py
-# computes both over the same rule and fails on drift.
+# What an approval pins: the fields that execute and say as whom. Must match
+# evaluator.FINGERPRINT_FIELDS, which tests/test_rules_evaluator.py checks.
 RULE_FINGERPRINT_FIELDS = ("name", "identity", "when", "if", "do")
 
 
@@ -108,11 +107,10 @@ def rules_decide(name: str, activate: bool,
                  rules_approved_path: Path | None = None) -> int:
     """Approve or deactivate one rule.
 
-    Approval is an entry in the operator-owned approvals file, pinning a
-    fingerprint of what the rule executes. Nothing is written to the rule
-    file itself — that sits on the gateway-writable mount, and an approval
-    the approved party could write would not be one. Pinning means an
-    approved rule that is later edited (by anything) simply stops firing.
+    Approval is an entry in the operator's approvals file, pinning a
+    fingerprint of what the rule runs. Nothing is written to the rule file,
+    which sits on the container-writable mount. An approved rule that is later
+    edited stops firing.
     """
     for record in _rules(rules_dir, rules_approved_path):
         if record.get("name") != name:
@@ -158,9 +156,8 @@ def rules_remove(name: str,
                  rules_approved_path: Path | None = None) -> int:
     for record in _rules(rules_dir, rules_approved_path):
         if record.get("name") == name:
-            # The approval is what stops it firing, so revoke that first and
-            # unconditionally — file deletion can fail (the rules dir is
-            # container-owned) and must not leave the rule live.
+            # Revoke the approval first, since that is what stops it firing,
+            # and deleting the file can fail.
             entries = _rule_approvals(rules_approved_path)
             if entries.pop(name, None) is not None:
                 _write_rule_approvals(entries, rules_approved_path)

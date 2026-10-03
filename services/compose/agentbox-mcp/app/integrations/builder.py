@@ -1,12 +1,11 @@
-"""Builder MCP — the assistant's view of the repo.
+"""The assistant's view of this repository, through builder-bridge.
 
-Fronts builder-bridge. The bridge holds the git clone and enforces what may be
-changed; this maps that onto tools and the capabilities they exercise.
+The bridge holds the git clone and enforces what may change. This maps that
+onto tools and the capabilities they use.
 
-Every tool description says plainly that proposals are never merged or
-deployed. That is not decoration: a model that believes it has shipped a change
-will report to the operator that the work is done, and the operator will
-believe it.
+Every tool description says proposals are never merged or deployed. A model
+that believes it shipped a change will tell the operator the work is done, and
+the operator will believe it.
 """
 from __future__ import annotations
 

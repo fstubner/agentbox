@@ -1,8 +1,8 @@
-"""Reconnecting and disconnecting an identity's Google account.
+"""Reconnecting and disconnecting a person's Google account.
 
-The flow spans two processes on purpose — a LAN-reachable page must not hold
-the credential that mints refresh tokens — so these test both halves and, in
-particular, the seam between them.
+The flow spans two processes on purpose, because a page on the LAN must not
+hold the credential that makes refresh tokens. These test both halves and the
+seam between them.
 """
 from __future__ import annotations
 
@@ -68,12 +68,10 @@ def test_consent_state_survives_a_restart(portal, tmp_path, monkeypatch):
 
 
 def test_consent_state_is_not_derivable_from_the_path(portal):
-    """The state used to fall back to a hash of the STATE directory path,
-    which anyone who can guess `~/.local/state/agentbox/portal` can compute.
-    A computable state turns the callback into a code-injection route: Lax
-    cookies ride along on a top-level GET, so a crafted link clicked by a
-    signed-in member would land an attacker's authorisation code — and later
-    an attacker's mailbox — in that member's reconnect record.
+    """The consent state must not be derivable from anything guessable. The
+    callback is a GET, and the session cookie is sent on one, so a guessable
+    state would let a crafted link put an attacker's code into a member's
+    reconnect record.
     """
     import hashlib
     import hmac
@@ -93,11 +91,8 @@ def test_state_secret_is_random_persisted_and_private(portal):
 
 
 def test_consent_url_forces_a_fresh_refresh_token(portal):
-    """Google issues a refresh token on first grant only.
-
-    A re-consent without prompt=consent returns none, so the flow would report
-    success and change nothing — the exact silent no-op this whole piece exists
-    to remove.
+    """Google only issues a refresh token on a forced consent. Without
+    prompt=consent the flow would report success and change nothing.
     """
     url = portal.google_consent_url("state123")
     assert "access_type=offline" in url
@@ -245,8 +240,8 @@ def test_disconnect_without_a_connection_is_refused(cli, capsys):
 
 
 def test_unknown_identity_subcommand_does_not_delete(cli):
-    """`remove` used to be the fallthrough, so any subcommand added without a
-    branch would silently delete an identity instead of erroring."""
+    """An unknown subcommand must be an error, never fall through to
+    deleting an identity."""
     source = code_of(REPO / "cli" / "agentbox")
     block = source.split('if args.cmd == "identity":')[1][:900]
     assert 'if args.identity_cmd == "remove":' in block
@@ -260,10 +255,9 @@ def test_unknown_identity_subcommand_does_not_delete(cli):
 def test_reconnect_applies_the_routing_to_the_running_gateway(cli, monkeypatch):
     """Writing the env file is not applying it.
 
-    On 2026-08-12 a reconnect wrote a fresh token, restarted the identity's
-    bridge and reported success, while every Drive call kept 403ing for five
-    hours: the gateway had started before the routing existed, so it was still
-    reaching the shared bridge and its stale credential.
+    The gateway reads its environment at start, so until it is recreated, calls
+    keep going to the shared bridge with its old credential while the reconnect
+    appears to have worked.
     """
     deployed = []
     monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)
@@ -293,12 +287,10 @@ def test_a_gateway_already_routing_correctly_is_left_alone(cli, monkeypatch):
 
 
 def test_a_stale_bridge_token_forces_a_redeploy(cli, monkeypatch):
-    """The URL does not change on reconnect but the token does.
+    """A reconnect keeps the URL and changes the token.
 
-    Checking only the URL reported "already routing correctly" and left the
-    gateway holding the previous bridge token, so every Google call for that
-    person failed 401 — a reconnect that looked successful and broke the thing
-    it was fixing. Hit live on 2026-08-14.
+    Checking only the URL would leave the gateway with the old token, and every
+    Google call for that person would fail 401.
     """
     deployed = []
     monkeypatch.setattr(cli, "deploy", lambda service: deployed.append(service) or 0)

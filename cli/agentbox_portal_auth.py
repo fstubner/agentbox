@@ -50,11 +50,10 @@ __all__ = [
 def known_identities(also: dict[str, str] | None = None) -> set[str]:
     """Every name this box recognises as a person.
 
-    Sources are additive because each knows a different subset: sign-in
-    addresses, paired chat accounts, whoever is already an admin, and any
-    names published for the assistant. The last is names only and never
-    tokens — the portal is the LAN-facing surface and has no business holding
-    a bearer credential.
+    The sources add up, because each knows a different subset: sign-in
+    addresses, paired chat accounts, current admins and any names published
+    for the assistant. That last source is names only, never tokens, because
+    the portal faces the LAN and should not hold a bearer credential.
     """
     # `also` is the form's own submission, merged over what is stored. The
     # settings page saves identity_emails and admins under one button, so
@@ -114,12 +113,10 @@ def can(role: str, capability: str, origin: str = portal.ORIGIN_EMAIL) -> bool:
 def refusal(role: str, capability: str, origin: str = portal.ORIGIN_EMAIL) -> str:
     """Which gate refused, as a flash key. Empty when nothing refused.
 
-    `can` collapses two independent gates into one boolean, which is right for
-    deciding and wrong for explaining. A member refused an admin-only action
-    was being told their *link* was the problem and sent to request another
-    one — which produces an identical refusal, because the link was never the
-    issue. Saying "sign in differently" to somebody whose role is the
-    constraint is worse than saying nothing.
+    `can` combines two gates into one yes or no, which is right for deciding
+    and wrong for explaining. A member refused an admin-only action should be
+    told about their role, not sent to request another link that would be
+    refused the same way.
     """
     if capability not in portal.ROLE_CAPABILITIES.get(role, frozenset()):
         return "admin_only"
@@ -149,14 +146,12 @@ def _hash(secret: str) -> str:
 LINK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 def link_path(link_id: str) -> Path:
-    """Where a link record lives. Rejects anything that is not an id.
+    """Where a link record lives. Refuses anything that is not an id.
 
-    `link_id` arrives from the query string of an unauthenticated request, and
-    went into a path unchecked. Redemption still required a matching
-    secret_hash, so traversal alone proved nothing — but "unexploitable today"
-    is a property of the code around it, not of this function, and it is the
-    kind of thing that stops being true when somebody adds a write. mint_link
-    generates token_urlsafe ids, which this matches exactly.
+    The id comes from the query string of an unauthenticated request. Using
+    the secret hash also stops a traversal from proving anything, but that
+    depends on the surrounding code, so the id is checked here too. It matches
+    exactly what mint_link generates.
     """
     if not LINK_ID.match(link_id or ""):
         raise ValueError("not a link id")
@@ -180,18 +175,18 @@ def _recent_link_count(identity: str) -> int:
 
 def mint_link(identity: str, base_url: str, request_nonce: str = "",
               origin: str = portal.ORIGIN_OPERATOR) -> tuple[str, str]:
-    """Create a single-use login link. Returns (url, link_id).
+    """Create a single-use sign-in link. Returns (url, link_id).
 
-    `request_nonce` binds the link to the browser that asked for it: the same
-    value is set as a cookie, and redemption requires both. Someone who reads
-    the link — including an assistant with access to the inbox it was sent to —
-    holds only half of what is needed.
+    `request_nonce` binds the link to the browser that asked for it. The same
+    value is set as a cookie, and using the link needs both. Someone who only
+    reads the link, including an assistant that can read the inbox, holds half
+    of what is needed.
 
-    An empty nonce is accepted for operator-issued links (`portal link`), where
-    the operator hands the URL over directly and there is no browser to bind to.
+    An empty nonce is accepted for links the operator hands over directly
+    (`portal link`), where there is no browser to bind to.
 
-    Raises RuntimeError past the hourly cap rather than issuing quietly, so a
-    flood is visible to whoever triggered it.
+    Past the hourly cap this raises RuntimeError rather than issuing quietly,
+    so a flood is visible to whoever caused it.
     """
     if _recent_link_count(identity) >= portal.MAX_LINKS_PER_HOUR:
         raise RuntimeError(
@@ -234,11 +229,9 @@ def redeem_link(link_id: str, secret: str,
         path = link_path(link_id)
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        # ValueError covers both a malformed id and unreadable JSON, and both
-        # get the same sentence as a link that never existed. An id shaped
-        # wrongly must not be distinguishable from one that is merely wrong —
-        # and it must certainly not take the handler thread down, since a
-        # closed connection is itself an answer.
+        # A malformed id and unreadable JSON both get the same answer as a
+        # link that never existed, so a badly shaped id tells an attacker
+        # nothing, and neither can crash the handler.
         return "", "", generic
     if not hmac.compare_digest(str(record.get("secret_hash", "")),
                                _hash(secret)):
@@ -248,27 +241,25 @@ def redeem_link(link_id: str, secret: str,
     expected = str(record.get("nonce_hash", ""))
     origin = str(record.get("origin", portal.ORIGIN_AGENT))
     if expected and not hmac.compare_digest(expected, _hash(request_nonce)):
-        # Not a refusal — a downgrade. See ORIGIN_CHAT.
+        # Not a refusal but a downgrade. See ORIGIN_CHAT.
         origin = portal.ORIGIN_CHAT
     if record.get("used_at"):
         return "", "", "This link has already been used. Ask for a new one."
     if portal.now() > int(record.get("expires_at", 0)):
         return "", "", "This link has expired. Ask for a new one."
     if origin == portal.ORIGIN_CHAT:
-        # Deliberately not spent. A downgraded redemption must not let whoever
-        # read the message lock the real person out — they would request
-        # another, it would arrive on the same channel, and the same reader
-        # would burn that one too. Full access is still single-use; limited
-        # access simply does not consume the link.
+        # Not used up. Otherwise whoever read the message could lock the real
+        # person out, and would also read the next link sent on the same
+        # channel. Full access is still single-use, and limited access simply
+        # does not consume the link.
         return str(record.get("identity", "")), origin, ""
 
     record["used_at"] = portal.now()
     try:
         path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     except OSError:
-        # Single-use that cannot be enforced is not single-use. Refuse rather
-        # than hand out a link that stays live — the same reasoning as an
-        # unwritable grant-consumption record in policy_gate.
+        # If single use cannot be enforced, refuse rather than hand out a link
+        # that stays live, as policy_gate does with grants.
         return "", "", generic
     return str(record.get("identity", "")), origin, ""
 
@@ -305,10 +296,9 @@ def load_session(sid: str) -> dict | None:
     identity = str(record.get("identity", ""))
     if not identity:
         return None
-    # Origin is trusted from the record because it was set at redemption from
-    # the link, not from anything the browser said. An absent value means a
-    # session predating this field, treated as agent-minted — the safe way to
-    # read a value that is not there.
+    # The origin is trusted from the record because it was set from the link at
+    # sign-in, not from anything the browser sent. A missing value is treated
+    # as assistant-made, the safe reading.
     return {"identity": identity, "role": role_of(identity),
             "origin": str(record.get("origin", portal.ORIGIN_AGENT))}
 
@@ -321,19 +311,17 @@ def end_session(sid: str) -> None:
 # --- server --------------------------------------------------------------------
 
 def state_secret() -> str:
-    """The key the consent state is derived from. Random, persisted, 0600.
+    """The key the consent state is derived from. Random, saved, mode 600.
 
-    This used to fall back to a hash of the STATE directory *path* — a value
-    anyone who can guess `~/.local/state/agentbox/portal` can compute. The
-    consent state is the only thing standing between a crafted callback link
-    and someone else's authorisation code landing in your reconnect record
-    (SameSite=Lax still sends the session cookie on a top-level GET, and the
-    callback is a GET), so it must be underivable, not merely per-identity.
+    The consent state is what stops a crafted callback link putting someone
+    else's authorisation code into your reconnect record, because the
+    callback is a GET and the session cookie is still sent on one. So it must
+    not be derivable from anything guessable, such as the state directory's
+    path.
 
-    Persisted to disk rather than derived, which keeps the property the
-    derivation was for: a restart between consent and callback does not strand
-    the user, because the file is still there. O_EXCL so two concurrent first
-    requests cannot mint two different secrets.
+    It is saved to disk, so a restart between consent and callback does not
+    strand the person. O_EXCL means two first requests at once cannot create
+    two different secrets.
     """
     secret = os.environ.get("AGENTBOX_PORTAL_STATE_SECRET", "")
     if secret:

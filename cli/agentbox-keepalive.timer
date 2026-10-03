@@ -1,7 +1,7 @@
 # How often to check that the model stack is up.
 #
 # Two minutes. The window this closes is "an evaluation was killed and nobody
-# noticed", which has previously lasted thirteen hours — against that, the
+# noticed", which has previously lasted thirteen hours, against that, the
 # difference between one minute and five is not interesting, and a tick costs
 # one pgrep and one systemctl is-active.
 #

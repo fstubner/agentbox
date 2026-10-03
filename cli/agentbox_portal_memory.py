@@ -28,12 +28,11 @@ __all__ = [
 # --- memory bridge -------------------------------------------------------------
 
 def memory_call(method: str, path: str, payload: dict | None = None) -> dict | None:
-    """Talk to memory-bridge with the review credential.
+    """Call memory-bridge with the review credential.
 
-    The portal holds the review token, which authorises approving *anything*.
-    Scope enforcement therefore happens here, before the call — see
-    decide_memory. A member session must never be able to reach another
-    identity's proposal, and the bridge cannot tell one caller from another.
+    That token can approve anything, so scope is enforced here, before the
+    call, in decide_memory. The bridge cannot tell one portal user from
+    another.
     """
     token = os.environ.get("MEMORY_BRIDGE_TOKEN", "")
     review = os.environ.get("MEMORY_REVIEW_TOKEN", "")
@@ -65,9 +64,8 @@ class BridgeUnreachable(Exception):
 def own_proposals(identity: str, role: str) -> list[dict]:
     """Proposals this session may act on.
 
-    A member sees their own scope only. An admin additionally sees household,
-    because a household memory affects everyone and somebody has to decide it —
-    but not another member's private scope, which is theirs to judge.
+    A member sees their own. An admin also sees household proposals, because
+    someone has to decide those, but not another member's private ones.
     """
     payload = portal.memory_call("GET", "/v1/proposals?limit=200")
     if payload is None:
@@ -131,14 +129,11 @@ def decide_memory(identity: str, role: str, proposal_id: str, verb: str,
                   statement: str = "") -> tuple[bool, str]:
     """Approve, file as feedback, or reject one proposal.
 
-    The scope check re-reads the proposal rather than trusting a form field.
-    An id posted from a crafted form is an argument, and an argument must never
-    decide whose memory is being touched — the same rule that keeps identity
-    bound to the session credential everywhere else in this system.
+    The scope check re-reads the proposal rather than trusting the form. An id
+    from a crafted form must never decide whose memory is touched.
 
-    The edited statement, by contrast, is meant to come from the form: it is
-    what the person typed, and it is applied only to a proposal they were
-    already entitled to decide.
+    The edited statement does come from the form, because it is what the
+    person typed, and it only applies to a proposal they may decide.
     """
     portal.require(role, "memory:decide_own", origin)
     try:

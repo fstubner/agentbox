@@ -1,18 +1,13 @@
 """Tests for self-reflection: the outcome journal and the tool that reads it.
 
-The assistant could propose memories but had no evidence to propose them from —
-any "reflection" was the model recalling a conversation, which is biased toward
-what went well, cannot count, and does not survive a restart.
-
-Two properties matter more than the aggregation being right:
+Two properties matter more than the arithmetic.
 
 - **The journal must not become a second copy of the data.** Tool arguments
-  carry email bodies and search strings; a log that records them turns a
-  reflection feature into an exfiltration surface.
-- **Denials must be recorded.** Approvals go through `agentbox grant`, which
-  records; saying no used to just delete a file. A journal that remembers every
-  yes and no no would make any tier argument read from it wrong in one
-  direction.
+  carry email bodies and search strings, and a log that recorded them would
+  turn reflection into a way to leak them.
+- **Refusals must be recorded.** Approvals are recorded by `agentbox grant`. A
+  journal that only remembered the yeses would bias every conclusion drawn
+  from it.
 """
 from __future__ import annotations
 
@@ -33,12 +28,11 @@ POLICY = REPO / "policies" / "approval-policy.yaml"
 
 
 def repo_policy_gate():
-    """A policy_gate bound to the repo's policy, whatever ran before us.
+    """A policy_gate bound to the repository's policy, whatever ran before.
 
-    policy_gate resolves its paths into *default arguments* at import, and they
-    default to the in-container locations. So an env var set here is too late
-    if another test module imported it first — and one does. Reading the shipped
-    policy explicitly is order-independent, which an env var is not.
+    policy_gate resolves its paths into default arguments at import, so setting
+    an environment variable here is too late if another test imported it
+    first. Reading the shipped policy explicitly does not depend on order.
     """
     import policy_gate as pg
 
@@ -50,7 +44,8 @@ def repo_policy_gate():
 
 
 def load_outcome_log(path):
-    """Fresh module bound to a temp journal — OUTCOME_FILE is read at import."""
+    """A fresh module with a temporary journal, since OUTCOME_FILE is read at
+    import."""
     import os
     os.environ["MCP_OUTCOME_FILE"] = str(path)
     spec = importlib.util.spec_from_file_location(
@@ -108,8 +103,8 @@ def test_results_are_recorded_as_size_not_content(journal):
 
 
 def test_denied_calls_are_recorded(journal):
-    """Bridges never see a policy denial, so without this the most interesting
-    events — the assistant wanting something it cannot have — are invisible."""
+    """Bridges never see a policy refusal, so without this the assistant
+    wanting something it cannot have would be invisible."""
     log = load_outcome_log(journal)
     log.record("google-mcp", "set_home_climate", log.DENIED,
                capability="email_state_change")
@@ -276,13 +271,11 @@ def test_the_skill_tells_it_to_propose_rather_than_act():
     assert "empty window means no data" in skill
 
 
-# --- tier disambiguation ----------------------------------------------------
+# --- telling tiers apart -------------------------------------------------------
 #
-# From the first real run of the loop. The assistant saw set_home_climate refused
-# and proposed "do not retry set_home_climate" — wrong: set_home_climate is
-# approval_required and available with a grant, not always_denied. "denied"
-# alone cannot distinguish "ask for this" from "never do this", and the
-# safe-looking reading is the one that silently discards a capability.
+# "Denied" alone cannot tell "ask for this" from "never do this". Without the
+# tier, reflection reads a refused approval_required tool as forbidden and
+# stops asking for it.
 
 
 def test_summary_labels_each_tool_with_its_tier(tmp_path, monkeypatch):
@@ -329,20 +322,17 @@ def test_the_skill_warns_against_writing_off_an_approvable_tool():
 
 # --- a refusal is not a fault --------------------------------------------------
 #
-# On 2026-08-12 the assistant read its own journal and proposed, in writing:
-# "look_at_camera returned upstream_rejected on every call this week (3/3, 0%
-# success). This tool appears broken or restricted. Do not retry it." Every one
-# of those calls was the bridge correctly refusing a camera nobody had
-# configured. Separately, 45 propose_change "failures" were the smoke suite
-# verifying that guarded files cannot be edited — guardrails working, recorded
-# as breakage. The tools were fine; the record of them was not.
+# A bridge refusing an entity nobody configured, or the smoke suite checking
+# that protected files cannot be edited, is a guardrail working. Recorded as an
+# error, it would look like a broken tool, and reflection would advise against
+# using it.
 
 
 def test_a_bridge_refusal_is_recorded_as_denied_not_error():
     """403 means "no", and "no" is a different fact from "broken"."""
     source = (REPO / "services/templates/mcp/mcp_base.py").read_text()
-    # The whole handler, not a fixed-width slice — a comment growing must
-    # not silently move the code out of view and turn this green.
+    # The whole handler rather than a fixed-width slice, so a longer comment
+    # cannot push the code out of view.
     block = source.split("except ToolError as exc:")[1].split("except Exception")[0]
     assert '"HTTP 403" in text' in block
     assert "outcome_log.DENIED, detail=\"upstream_refused\"" in block
@@ -351,8 +341,8 @@ def test_a_bridge_refusal_is_recorded_as_denied_not_error():
 
 
 def test_an_allowed_tool_that_was_refused_is_explained(tmp_path):
-    """Without this note the summary shows a permitted tool with denials and
-    no reason — and the available reading is 'it does not work'."""
+    """Without this note a permitted tool shows refusals with no reason, and
+    the obvious reading is that it does not work."""
     import os
     sys.path.insert(0, str(REPO / "services" / "templates" / "bridge" / "app"))
     os.environ["MEMORY_PATH"] = str(tmp_path / "memory.json")

@@ -1,14 +1,14 @@
-"""Home Assistant MCP — the assistant's view of the house.
+"""The assistant's view of the house.
 
-Fronts homeassistant-bridge, which holds the long-lived token and enforces what
-may be actuated. Seven tools, and none of them is a general `call_service`.
+Fronts homeassistant-bridge, which holds the token and enforces what may be
+actuated. None of the tools is a general `call_service`.
 
-Writing an automation is the interesting one. An automation is stored code that
-Home Assistant runs later with its own privileges, so every call-time refusal in
-the bridge is irrelevant to it — an assistant that may not unlock a door could
-otherwise schedule one for 3am. `automation.py` refuses templates outright so
-that what an automation will do is decidable, and then checks it against the
-same limits as a direct call.
+Writing an automation is the interesting one. An automation is stored code
+that Home Assistant runs later with its own privileges, so the bridge's
+call-time refusals do not cover it, and an assistant that may not unlock a door
+could otherwise schedule one. `automation.py` refuses templates so what an
+automation will do can be decided, and then checks it against the same limits
+as a direct call.
 """
 from __future__ import annotations
 
@@ -134,10 +134,9 @@ TOOLS = [
          ["entity_id", "summary"])},
 ]
 
-# Retired 2026-09-16 with the vision model it asks. The definition is kept as
-# it was so re-enabling is one line. The assistant does not see it, because
-# the server only collects TOOLS. A tool that is registered and fails on
-# every call is worse than one that is absent. See router/README.md.
+# Retired with the vision model it uses. The definition is kept so re-enabling
+# is a one-line change, and the server only collects TOOLS, so the assistant
+# does not see it. See router/README.md.
 RETIRED_TOOLS = [
     {"name": "look_at_camera", "title": "Check a room",
      "description":

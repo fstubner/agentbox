@@ -1,10 +1,9 @@
 """Tests for calendar event projection.
 
-calendar/events is the largest payload in the platform — 23 KB for ten events,
-~28x the full vikunja task list. These guard the properties the saving depends
-on: the projection must not invent or alter data, must keep the fields a
-scheduling answer needs, and `full` must remain the default so enabling the
-parameter cannot silently change what the assistant already sees.
+Calendar events are the largest payload in the system. These guard what the
+saving depends on: the projection must not invent or alter data, must keep the
+fields a scheduling answer needs, and `full` stays the default so the parameter
+cannot quietly change what the assistant already sees.
 """
 from __future__ import annotations
 
@@ -76,8 +75,8 @@ def test_lean_preserves_values_exactly():
 
 
 def test_lean_keeps_status_so_cancelled_events_stay_distinguishable():
-    """Dropping status would make a cancelled event look live — an accuracy
-    loss, not a saving."""
+    """Dropping status would make a cancelled event look live, which loses
+    accuracy rather than saving anything."""
     assert "status" in gb.LEAN_EVENT_FIELDS
     assert gb.calendar_events({"view": "lean"})["items"][0]["status"] == "confirmed"
 

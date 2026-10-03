@@ -49,9 +49,8 @@ class Recorder:
 
 
 def test_the_assistants_own_messages_are_never_acted_on():
-    """The load-bearing property. An injected assistant that types 'remember
-    <id>' into the channel it can also read must change nothing — so bot
-    authorship is filtered before any verb is parsed."""
+    """An injected assistant typing 'remember <id>' into the channel must change
+    nothing, so bot messages are filtered before any command is read."""
     source = script_code("agentbox-approvals")
     loop = source.split("for message in reversed(messages):")[1]
     bot_check = loop.index('if author.get("bot"):')

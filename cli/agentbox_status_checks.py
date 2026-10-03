@@ -45,10 +45,9 @@ def disk_check(path: str = "/") -> Check:
 def lan_exposure() -> list[Check]:
     """Local services listening on every interface rather than loopback.
 
-    The model servers are unauthenticated: anything that can reach the port can
-    use the GPU and read whatever is in a prompt. Three of the four bind to
-    127.0.0.1 and one does not, which reads as an oversight rather than a
-    decision — and it is invisible unless somebody thinks to run `ss`.
+    The model servers have no authentication, so anything that can reach the
+    port can use the GPU and read prompts. This makes a stray binding visible
+    without anyone having to run `ss`.
     """
     try:
         out = subprocess.run(["ss", "-ltn"], capture_output=True, text=True,
@@ -66,12 +65,9 @@ def lan_exposure() -> list[Check]:
                "8765": "router", "8000": "control plane api",
                "4321": "control plane ui", "8771": "household portal",
                "8772": "speaker"}
-    # Services known to require a credential on every route. The portal is
-    # here because it does: every path, including unknown ones, answers 401
-    # unauthenticated. Saying otherwise made the operator's headline health
-    # view state something false about the box's most privileged service —
-    # and a warning that is wrong is one people learn to dismiss, which costs
-    # more than the warning was worth.
+    # Services that require a credential on every route. The portal answers
+    # 401 on every path, including unknown ones, so warning that it is exposed
+    # without one would be false, and false warnings get ignored.
     authenticated = {"8771": "it authenticates every route"}
 
     exposed = []
@@ -102,48 +98,37 @@ EVALUATOR_NAMES = ("agentbox-eval", "agentbox_evals")
 
 
 def looks_like_evaluator(argv: list[str]) -> bool:
-    """Whether this argv *is* the evaluator, rather than merely naming it.
+    """Whether this argv is the evaluator, rather than merely naming it.
 
-    Only argv[0] and argv[1] count — the program, and the script a launcher
-    like `python .../agentbox-eval` runs. Anything further along is an
-    argument, and an argument that happens to say `agentbox-eval` is exactly
-    what fooled the previous implementation.
+    Only argv[0] and argv[1] count, the program and the script a launcher
+    such as `python .../agentbox-eval` runs. Anything later is an argument,
+    which may mention the evaluator without being it.
     """
     if not argv:
         return False
     if os.path.basename(argv[0]) in EVALUATOR_NAMES:
         return True          # the console script, executed directly
-    # argv[1] counts only when argv[0] is an interpreter running it. Without
-    # that guard `vim /path/to/agentbox-eval` reads as a benchmark — the same
-    # names-it-versus-is-it confusion, one level down.
+    # argv[1] counts only when argv[0] is an interpreter running it, so
+    # `vim /path/to/agentbox-eval` is not a benchmark.
     if not os.path.basename(argv[0]).startswith("python"):
         return False
     if len(argv) > 1 and os.path.basename(argv[1]) in EVALUATOR_NAMES:
         return True
-    # `python -m agentbox_evals` puts the module at argv[2]. The previous
-    # substring matcher caught this shape and the first version of this
-    # function did not — a narrowing in the direction the design explicitly
-    # refuses, since a false negative costs a benchmark.
+    # `python -m agentbox_evals` puts the module at argv[2]. Missing a real
+    # run costs a benchmark, so this case must be caught.
     return len(argv) > 2 and argv[1] == "-m" and argv[2] in EVALUATOR_NAMES
 
 
 def evaluation_running() -> bool:
     """Whether the evaluator itself is running.
 
-    Reads argv[0]/argv[1] from /proc rather than grepping command lines,
-    because a command line that *mentions* the evaluator is not one. On this
-    box `pgrep -f agentbox-eval` matched five processes and none of them was
-    a run: a `systemd-inhibit --why=agentbox-eval ... sleep 604800` holding a
-    seven-day wakelock, its sudo parent, a thermal sampler under an
-    `agentbox-evals/` path, a launcher shell carrying the binary path in a
-    nohup string, and — inevitably — the diagnostic command doing the
-    grepping. A real run *is* the binary; everything else merely names it.
+    Reads argv from /proc rather than grepping command lines, because a
+    command line that mentions the evaluator is not necessarily a run. A
+    wakelock, a sampler, a launcher shell and the grep itself can all name it.
 
-    Reported as a fact about the evaluator, never as a claim about the
-    stack. `certify` runs without quiescing production, so "an evaluation is
-    running" and "the assistant is down" are independent — conflating them
-    is what made the Operations page announce a paused evaluation above six
-    healthy services for four days.
+    Reported as a fact about the evaluator, never about the stack. A
+    certification run does not stop production, so "an evaluation is running"
+    and "the assistant is down" are separate facts.
     """
     try:
         pids = [p for p in os.listdir("/proc") if p.isdigit()]

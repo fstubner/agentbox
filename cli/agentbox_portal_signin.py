@@ -23,17 +23,13 @@ class SigninRoutes:
     """Sign-in links and account connection routes, mixed into PortalHandler."""
 
     def _agent_link(self, form) -> None:
-        """Mint a sign-in link on the assistant's behalf.
+        """Make a sign-in link on the assistant's behalf.
 
-        Authenticated with a token the assistant holds, and deliberately not
-        the same one anything else uses. What it produces is an ORIGIN_AGENT
-        session, which cannot approve memories or disconnect accounts — so a
-        model that decides to call this on its own initiative, or is talked
-        into it by a malicious email, gains nothing it did not already have.
-
-        That is the whole design. There is no attempt to stop the assistant
-        reading a link it delivered, because it delivers over channels it can
-        read and no amount of care changes that.
+        Authenticated with a token only the assistant holds. The link it makes
+        is ORIGIN_AGENT, which cannot approve memories or disconnect accounts,
+        so calling this on its own initiative, or because a malicious email
+        asked, gains the assistant nothing. Nothing tries to stop it reading
+        the link, since it delivers over channels it can read.
         """
         provided = self.headers.get("X-Agentbox-Portal-Token", "")
         if not portal.AGENT_TOKEN or not provided or not hmac.compare_digest(
@@ -91,12 +87,12 @@ class SigninRoutes:
         self.end_headers()
 
     def _google_callback(self, session, query) -> None:
-        """Receive Google's authorisation code and spool it for the operator.
+        """Receive Google's authorisation code and queue it for the operator.
 
-        The state is verified against this session rather than merely being
-        present. Without that, a link crafted by anyone could land their code
-        in someone else's connector record — the account whose mail Agentbox
-        then reads would be the attacker's choice, not the user's.
+        The state is checked against this session, not just for presence.
+        Otherwise a crafted link could put someone's code into another
+        person's connector record, letting an attacker choose whose mail is
+        read.
         """
         state = (query.get("state") or [""])[0]
         expected = portal.consent_state(session["identity"])
@@ -136,11 +132,10 @@ class SigninRoutes:
             if not portal.can(role, "connector:read_own") or not portal.GOOGLE_CLIENT_ID:
                 self._redirect("/connectors?m=google_not_configured")
                 return
-            # Google will only accept a loopback redirect, so the callback
-            # always goes to 127.0.0.1 — which is *this browser's* own machine.
-            # Reached from a phone or laptop over the LAN, the consent
-            # succeeds and then lands nowhere, and the code is lost. Say so
-            # before sending anyone into it rather than after.
+            # Google only accepts a loopback redirect, so the callback goes to
+            # 127.0.0.1, which is the browser's own machine. From a phone or
+            # laptop the consent would succeed and the code would be lost, so
+            # say so first.
             host = (self.headers.get("Host") or "").split(":")[0]
             if host not in ("127.0.0.1", "localhost", "::1", "[::1]"):
                 self._send(200, portal.page("Finish this on the box",

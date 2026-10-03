@@ -1,25 +1,15 @@
 """End-to-end tests against the running system.
 
-## Why these exist, and why they are not more unit tests
+## Why these are not more unit tests
 
-Every bug found during the 2026-08-06 session was a *seam* bug — two components
-that each worked and disagreed with each other:
-
-- the review CLI and the memory bridge disagreed about who the operator was,
-  so private proposals were unapprovable and the queue rendered as empty
-- the portal read `AGENTBOX_MEMORY_BRIDGE_URL`; everything else wrote
-  `AGENTBOX_MEMORY_BRIDGE`, so it silently reached nothing
-- the invite page and oauth-setup declared different Google scopes, which fails
-  only when somebody eventually uses the feature
-- the speaker service was configured with addresses and no SMTP host, so links
-  were minted and never sent, and the page could not say so
-
-A unit test with a fixture on both sides of a seam passes while the seam is
-broken, because the fixture *is* the disagreement made invisible. These run
-against the real thing.
+The bugs worth catching here are at seams, where two components each work and
+disagree with each other, such as a reader and a writer using different names
+for one setting, or two files declaring different Google scopes. A unit test
+with a fixture on each side of a seam passes while the seam is broken. These
+run against the real thing.
 
 They skip rather than fail when the system is not up, so CI stays green on a
-machine with no containers, and they are honest about being skipped.
+machine without containers, and they report that they skipped.
 """
 from __future__ import annotations
 
@@ -44,10 +34,9 @@ ENV_DIR = Path(os.environ.get(
 def env_value(service: str, key: str) -> str:
     """Read a deployed value, preferring the running container.
 
-    The env files hold `op://` references rather than literals, so reading the
-    file gives you the reference and a 401. The container holds what was
-    actually resolved at deploy time, which is the value the system is really
-    using — and therefore the one a test about the real system should use.
+    The env files hold secret references rather than values, so reading the
+    file gives a reference and a 401. The container holds what was resolved at
+    deploy time, which is what the system actually uses.
     """
     container = {
         "memory-bridge": "memory-bridge-memory-bridge-1",
@@ -171,11 +160,11 @@ def test_every_tool_resolves_to_a_policy_capability(alex):
 
 @live
 def test_one_identity_cannot_see_another_through_any_tool(tokens):
-    """Asserted against the running gateway rather than a fixture.
+    """Checked against the running server rather than a fixture.
 
-    The isolation is enforced in three places — the gateway binds identity to
-    the session credential, the bridge filters by scope, and the tool schema
-    offers no identity argument. A unit test covers one of those at a time.
+    Isolation is enforced in three places. The server binds identity to the
+    session credential, the bridge filters by scope, and the tool schema offers
+    no identity argument. A unit test covers one at a time.
     """
     if len(tokens) < 2:
         pytest.skip("needs two identities")
@@ -296,13 +285,11 @@ def test_a_proposed_memory_reaches_the_operator_queue(alex):
 
 @live
 def test_no_service_is_running_stale_source():
-    """Catches the failure this is actually for: code committed to git and
-    never deployed, so the running container is not what the repo says.
+    """Catches code committed to git and never deployed, so the running
+    container is not what the repository says.
 
-    Deliberately narrower than `doctor` as a whole. A model server that is
-    down is a real problem and a real doctor failure, but it is not a reason
-    for the *test suite* to go red — a test that fails for environmental
-    reasons stops being read.
+    Narrower than `doctor` as a whole. A model server being down is a real
+    problem, but not a reason for the test suite to fail.
     """
     result = subprocess.run([str(REPO / "cli" / "agentbox"), "doctor"],
                             capture_output=True, text=True, timeout=300,
@@ -314,8 +301,8 @@ def test_no_service_is_running_stale_source():
 
 @live
 def test_doctor_reports_its_own_health(capsys):
-    """Not an assertion on the result — a way to see what doctor thinks
-    without the suite hinging on a model server being up."""
+    """Shows what doctor thinks without the suite depending on a model server
+    being up."""
     result = subprocess.run([str(REPO / "cli" / "agentbox"), "doctor"],
                             capture_output=True, text=True, timeout=300,
                             check=False)

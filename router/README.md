@@ -46,7 +46,8 @@ When that changes:
    `services/compose/agentbox-mcp/app/integrations/harness.py`.
 2. Add their mappings back to `policies/approval-policy.yaml`. The test
    `test_every_live_mcp_tool_is_mapped` fails until you do.
-3. Restore the health checks in `cli/agentbox` and `cli/agentbox_status.py`.
+3. Restore the health checks in `ENDPOINTS` in `cli/agentbox_doctor.py` and
+   `cli/agentbox_status.py`.
 4. Install `agentbox-router.service` and the worker units again.
 5. Restore `skills/worker-router` from git history and install it into the
    gateway.

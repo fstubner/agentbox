@@ -1,66 +1,55 @@
-"""The rules evaluator: the half of item 11 that makes rules actually fire.
+"""The rules evaluator, which makes approved rules fire.
 
-The grammar (`rules.py`) authored and validated rules; nothing fed them
-events. An approved rule that silently never fires is the confident-but-wrong
-state this platform keeps hunting down, so from here on `rules approve` means
-what it says — for the sources this file feeds.
+`rules.py` defines and validates rules. This feeds them events and runs their
+actions, so an approved rule actually fires for the sources fed here.
 
-## What feeds it
+## Sources
 
-Two sources are live, chosen because both are observable from inside the
-gateway without new credentials:
+Two are live, because both can be observed from inside agentbox-mcp without
+new credentials.
 
-- **schedule** — one tick per evaluation pass: `{"source": "schedule",
-  "kind": "tick", "at": "HH:MM"}`. A rule matching `at: "07:30"` fires once
-  that minute (the cooldown, below, is what makes "once" true).
-- **homeassistant** — entity state diffs, polled through the same bridge and
-  lean view the assistant uses: `{"source": "homeassistant", "kind":
+- **schedule** sends one tick per pass, `{"source": "schedule", "kind":
+  "tick", "at": "HH:MM"}`. A rule matching `at: "07:30"` fires once that
+  minute, with the cooldown making "once" true.
+- **homeassistant** sends entity state changes, polled through the same bridge
+  and lean view the assistant uses, `{"source": "homeassistant", "kind":
   "state_change", "entity_id", "state", "previous_state"}`. The first poll
-  seeds a baseline and emits nothing, so a gateway restart cannot replay the
-  whole house as fresh events.
+  only records a baseline, so a restart cannot replay the whole house.
 
-gmail, calendar and vikunja remain valid grammar and dead sources; `rules
-approve` names which is which so nobody believes a mail rule is live.
+gmail, calendar and vikunja are valid in the grammar but have no feed. `rules
+approve` says which sources are live, so nobody believes a mail rule will
+fire.
 
-## What firing means
+## Firing
 
-Exactly what the grammar promised: each `do` is an ordinary tool call. The
-action passes the same `policy_gate.check` the assistant's own calls pass
-(non-consuming, the bridge's consume stays authoritative), runs as the rule's
-identity via the same contextvar the gateway sets for a session, and lands in
-the same outcome journal — under `service: "agentbox-rules"` with the rule's
-name in `detail`, so reflection can tell a rule's actions from the
-assistant's. A denial is recorded, not retried: a rule needing a grant at 3am
-does nothing, which is the safe direction.
+Each `do` is an ordinary tool call. It passes the same `policy_gate.check` as
+the assistant's own calls, without using up a grant, so the bridge's check is
+the one that counts. It runs as the rule's identity through the same context
+variable a session uses, and is written to the outcome journal under
+`service: "agentbox-rules"` with the rule's name in `detail`. A refusal is
+recorded, not retried.
 
-## Where approval lives, and why it is not a flag in the rule file
+## Where approval lives
 
-Rule files sit in `/policy-state`, the container-writable mount whose whole
-design contract is that writing there confers no authority. An `active` flag
-inside the rule file would break that contract in the worst place: a
-compromised gateway could approve its own rule — or quietly rewrite an
-approved rule's `do` list — and gain unattended execution, forever, as
-somebody. So approval is an entry in `/policy/rules-approved.json`, which is
-the operator-owned mount the container reads and cannot write (the same split
-as grants), and the entry pins a fingerprint of the rule's executing content.
-A rule fires only while the stored file still hashes to what the operator
-approved: editing an approved rule voids its approval rather than inheriting
-it.
+Rule files sit on `/policy-state`, the mount the container can write and
+where writing must never grant anything. An `active` flag in the file would
+let a compromised server approve its own rule, or rewrite an approved rule's
+actions. So approval is an entry in `/policy/rules-approved.json` on the
+read-only operator mount, as with grants, and it pins a fingerprint of the
+rule's executing fields. Editing an approved rule voids its approval.
 
-## Restraints
+## Limits
 
-- **Only operator-approved, unmodified rules fire** (above). `matches()` is
-  never the arbiter of that: its `enabled` field is true on every unapproved
-  proposal from the moment it is written.
-- **One firing per rule per COOLDOWN_SECONDS** (default 300). This is what
-  turns "the 07:30 tick matched twice because the loop runs twice a minute"
-  and "a flapping sensor" into one action, not a stream.
-- **No exception escapes.** A broken rule, an unreachable bridge, or a failed
-  action is logged and skipped; the loop and the gateway outlive all of them.
+- **Only approved, unmodified rules fire.** `matches()` does not decide that,
+  since its `enabled` field is true on every proposal.
+- **One firing per rule per COOLDOWN_SECONDS** (default 300), so a tick that
+  matches twice or a flapping sensor causes one action.
+- **No exception escapes.** A broken rule, an unreachable bridge or a failed
+  action is logged and skipped.
 
-In-memory state (baseline, cooldowns) resets on restart. Worst case: a rule
-re-fires up to one cooldown early after a redeploy. Accepted — persisting
-fire-state would add a writable file for a property nobody has needed yet.
+The baseline and cooldowns are kept in memory, so after a restart a rule can
+fire up to one cooldown early. Persisting them would add a writable file for
+little benefit.
 """
 from __future__ import annotations
 
@@ -97,10 +86,10 @@ _ha_baseline: dict[str, str] | None = None
 _last_fired: dict[str, float] = {}
 
 
-# What the operator's approval pins. Exactly the fields that execute and say
-# as whom — not description or timestamps, which are display. cli/agentbox
-# reimplements this (it cannot import container modules); the parity test in
-# tests/test_rules_evaluator.py is what keeps the two identical.
+# What an approval pins: the fields that execute and say as whom, not the
+# description or timestamps. cli/agentbox_rules.py repeats this because it
+# cannot import container code, and tests/test_rules_evaluator.py checks the
+# two agree.
 FINGERPRINT_FIELDS = ("name", "identity", "when", "if", "do")
 
 
@@ -111,8 +100,8 @@ def fingerprint(record: dict) -> str:
 
 
 def approvals(path: Path = APPROVED_PATH) -> dict[str, str]:
-    """name -> approved fingerprint. Unreadable means nothing is approved —
-    the same failure direction as an unreadable grants file."""
+    """Map of rule name to approved fingerprint. Unreadable means nothing is
+    approved, as with an unreadable grants file."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -127,13 +116,11 @@ def approvals(path: Path = APPROVED_PATH) -> dict[str, str]:
 
 def active_rules(directory: Path = RULES_DIR,
                  approved_path: Path = APPROVED_PATH) -> list[dict]:
-    """Stored rules the operator has approved, still reading as approved.
+    """Stored rules the operator approved, unchanged since approval.
 
-    Authority comes from the approvals file on the read-only mount, never
-    from anything inside the rule record — the record lives on the writable
-    mount, and a flag there would let this container approve its own rules.
-    The fingerprint comparison is what makes editing an approved rule void
-    its approval instead of inheriting it.
+    Approval comes only from the approvals file on the read-only mount, never
+    from the rule record on the writable one. Comparing fingerprints means an
+    edited rule loses its approval.
     """
     approved = approvals(approved_path)
     found = []
@@ -221,10 +208,9 @@ def fire(rule: dict, dispatch, now: float | None = None) -> None:
             dispatch(tool, args)
             note(outcome_log.OK)
         except policy_gate.PolicyDenied:
-            # Recorded and dropped, never retried. A rule that needs a grant
-            # nobody has issued does nothing — 3am is exactly when no human is
-            # reading approval prompts, which is the argument the whole
-            # policy design is built on.
+            # Recorded and dropped, never retried. A rule needing a grant
+            # nobody issued does nothing, because 3am is when nobody is
+            # reading approval prompts.
             note(outcome_log.DENIED)
         except Exception as exc:  # noqa: BLE001 — one bad action, not a dead loop
             note(outcome_log.ERROR, detail=type(exc).__name__)

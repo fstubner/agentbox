@@ -10,7 +10,7 @@
 #
 # See cli/agentbox_keepalive.py for why this exists rather than Restart=always:
 # every one of these stops is deliberate, and systemd does not restart a unit
-# somebody stopped on purpose. The stop is not the bug — nobody putting it back
+# somebody stopped on purpose. The stop is not the bug, nobody putting it back
 # afterwards is.
 
 [Unit]

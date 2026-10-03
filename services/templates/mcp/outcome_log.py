@@ -1,34 +1,31 @@
 """What happened when the assistant used a tool.
 
-The bridges already log requests, but that log cannot answer the question
-reflection needs. It sits below the MCP, so it sees `GET /v1/tasks` and never
-learns the tool was `list_tasks`; and a call refused by the policy gate never
-reaches a bridge at all, so the most interesting events — the ones where the
-assistant wanted something it could not have — are invisible in it.
+The bridges log requests, but they sit below agentbox-mcp, so they see
+`GET /v1/tasks` rather than `list_tasks`, and a call the policy refuses never
+reaches them. This records one entry per tool call at the layer where tool
+names and policy decisions exist, for self-reflection to read.
 
-This is the missing signal. One record per tool call at the layer where tool
-names and policy decisions exist, so `cli/agentbox reflect` has something to
-read.
+## Privacy
 
-**Privacy, which is why this is not simply verbose logging.** Tool arguments
-carry email bodies, search strings and task titles; results carry more. So:
+Tool arguments carry email bodies, search strings and task titles, and results
+carry more.
 
-- argument *names* are recorded, values are not, except for a small allowlist
-  of shape parameters (`view`, `limit`, …) that are enumerated and carry no
-  personal data;
-- results are recorded as a size and an outcome, never as content;
-- error *classes* are recorded, error *messages* are not — an upstream message
-  routinely quotes the input that caused it.
+- Argument names are recorded but values are not, except a short allowlist of
+  shape parameters such as `view` and `limit`, which carry no personal data.
+- Results are recorded as a size and an outcome, never content.
+- Error classes are recorded, never messages, because an upstream message
+  often quotes the input that caused it.
 
-The same reasoning as `bridge_base.LOGGED_QUERY_PARAMS`, applied a layer up.
+This is the same rule as `bridge_base.LOGGED_QUERY_PARAMS`, one layer up.
 
-**Authority, which is why the path is safe.** This shares the writable mount
-with consumption and pending records. Writing here records that something
-happened; it cannot grant permission for anything, so the mount confers no
-authority and an assistant that fully controlled this file would gain nothing.
+## Authority
 
-Rotation is crude on purpose — one previous generation, no compression. A
-logging path that can fill the disk is worse than one that loses old lines.
+The file shares the writable mount with grant-use and pending records. Writing
+here records that something happened and cannot grant anything, so even an
+assistant in full control of this file would gain nothing.
+
+It rotates by keeping one previous file, uncompressed, because a log that can
+fill the disk is worse than one that loses old lines.
 """
 from __future__ import annotations
 
@@ -70,7 +67,7 @@ def record(service: str, tool: str, outcome: str, *, capability: str = "",
     """Append one tool-call outcome.
 
     `detail` must be a class name or a short fixed reason, never an upstream
-    message — those quote their input.
+    message, which can quote its input.
     """
     arguments = arguments or {}
     entry = {
@@ -102,11 +99,10 @@ def record(service: str, tool: str, outcome: str, *, capability: str = "",
 
 
 def record_decision(actor: str, action: str, subject: str, detail: str = "") -> None:
-    """Record an operator decision — a grant, a rejection, a denial.
+    """Record an operator decision: a grant, a rejection or a refusal.
 
-    These are the highest-value records in the file and the only ones with a
-    human judgement in them. "Approved nine times out of nine" is an argument
-    for changing a tier; nothing else in the system remembers that.
+    The only records here that contain a person's judgement, such as approving
+    something nine times out of nine.
     """
     entry = {
         "ts": int(time.time()),

@@ -1,16 +1,12 @@
-"""Tests for google-workspace-bridge write constraints.
+"""Tests for the Google bridge's write constraints.
 
-Two capabilities looked local but were not:
+- Applying a Gmail label must stay inside the agentbox/ namespace, the same
+  rule as creating one.
+- Creating a calendar event must not accept attendees, or Google would email
+  invitations to anyone listed, turning "create event" into a way to send mail.
 
-- Applying Gmail labels accepted arbitrary label IDs, while creating one forced
-  the agentbox/ namespace. Create was constrained, apply was not.
-- Creating a calendar event passed the event body to Google unvalidated, so an
-  `attendees` list made Google email invitations to arbitrary people — an
-  outbound-communication channel behind a tool named "create event".
-
-Both matter more because label IDs and event bodies can originate from a model
-that has just read untrusted email content, and a small worker model on this
-host has been measured obeying instructions embedded in tool data.
+Both matter because label ids and event bodies can come from a model that has
+just read untrusted email.
 """
 from __future__ import annotations
 
@@ -79,7 +75,7 @@ def test_event_without_attendees_is_allowed():
 
 
 def test_event_with_attendees_is_refused():
-    """Google would email every attendee — that is send_external_communications."""
+    """Google would email every attendee, which is send_external_communications."""
     with pytest.raises(gb.BridgeError) as exc:
         gb.calendar_create_event({"event": {"summary": "sync",
                                             "attendees": [{"email": "someone@example.com"}]}})

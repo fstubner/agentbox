@@ -1,11 +1,10 @@
 """Editing a proposal before it is saved, and telling memory from feedback.
 
-Two things arrive through one door. "Sam is allergic to peanuts" is a fact
-and belongs in memory. "Stop asking me to confirm before every calendar read"
-is not a fact — it is a complaint about behaviour, and storing it as a memory
-is a patch: the behaviour stays wrong and a line of context is spent every
-session working around it. These test that the two stay separated, and that a
-nearly-right memory can be corrected instead of thrown away.
+"Sam is allergic to peanuts" is a fact and belongs in memory. "Stop asking me
+to confirm before every calendar read" is a complaint about behaviour, and
+storing it as a memory works around the problem while spending context every
+session. These test that the two stay apart, and that a nearly right memory
+can be corrected rather than thrown away.
 """
 from __future__ import annotations
 
@@ -122,8 +121,8 @@ def test_approving_unchanged_records_no_edit(mem):
 
 
 def test_an_edit_cannot_move_a_memory_into_someone_elses_plane(mem):
-    """The reviewer may fix wording, not write into another person's private
-    memory — the same rule that governs the assistant."""
+    """The reviewer may fix wording, but not write into another person's
+    private memory, the same rule as for the assistant."""
     item = propose(mem, "Something about Alex")
     with pytest.raises(mem.BridgeError):
         mem.approve_proposal(Handler(identity="alex"), item["id"],
@@ -223,13 +222,11 @@ def test_approval_still_requires_the_review_token(mem):
     assert exc.value.status == 403
 
 
-# --- the real queue, as found on 2026-08-12 ------------------------------------
+# --- a real queue ----------------------------------------------------------------
 #
-# Not invented examples. These are the seven proposals actually pending on the
-# live box, and they are the reason the classifier has a second half: five of
-# them are the assistant writing notes to itself about broken tooling, and the
-# first version — tuned for a person complaining, "you keep asking me" —
-# filed every one as a memory to be remembered forever.
+# Proposals of the kind found in a real queue. Most are the assistant writing
+# notes to itself about tools it thinks are broken, which is feedback, not a
+# fact to remember.
 
 
 REAL_FEEDBACK = [
@@ -279,11 +276,8 @@ def test_a_tool_name_alone_is_enough_to_suspect_feedback(mem):
 
 
 def test_a_proposal_written_before_kind_existed_is_still_classified(mem):
-    """The store predates this feature. A proposal with no `kind` was read as
-    a memory by `.get("kind") == KIND_FEEDBACK`, so the first real use of the
-    feature approved three notes about broken tooling straight into durable
-    memory — exactly what the split exists to prevent.
-    """
+    """A proposal saved before `kind` existed must still be classified, rather
+    than read as a memory because the field is missing."""
     # Written the way the old bridge wrote them: no kind field at all.
     store = mem.load_store()
     store["proposals"].append({
@@ -374,10 +368,9 @@ def test_a_forgotten_memory_is_not_returned_to_the_assistant(mem):
 
 # --- supersession --------------------------------------------------------------
 #
-# Three end states, not two. "Forgotten" collapsed two different facts into
-# one: a memory that was never true, and a memory that was true and has been
-# replaced. The second is history and worth keeping legible — it is what lets
-# you see why an answer three weeks ago was right at the time.
+# A memory that was never true and one that was true until replaced are
+# different. The second is history, and keeping it readable explains why an
+# old answer was right at the time.
 
 
 def test_a_new_fact_retires_the_one_it_replaces(mem):
@@ -440,8 +433,8 @@ def test_superseding_something_that_does_not_exist_is_refused(mem):
 
 
 def test_a_near_duplicate_is_suggested_not_applied(mem):
-    """An automatic supersession that is wrong hides a true memory behind a
-    false one and says nothing — strictly worse than leaving both visible."""
+    """A wrong automatic replacement would hide a true memory behind a false
+    one without saying so, which is worse than leaving both visible."""
     mem.create_memory(Handler(), {"statement": "Bin day is Tuesday",
                                   "scope": "household"})
     _, new = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
@@ -471,8 +464,8 @@ def test_unrelated_memories_are_not_suggested(mem):
 
 
 def test_another_persons_memory_is_never_suggested(mem):
-    """A suggestion naming someone else's private memory would leak it —
-    the suggestion text quotes the statement it thinks you are replacing."""
+    """A suggestion quotes the memory it would replace, so it must not name
+    someone else's private memory."""
     mem.create_memory(Handler(identity="sam"), {"statement": "Bin day is Tuesday",
                                                 "scope": "sam"})
     _, new = mem.create_memory(Handler(), {"statement": "Bin day is Wednesday",
@@ -524,14 +517,11 @@ def test_only_the_operator_can_link_a_supersession(mem):
     assert exc.value.status == 403
 
 
-# --- history the assistant can actually use ------------------------------------
+# --- history the assistant can use ------------------------------------------------
 #
-# Excluding superseded versions outright was the first design and it was
-# wrong. The argument — two contradictory memories produce a confident wrong
-# answer — holds only when nothing says which is current. Nested under the
-# fact that replaced it, with the date it stopped being true, there is no
-# ambiguity left, and the assistant can answer "when did that change?" instead
-# of flatly contradicting somebody who remembers the old value.
+# Superseded versions are nested under the fact that replaced them, with the
+# date each stopped being true. That leaves no doubt about which is current,
+# and lets the assistant answer "when did that change?".
 
 
 def test_the_current_fact_carries_its_own_history(mem):

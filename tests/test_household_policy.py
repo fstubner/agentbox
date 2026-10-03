@@ -1,11 +1,8 @@
 """Device permissions travelling from the portal to the bridge.
 
-This is a seam, and seams are where this codebase has been bitten: the portal
-writes a file, a container reads it, and a fixture on either side can pass
-while the thing between them is broken. So these tests write with the portal's
-own writer and read with the bridge's own reader — no hand-built JSON in the
-middle, because hand-built JSON is how both sides agree on a format neither
-one uses.
+The portal writes a file and a container reads it, and a fixture on either side
+can pass while the seam between them is broken. So these write with the
+portal's own writer and read with the bridge's own reader.
 """
 from __future__ import annotations
 
@@ -83,12 +80,8 @@ def test_a_saved_change_is_picked_up_without_a_restart(policy, tmp_path):
 
 
 def test_a_same_length_swap_is_not_missed(policy, tmp_path):
-    """The case a coarse cache key would get wrong.
-
-    Two saves moments apart, same byte length — swapping one entity id for
-    another of equal length, which is what correcting a typo looks like. A
-    cache keyed on whole-second mtime and size would serve the old set and
-    keep a permission that had just been revoked.
+    """Two quick saves of the same length, as when correcting a typo, must not
+    look unchanged, or a just-revoked permission would stay in force.
     """
     policy.save("switch.washer_a")
     bridge = load_bridge(tmp_path / "household.json")
@@ -135,19 +128,16 @@ def test_a_malformed_file_never_widens_permission(tmp_path, content):
 
 
 def test_the_bridge_refuses_security_domains_whatever_the_file_says(tmp_path):
-    """Two independent gates, and this is the one that holds under compromise.
-
-    The portal rejects these when somebody types them, but that check protects
-    against a typo — not against a file written by anything other than the
-    portal. The refusal that matters is the one in the process holding the
-    credential, and it does not consult this list at all.
+    """The portal refuses these when typed, but that only guards against typos.
+    The refusal that holds under compromise is in the process holding the
+    credential, and it ignores this list.
     """
     path = tmp_path / "household.json"
     path.write_text(json.dumps({"controllable_entities": [
         "lock.front_door", "alarm_control_panel.house", "cover.garage",
         "camera.hall", "vacuum.robot"]}), encoding="utf-8")
     bridge = load_bridge(path)
-    # The file is read — these are not being refused merely by being absent.
+    # The file is read, so these are refused by the bridge, not merely absent.
     assert "lock.front_door" in bridge.controllable_entities()
     for entity in ("lock.front_door", "alarm_control_panel.house",
                    "cover.garage", "camera.hall", "vacuum.robot"):
@@ -155,12 +145,9 @@ def test_the_bridge_refuses_security_domains_whatever_the_file_says(tmp_path):
 
 
 def test_the_portal_and_the_bridge_agree_on_what_is_refused(tmp_path):
-    """The portal's rejection list must not promise more than the bridge does.
-
-    If the portal accepted a domain the bridge refuses, somebody would grant
-    something that silently does nothing. The reverse — the portal refusing
-    something the bridge would allow — is merely conservative, so only one
-    direction is checked.
+    """The portal must not accept a domain the bridge refuses, or someone would
+    grant something that silently does nothing. The reverse is only cautious,
+    so only one direction is checked.
     """
     household = load_household()
     bridge = load_bridge(tmp_path / "absent.json")

@@ -1,14 +1,12 @@
-"""Tests for the builder — the assistant proposing code changes through git.
+"""Tests for the builder, through which the assistant proposes code changes.
 
-This service can write the source of the system that constrains it, which makes
-it the most dangerous thing in the repo. The containment is not "the operator
-will read the diff carefully": it is that a proposal touching the policy, either
-gate, the operator CLI or CI is **refused outright**, so the operator is never
-handed that diff in the first place.
+It can write the source of the system that constrains it, which makes it the
+most dangerous service here. A proposal touching the policy, either gate, the
+operator CLI or CI is refused outright, so the operator is never handed that
+diff at all.
 
-Most of what follows is attempts to get around that check. If any of them
-passes, an assistant that wanted more authority could grant itself more
-authority with one distracted approval.
+Most of these try to get around that check. If one passed, an assistant could
+grant itself more authority with one distracted approval.
 """
 from __future__ import annotations
 
@@ -137,8 +135,8 @@ def test_branch_names_are_constrained(builder):
 
 
 def test_git_is_never_invoked_through_a_shell():
-    """A commit message is attacker-influenced text — it is written by a model
-    that just read an email. It must never reach a shell."""
+    """A commit message is text written by a model that may have just read an
+    email, so it must never reach a shell."""
     src = (REPO / "services" / "compose" / "builder-bridge" / "app"
            / "bridge.py").read_text()
     assert "shell=True" not in src
@@ -157,12 +155,11 @@ def test_the_bridge_never_pushes():
 
 
 def test_the_bridge_cannot_merge_or_deploy():
-    """merge_own_pr is always_denied; a builder that could merge would route
-    around it, and one that could deploy would make review optional.
+    """merge_own_pr is always_denied. A builder that could merge would get
+    around that, and one that could deploy would make review optional.
 
-    Checks the git subcommands actually invoked, not the source text — an
-    earlier version of this grepped the whole file and tripped over the schema
-    string that *lists* what the service cannot do.
+    Checks the git subcommands actually run, not the source text, which also
+    contains the schema string listing what the service cannot do.
     """
     import re
     src = (REPO / "services" / "compose" / "builder-bridge" / "app"
@@ -212,7 +209,7 @@ def test_merging_stays_denied():
     tiers = pg.load_tiers(policy)
     assert "merge_own_pr" in tiers["always_denied"]
     assert "modify_upstream_agent_source" in tiers["always_denied"]
-    # And no tool maps to either — there must be no route to them at all.
+    # And no tool maps to either, so there is no route to them at all.
     mapping = pg.load_tool_map(policy)
     assert "merge_own_pr" not in mapping.values()
     assert "modify_upstream_agent_source" not in mapping.values()
@@ -283,7 +280,7 @@ def test_a_proposal_becomes_a_branch_not_a_change_to_main(git_repo):
     assert status == 201
     assert payload["branch"] == "proposal/add-a-doc"
 
-    # main is untouched — the whole point.
+    # main is untouched.
     on_main = subprocess.run(["git", "show", "main:docs/note.md"],
                              cwd=str(git_repo), capture_output=True, text=True)
     assert on_main.returncode != 0
@@ -353,9 +350,9 @@ def test_the_commit_is_attributed_to_the_assistant(git_repo):
 
 
 def test_reading_a_protected_file_is_allowed_but_marked_unwritable(git_repo):
-    """It must be able to read the policy — knowing what it may do is not the
-    same as being able to change it — but the response has to say so, or it
-    drafts a change and only learns on submit."""
+    """It may read the policy, since knowing what it may do is not changing
+    it, but the response must say the file is protected, so it does not draft
+    a change that will be refused."""
     builder = load_builder(git_repo)
     _, payload = builder.read_file(
         FakeHandler("?path=policies/approval-policy.yaml"), None)
@@ -365,12 +362,11 @@ def test_reading_a_protected_file_is_allowed_but_marked_unwritable(git_repo):
 
 
 def test_the_code_that_enforces_the_policy_is_protected_too():
-    """Protecting the rulebook while leaving the enforcement writable.
+    """The code that enforces the policy is protected as well as the policy.
 
-    policies/ and policy_gate.py were refused; mcp_base.py — which holds the
-    ONLY call site of policy_gate.check and the fail-closed auth routine — was
-    accepted, as were the memory review gate, the rule-approval fingerprints
-    and the router. Probed live on 2026-08-14: all four accepted.
+    That includes mcp_base.py, which holds the only call to policy_gate.check
+    and the fail-closed auth, the memory review gate and the rule-approval
+    fingerprints.
     """
     import importlib.machinery
     import importlib.util

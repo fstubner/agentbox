@@ -98,9 +98,8 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
         report(WARN, f"no env file at {env_file}; deploying without service env")
 
     if pull:
-        # Same env resolution as the deploy itself — a `docker compose pull`
-        # run without it dies interpolating secrets out of compose.yaml, which
-        # is exactly what a duplicated invocation got wrong here first time.
+        # The same environment resolution as a deploy, because `docker compose
+        # pull` also has to fill in the secrets in compose.yaml.
         pull_cmd = compose_cmd[:-3] if compose_cmd[-3:] == ["up", "-d", "--build"] \
             else compose_cmd
         pull_cmd = [c for c in pull_cmd if c not in ("up", "-d", "--build")] + ["pull"]
@@ -120,15 +119,11 @@ def deploy(service: str, dry_run: bool = False, pull: bool = False) -> int:
 def update(service: str) -> int:
     """Pull a newer third-party image and redeploy that service.
 
-    Explicit rather than automatic, and separate from `deploy`, because these
-    are somebody else's releases. `deploy` should ship *your* change and
-    nothing else — if it silently pulled upstream too, a one-line config fix
-    could also jump Home Assistant a minor version, and a failure afterwards
-    would have two candidate causes instead of one.
-
-    Floating tags do not float on their own: `docker compose up` reuses a
-    cached image forever. Home Assistant sat three weeks behind and Vikunja
-    four months, with nothing reporting either.
+    Separate from `deploy`, which ships your change and nothing else. If it
+    also pulled upstream releases, a one-line config fix could move Home
+    Assistant a version, and a failure would have two possible causes.
+    `docker compose up` reuses a cached image indefinitely, so floating tags
+    only move when this runs.
     """
     service = SERVICE_ALIASES.get(service, service)
     if not (REPO / "services" / "compose" / service / "compose.yaml").is_file():

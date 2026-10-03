@@ -57,21 +57,18 @@ def test_load_policy_has_all_tiers(cli):
 
 
 def test_validate_passes_on_clean_repo(monkeypatch, cli):
-    # validate's own rules only — docker's compose parser is a separate
-    # concern with its own version skew, and `deploy` is where a broken file
-    # actually has to be caught.
+    # validate's own rules only. Docker's compose parser varies by version,
+    # and `deploy` is where a broken file is caught.
     monkeypatch.setenv("AGENTBOX_VALIDATE_SKIP_COMPOSE", "1")
     import agentbox_validate
     assert agentbox_validate.validate() == 0
 
 
 def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
-    """"not responding" covers two conditions needing opposite responses.
+    """"Not responding" can mean stopped or stuck, which need opposite fixes.
 
-    The router was cleanly stopped twice in two days — signal TERM, so
-    Restart=on-failure never applied — and the only symptom was triage_email
-    reporting "router unreachable", which reads like a network fault rather
-    than a service somebody turned off.
+    A cleanly stopped unit is not restarted by Restart=on-failure, and it can
+    look like a network fault, so doctor says when a service is stopped.
     """
     import subprocess
 
@@ -98,9 +95,8 @@ def test_doctor_says_when_a_service_is_stopped_rather_than_wedged(monkeypatch):
 
 
 def test_the_tool_schema_budget_is_enforced_and_current():
-    """A comment in mcp_base put this cost at ~2,250 tokens per turn. By
-    2026-08-14 it measured 7,778 — 3.5x, drifted silently while the project
-    maintained a document on context economy. Nothing measured it."""
+    """The tool schemas are sent on every turn, and their cost is held to a
+    budget so it cannot drift unnoticed."""
     import agentbox_validate as cli
 
     count, tokens, worst = cli.tool_schema_cost()
@@ -141,12 +137,9 @@ def test_a_missing_linter_does_not_read_as_a_pass():
 def test_floating_tags_are_reported_as_they_age():
     """A floating tag does not float.
 
-    Every third-party image here is pinned to `stable`, `latest`, or no tag,
-    and `deploy` runs `docker compose up -d --build` — which rebuilds what
-    this repo builds and reuses whatever is cached for everything else. Home
-    Assistant sat three weeks behind and Vikunja four months, and nothing
-    reported either: doctor's staleness check compares source SHAs for images
-    built here and had no notion of upstream ones.
+    Third-party images use tags such as `stable` or `latest`, and `deploy`
+    reuses whatever is cached, so they stay at whatever was first pulled.
+    doctor reports their age so `update` gets run.
     """
     from conftest import code_of
     source = code_of("cli/agentbox_doctor.py")
@@ -174,9 +167,8 @@ def test_update_is_separate_from_deploy():
 
 
 def test_pull_reuses_deploys_secret_resolution():
-    """A `docker compose pull` run without it dies interpolating secrets out
-    of compose.yaml — which is exactly what a duplicated invocation got wrong
-    here the first time."""
+    """`docker compose pull` needs the same secret resolution as a deploy,
+    because compose.yaml refers to secrets."""
     from conftest import code_of
     source = code_of("cli/agentbox_deploy.py")
     update = source.split("def update(service: str)")[1].split("\ndef ")[0]

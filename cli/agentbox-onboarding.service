@@ -10,7 +10,7 @@
 # Completing an invite runs `docker compose up` for a new bridge. The portal is
 # a LAN-reachable page handling untrusted requests, and cli/agentbox-invite
 # argues at length that such a page must never be the thing holding the docker
-# socket. So the portal writes a request and this reads it — the portal gains
+# socket. So the portal writes a request and this reads it, the portal gains
 # no capability, and a bug in request handling cannot reach a container.
 #
 # That argument is currently weaker than it sounds and this unit does not fix

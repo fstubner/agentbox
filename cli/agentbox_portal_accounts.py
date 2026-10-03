@@ -75,15 +75,11 @@ def pending_requests(identity: str = "") -> list[dict]:
     return out
 
 def google_redirect_acceptable(url: str) -> tuple[bool, str]:
-    """Whether Google will accept this as an authorised redirect URI.
+    """Whether Google will accept this as a redirect URI.
 
-    Google takes exactly two shapes: loopback over plain http, or a real
-    public-suffix domain over https. A .local mDNS name is neither, and the
-    console refuses it with "must end with a public top-level domain".
-
-    Checked here because the alternative is discovering it in the browser
-    halfway through a consent flow, which is how it was discovered. The docs
-    told the operator to register a URI Google was never going to accept.
+    Google accepts loopback over http, or a real public domain over https. A
+    .local name is refused as "must end with a public top-level domain". Better
+    to know now than halfway through someone's consent.
     """
     parsed = urllib.parse.urlparse(url)
     host = (parsed.hostname or "").lower()
@@ -105,11 +101,9 @@ def google_redirect_acceptable(url: str) -> tuple[bool, str]:
 def google_consent_url(state: str) -> str:
     """Start Google's consent flow.
 
-    access_type=offline with prompt=consent because a re-consent that does not
-    force the prompt returns no refresh token — Google issues one on first
-    grant only. Reconnecting is precisely the case where the old token is the
-    thing being replaced, so silently getting none back would make this whole
-    flow a no-op that looks like it worked.
+    access_type=offline with prompt=consent, because Google only issues a
+    refresh token on a forced consent, and a reconnect exists to replace that
+    token.
     """
     query = urllib.parse.urlencode({
         "client_id": portal.GOOGLE_CLIENT_ID,
@@ -147,22 +141,18 @@ def connector_status(identity: str) -> list[dict]:
             "the household account" if connected else "not connected"),
     }]
 
-# --- pairing a chat account, from the page rather than a config file ----------
+# --- pairing a chat account from the page --------------------------------------
 #
-# Who receives a sign-in link by DM used to be an environment variable, which
-# meant adding a person required editing a unit file and restarting a service.
-# That is the operator's job leaking into the household's: Sam should be able
-# to connect her own Discord without anyone touching the box.
+# A person connects their own Discord here rather than an operator editing a
+# unit file.
 #
-# The mapping lives here, in the portal's state directory, because it decides
-# where a sign-in link is sent. If the assistant could write it, it could
-# redirect somebody's link to itself — so this path is deliberately one no
-# container mounts. The env var is still read as a fallback for boxes
-# configured the old way.
+# The pairing decides where sign-in links are sent, so it lives in the
+# portal's state directory, which no container mounts. If the assistant could
+# write it, it could send someone's link to itself. The old environment
+# variable is still read for older setups.
 #
-# Pairing is a code the person sends *from* the account being linked. That is
-# the proof: anyone can type a user id into a form, but only the holder of an
-# account can send a message from it.
+# The person proves the account is theirs by sending a code from it. Anyone can
+# type a user id into a form, but only its owner can send from it.
 
 PAIRING_TTL_SECONDS = int(os.environ.get("AGENTBOX_PAIRING_TTL", "600"))
 

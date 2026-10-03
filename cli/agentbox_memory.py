@@ -43,10 +43,8 @@ def memory_request(method: str, path: str, payload: dict | None = None) -> Any:
 def memory_list(identity: str = "") -> int:
     """What the assistant has proposed, across every identity.
 
-    Scope is shown on each line rather than filtered out. A proposal the
-    operator cannot see is one nobody can approve — private memory was
-    write-only until this was fixed, and silently so, because an empty queue
-    and an unreachable one look identical.
+    The scope is shown on each line rather than filtered, because a proposal
+    the operator cannot see is one nobody can approve.
     """
     payload = memory_request("GET", "/v1/proposals?limit=200")
     if payload is None:
@@ -73,14 +71,10 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "",
                supersedes: str = "") -> int:
     """Record something the operator states directly, with no review step.
 
-    Reviewing your own statement is theatre: the review gate exists so the
-    assistant cannot write its own durable memory, and a person typing a fact
-    at a terminal is the evidence that gate is protecting. The bridge has had
-    an operator-only write path since it was built and nothing ever called it
-    — so the only way a fact could enter memory was for the assistant to guess
-    it first and a human to agree. "Bin day is Wednesday" had no route in at
-    all unless the assistant happened to propose it, and when it did guess, it
-    guessed Tuesday.
+    The review gate exists so the assistant cannot write its own lasting
+    memory. A person typing a fact at a terminal does not need reviewing, and
+    without this a fact could only enter memory if the assistant guessed it
+    first.
 
     Household by default, because a fact worth typing by hand is usually one
     the whole house shares. Pass --scope <name> to keep it to one person.
@@ -110,9 +104,8 @@ def memory_add(statement: str, scope: str = "", memory_type: str = "",
                               f"cli/agentbox memory forget {candidate['id']}  "
                               f"(or re-add with --supersedes {candidate['id']})\n"
                               f"         existing: {candidate['statement'][:70]}")
-    # The heuristic runs on the way in. If it disagrees, say so once rather
-    # than overruling — the operator asked for a memory and gets one, but a
-    # behaviour complaint stored as a fact is the thing worth a second look.
+    # The classifier runs on the way in. If it thinks this is feedback, say so
+    # once, but still store the memory the operator asked for.
     if result.get("kind") == "feedback":
         report(WARN, "that reads as feedback about behaviour rather than a "
                               "fact. It is stored as a memory because you asked for "
@@ -160,11 +153,10 @@ def memory_history(memory_id: str) -> int:
 
 
 def memory_forget(memory_id: str, reason: str = "") -> int:
-    """Remove something already durable.
+    """Remove a stored memory.
 
-    Memory was append-only until this existed: a wrong fact stayed wrong
-    forever, and these statements are read back as true, so a stale one does
-    not sit inertly — it misinforms every answer that touches it.
+    Stored memories are read back to the assistant as true, so a wrong one
+    misinforms every answer that touches it.
     """
     payload = memory_request(
         "POST", f"/v1/memories/{urllib.parse.quote(memory_id)}/forget",
@@ -220,8 +212,8 @@ def memory_decide(action: str, proposal_id: str, reason: str = "") -> int:
     payload = memory_request("POST", f"/v1/proposals/{urllib.parse.quote(proposal_id)}/{action}", body)
     if payload is None:
         return 1
-    # A rejected memory proposal is a correction — the clearest "no, not that"
-    # the system ever gets, and worth strictly more than an approval.
+    # A rejected proposal is a correction, the clearest "no, not that" the
+    # system gets.
     record_decision("operator", action, "memory_proposal", reason)
     report(OK, f"{payload.get('status', action)}: {payload.get('statement', proposal_id)}")
     return 0

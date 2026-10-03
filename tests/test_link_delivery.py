@@ -1,10 +1,9 @@
-"""Getting a sign-in link to a person, without an SMTP credential.
+"""Getting a sign-in link to someone without an SMTP credential.
 
-The link is bound to the browser that asked for it — a nonce cookie set at
-request time, required at redemption. That is what makes delivery over a
-channel the assistant can read safe: reading the link is not enough to use it.
-The property belongs to the portal, and if it were ever relaxed, Discord
-delivery would have to stop with it.
+The link is bound to the browser that asked for it, which makes delivery over a
+channel the assistant can read safe, because reading the link is not enough to
+use it. That property belongs to the portal, and if it were ever relaxed,
+Discord delivery would have to stop.
 """
 from __future__ import annotations
 
@@ -110,7 +109,7 @@ def test_the_operator_process_delivers_and_spends_the_link(approvals, portal):
     set_everywhere(approvals, "discord", fake_discord)
     approvals.deliver_pending_links("tok")
     assert sent and "http://box/login?x=1" in sent[0][1]
-    # The URL is a credential until it expires; it is dropped once sent.
+    # The URL is a credential until it expires, so it is dropped once sent.
     done = json.loads(portal.request_path(
         [p["id"] for p in json.loads(json.dumps([
             {"id": e.stem} for e in (portal.STATE / "requests").glob("*.json")]))][0]
@@ -120,10 +119,8 @@ def test_the_operator_process_delivers_and_spends_the_link(approvals, portal):
 
 
 def test_the_dm_states_the_limit_accurately(approvals, portal):
-    """It is going into a channel the assistant can read, so it must say what
-    opening it there actually gets you — which is a session that can read and
-    not change. Claiming the link is useless elsewhere would be false now that
-    a mismatched nonce downgrades rather than refuses."""
+    """The message goes where the assistant can read it, so it must say what
+    opening it there gives, a session that can read but not change anything."""
     link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     sent = []
@@ -164,11 +161,9 @@ def test_a_completed_request_is_not_delivered_twice(approvals, portal):
 
 
 def test_operations_shows_which_channels_will_actually_deliver(portal):
+    """The sign-in page answers the same for known and unknown addresses, so it
+    cannot say a link went nowhere. Operations is the only place to find out."""
     link_account(portal)
-    """Delivery failure is invisible by construction: the sign-in page must
-    answer identically for a registered and an unregistered address, so it can
-    never say "that went nowhere". This page is the only place a person finds
-    out."""
     body = portal.render_admin("alex", "").decode()
     assert "How sign-in links are delivered" in body
     assert "Discord DM to sam" in body
@@ -216,7 +211,8 @@ def test_but_it_cannot_approve_a_memory(portal):
     assert not portal.can(portal.MEMBER, "memory:decide_own", portal.ORIGIN_CHAT)
     assert not portal.can(portal.MEMBER, "connector:disconnect_own",
                           portal.ORIGIN_CHAT)
-    # Reading is fine — it grants nothing the assistant could not already do.
+    # Reading is fine, since it grants nothing the assistant could not already
+    # do.
     assert portal.can(portal.MEMBER, "memory:read_own", portal.ORIGIN_CHAT)
     assert portal.can(portal.MEMBER, "connector:read_own", portal.ORIGIN_CHAT)
 

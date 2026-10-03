@@ -1,39 +1,33 @@
 """Detect personal data in text, replace it with placeholders, and put it back.
 
-## Why placeholders rather than deletion
+## Placeholders rather than deletion
 
-Deleting an email address stops the assistant reading it and also stops it
-replying to anyone. Useless privacy is privacy that gets switched off.
+Deleting an email address stops the assistant reading it, and also stops it
+replying to anyone. Privacy that breaks the workflow gets switched off.
 
-So personal data is *substituted*: the model sees `<EMAIL_1>` where an address
-was, reasons about "the sender" perfectly well, and writes a draft addressed to
+So personal data is substituted. The model sees `<EMAIL_1>` where an address
+was, reasons about "the sender" perfectly well, and writes a draft to
 `<EMAIL_1>`. The bridge puts the real address back on the way out. The value
-never enters the model's context and the workflow still works.
+never enters the model's context, and the model cannot be talked into
+revealing something it was never given.
 
-That also means this is not a filter the model can be talked into bypassing —
-it cannot reveal what it was never given.
+## What this catches and what it does not
 
-## What this reliably catches, and what it does not
-
-Structured identifiers with a checkable shape: email addresses, phone numbers,
+It catches identifiers with a checkable shape: email addresses, phone numbers,
 payment cards (Luhn-checked), IBANs (mod-97 checked), UK National Insurance
-numbers, US Social Security numbers, IP addresses, UK postcodes, and
+numbers, US Social Security numbers, IP addresses, UK postcodes and
 credential-shaped strings.
 
-It does **not** reliably catch names, street addresses, dates of birth in
-prose, or medical detail. Those have no checkable shape, and a regex claiming
-to find them produces both misses and false positives on ordinary words. A
-system that says "PII removed" while leaving "Sam's checkup result was clear" in
-place is worse than one that never claimed it, because someone relies on it.
+It does not reliably catch names, street addresses, dates of birth in prose or
+medical detail. Those have no checkable shape, and a pattern claiming to find
+them both misses things and flags ordinary words. Treat this as reducing the
+exposure of identifiers, not as anonymisation.
 
-Treat this as reducing exposure of identifiers, not as anonymisation.
+## Precision over recall
 
-## Precision over recall, deliberately
-
-Every pattern here is checksum-validated where the format allows. A false
-positive is not harmless: mangling an order number into `<CARD_1>` corrupts
-data the assistant is meant to act on, silently, and the person who notices is
-the one whose delivery never arrived.
+Every pattern is checksum-validated where the format allows. A false positive
+is not harmless, because turning an order number into `<CARD_1>` quietly
+corrupts data the assistant needs to act on.
 """
 from __future__ import annotations
 
@@ -71,11 +65,8 @@ CHECKED = {"CARD", "IBAN"}
 
 
 def _luhn_ok(digits: str) -> bool:
-    """Payment-card check digit.
-
-    Without this, every 16-digit order number and tracking code becomes
-    `<CARD_1>` — data the assistant needed, destroyed silently.
-    """
+    """Payment-card check digit, so order numbers and tracking codes are not
+    mistaken for cards."""
     total, alternate = 0, False
     for char in reversed(digits):
         value = ord(char) - 48
@@ -120,24 +111,20 @@ def _valid(kind: str, text: str) -> bool:
 # Kinds the assistant has no legitimate use for.
 #
 # It does not need a card number to summarise a receipt, or a National
-# Insurance number to file a letter. Because nothing downstream ever needs the
-# value back, these can be removed outright — no placeholder to restore, no
-# mapping to keep, no state to expire. That is what makes this half shippable
-# on its own: the hard part of substitution is remembering what was replaced,
-# and here there is nothing to remember.
+# Insurance number to file a letter. Nothing downstream needs these back, so
+# they can be removed outright, with no placeholder to restore and no mapping to
+# keep.
 #
-# Emails and phone numbers are deliberately absent. The assistant needs those
-# to reply to anyone, so they require the reversible path and are handled by
-# Redactor, not here.
+# Emails and phone numbers are not here. The assistant needs them to reply to
+# anyone, so they go through the reversible Redactor instead.
 NEVER_NEEDED = ("CARD", "IBAN", "NINO", "SSN", "SECRET")
 
 
 def strip_sensitive(text: str, kinds: tuple[str, ...] = NEVER_NEEDED) -> str:
     """Remove high-harm identifiers outright, before the model sees them.
 
-    Irreversible on purpose. A value the assistant is never given is a value it
-    cannot leak, be talked into repeating, or write into a memory proposal —
-    and unlike a filter on the way out, there is no prompt that recovers it.
+    Irreversible on purpose. A value the assistant is never given cannot be
+    leaked, repeated on request or written into a memory proposal.
     """
     if not text:
         return text
@@ -153,12 +140,11 @@ def strip_sensitive(text: str, kinds: tuple[str, ...] = NEVER_NEEDED) -> str:
 
 
 class Redactor:
-    """Substitutes personal data for placeholders, and can reverse it.
+    """Swaps personal data for placeholders, and can reverse it.
 
-    One instance per conversation-ish scope. The mapping is stable within an
-    instance, so the same address is always `<EMAIL_1>` — the model can tell
-    two mentions apart, or recognise them as the same person, without ever
-    being told who that person is.
+    The mapping is stable within an instance, so the same address is always
+    `<EMAIL_1>`. The model can tell mentions apart, or see they are the same
+    person, without being told who that person is.
     """
 
     def __init__(self) -> None:
@@ -204,11 +190,9 @@ class Redactor:
         return "".join(out)
 
     def restore(self, text: str) -> str:
-        """Put the real values back.
-
-        Applied to what the assistant produces — a draft body, a search query —
-        so a reply addressed to `<EMAIL_1>` reaches an actual person.
-        """
+        """Put the real values back into what the assistant produced, such
+        as a draft or a search, so a reply to `<EMAIL_1>` reaches a real
+        person."""
         if not text:
             return text
         def swap(match):

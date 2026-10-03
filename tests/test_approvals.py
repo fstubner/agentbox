@@ -1,10 +1,9 @@
 """Tests for the Discord approval loop.
 
-The property that matters is not that approval works — it is that the assistant
-cannot approve itself. The assistant is in the same Discord, and an instruction
-embedded in an email can make it say anything, including "approve archive_gmail".
-So the loop must ignore every message a bot authored and every user it does not
-recognise, and it must never see a grant it can write.
+What matters is that the assistant cannot approve itself. It is in the same
+Discord, and an instruction in an email can make it say anything, including
+"approve archive_gmail". So the loop ignores every message from a bot and every
+user it does not recognise, and never sees a grant it can write.
 """
 from __future__ import annotations
 

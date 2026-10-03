@@ -1,27 +1,17 @@
 """The two services that let voice leave Discord without leaving the box.
 
-`docs/voice.md` trades speech quality for locality on purpose: nothing spoken
-to the assistant and nothing it says back leaves the machine. The gateway
-shipped configured for a cloud synthesiser and that was changed for exactly
-this reason.
+`docs/voice.md` trades speech quality for keeping speech on this machine.
+Voice around the house is where that is easiest to lose, since many speakers
+depend on the cloud. These tests hold the part this repository controls: the
+transcriber and synthesiser stay on this box, and neither port reaches the
+network.
 
-Extending voice to the rest of the house is where that promise is easiest to
-lose by accident — every speaker already here is a cloud-coupled one. These
-tests hold the part under this repository's control: the transcriber and the
-synthesiser stay on this box, and neither port reaches the network.
+## Why comments are stripped rather than YAML parsed
 
-## Why the comments are stripped rather than the YAML parsed
-
-These compose files argue for loopback binding at length in their own
-comments, so grepping the raw text would match the reasoning whether or not
-the `ports:` line agreed with it — the suite's own recurring bug, which
-`conftest.strip_comments` exists to prevent.
-
-An earlier version parsed the YAML with PyYAML instead. That was a better
-assertion and a worse test: PyYAML is not in the standard library and was not
-declared anywhere, so it passed locally on a machine that happened to have it
-and failed collection in CI. Everything else that runs on this host is stdlib
-only; a test is not the place to break that.
+The compose files explain loopback binding in their own comments, so a raw
+text search would match the explanation whether or not the `ports:` line
+agreed. Parsing the YAML would need PyYAML, which is not in the standard
+library.
 """
 from __future__ import annotations
 

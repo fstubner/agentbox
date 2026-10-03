@@ -1,13 +1,12 @@
-"""Proposing rules. The assistant authors; a human decides; code evaluates.
+"""Proposing rules. The assistant writes them, a person decides, and code runs
+them.
 
-A stored rule runs unattended, forever, as somebody. That is a bigger thing to
-create than a tool call, so it goes through the same shape as memory: the
-assistant proposes, the proposal is inert, and an operator activates it.
+A stored rule runs unattended, indefinitely, as someone. That is a bigger thing
+than a tool call, so it follows the memory pattern. The assistant proposes, the
+proposal does nothing, and an operator activates it.
 
-Validation happens here, at authoring time, so the assistant learns
-immediately that a rule is wrong — while it still has the context to fix it —
-rather than a person discovering it months later when the rule quietly does
-nothing.
+Rules are validated here, when they are written, so the assistant learns at
+once that a rule is wrong, while it still has the context to fix it.
 """
 from __future__ import annotations
 
@@ -57,10 +56,8 @@ def _identity():
 def _known_tools():
     """The tools the assistant itself has.
 
-    Imported lazily and read from the live registry, so a rule can never name
-    something the assistant could not call directly — the rule surface is a
-    subset of the tool surface by construction rather than by a second list
-    somebody has to keep in step.
+    Read from the live registry, so a rule can only name something the
+    assistant could call directly, with no second list to keep in step.
     """
     import server
     return {tool["name"]: tool for tool in server.TOOLS}
@@ -73,10 +70,9 @@ def _known_identities():
 
 def dispatch(name, args):
     if name == "list_rules":
-        # Active is derived from the operator's approval record on the
-        # read-only mount, never from the rule file: the file lives on this
-        # container's writable mount, and nothing written there may confer
-        # authority — including the appearance of it in a listing.
+        # Active comes from the operator's approval record on the read-only
+        # mount, never from the rule file, which sits on this container's
+        # writable mount.
         import evaluator
         approved = evaluator.approvals()
         found = []
@@ -115,11 +111,10 @@ def dispatch(name, args):
     try:
         STORE.mkdir(parents=True, exist_ok=True)
         path = STORE / f"{checked['name']}.json"
-        # Checked against the operator's approval record, not a flag in the
-        # file. Overwriting an approved rule would not grant anything — the
-        # fingerprint pin means the replacement simply never fires — but it
-        # would silently kill something a person chose to have running, which
-        # is its own kind of harm.
+        # Checked against the operator's approval record. Overwriting an
+        # approved rule would grant nothing, because the fingerprint would no
+        # longer match, but it would quietly stop something a person chose to
+        # run.
         import evaluator
         if checked["name"] in evaluator.approvals():
             raise ToolError(

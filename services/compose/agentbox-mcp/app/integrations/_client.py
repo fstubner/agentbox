@@ -1,27 +1,21 @@
-"""Shared bridge client for gateway integrations.
+"""The HTTP client every integration uses to call its bridge.
 
-One HTTP client instead of five near-identical copies, with two properties the
-copies never had:
+- **Identity travels with each call.** The server resolves the caller's
+  identity during auth and sets it here in a context variable, and every
+  bridge request carries it as `X-Agentbox-Identity`. A bridge trusts the
+  header because only agentbox-mcp holds its token, so the header is the
+  server's statement of who it is acting for, not something the model claims.
 
-- **Identity travels with the call.** The gateway resolves the caller's
-  identity at auth time and sets it here via a context variable; every bridge
-  request carries it as `X-Agentbox-Identity`. A bridge trusts the header
-  because only the gateway holds its token — the header is the gateway's
-  statement of which session it is serving, not a claim the model makes.
+- **Per-person routing.** `GOOGLE_BRIDGE_URL_<NAME>` and `_TOKEN_<NAME>`
+  override the shared `GOOGLE_BRIDGE_URL` and `_TOKEN` for that person. Each
+  person's Google bridge is a separate container holding only their token,
+  and the routing table, not the model, decides which bridge a session
+  reaches. Without an override, calls go to the shared bridge, which is right
+  for shared services like tasks.
 
-- **Per-identity routing.** `GOOGLE_BRIDGE_URL_ALEX` / `_TOKEN_ALEX` override
-  the shared `GOOGLE_BRIDGE_URL` / `_TOKEN` for that identity. This is how a
-  second person gets their own credential without a second gateway: their
-  google bridge is a separate container holding only their token, and the
-  routing table — not the model — decides which bridge a session reaches.
-  Unset overrides fall back to the shared bridge, which is correct for
-  genuinely shared services like tasks.
-
-A context variable rather than a parameter because the five integration
-modules predate identity and their dispatch signatures are stable; threading
-identity through every call site would touch all of them to say the same
-thing. Contextvars are per-thread under ThreadingHTTPServer, so concurrent
-requests cannot see each other's identity.
+A context variable rather than a parameter, so the integrations' dispatch
+functions need no identity argument. Each request runs in its own thread, so
+concurrent requests cannot see each other's identity.
 """
 from __future__ import annotations
 

@@ -1,15 +1,13 @@
-"""The suite's own recurring bug: tests that grep source and match comments.
+"""Tests that grep source must not be fooled by comments.
 
-Three times now an assertion about code has actually been an assertion about
-prose. The worst shape is `assert "x" in source` — a comment mentioning x
-makes it pass while the code is wrong, so the test cannot fail for the right
-reason. The most annoying is `assert "x" not in source`, which breaks on the
-very change that fixes the thing it guards.
+`assert "x" in source` passes when a comment mentions x, even if the code is
+wrong. `assert "x" not in source` fails when a comment explains why x was
+removed. Both test prose instead of code.
 
-This does not ban source assertions. Some properties really are structural —
-"this file must not import that", "the bot check must come before the verb
-parse" — and reading the source is the honest way to check them. It bans
-reading *raw* text, so the assertion is about code.
+Some properties really are structural, such as "this file must not import
+that", and reading the source is the honest way to check them. So this does not
+ban source assertions. It bans asserting on raw text that still contains
+comments.
 """
 from __future__ import annotations
 
@@ -33,19 +31,17 @@ def _files():
 def test_source_assertions_go_through_the_comment_stripper(path):
     """A test asserting on file text must strip comments first.
 
-    Either bind the text with `code_of(...)`, or pass it through
-    `strip_comments(...)` before asserting. Raw `read_text()` is fine for
-    reading data files — what is checked here is asserting a code construct
-    against text that still contains prose.
+    Use `code_of(...)`, `script_code(...)` or `strip_comments(...)`. Reading
+    data files with `read_text()` is fine. What this catches is asserting a
+    code construct against text that still contains prose.
     """
     text = path.read_text(encoding="utf-8")
     code = "\n".join(line for line in text.splitlines()
                       if "asserts-on-prose" not in line)
     code = strip_comments(code)
-    # A test may assert on prose deliberately — that a module documents a
-    # limitation, that a comment records why something is absent. Those mark
-    # the read `# asserts-on-prose`, which is a claim a reviewer can check
-    # rather than a silent exemption.
+    # A test may assert on prose on purpose, for example that a module
+    # documents a limitation. Such reads are marked `# asserts-on-prose`, so a
+    # reviewer can see the exemption.
     names = set(RAW_READ.findall(code))
     if not names:
         return

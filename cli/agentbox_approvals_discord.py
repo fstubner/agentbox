@@ -86,12 +86,10 @@ def approval_channel() -> str:
 
 
 def approval_operators() -> set[str]:
-    """Discord ids whose replies this loop will act on.
+    """Discord ids whose replies this loop acts on.
 
-    The 1Password fallback is kept below the portal setting so a box
-    configured before the Operations page existed keeps working. It is only
-    consulted when nothing is configured locally, which also means the common
-    case no longer pays a subprocess per call — this runs in the poll loop.
+    The portal setting comes first. The 1Password value is a fallback for older
+    setups, read only when nothing is set locally.
     """
     configured = SETTINGS.value("approval_user_ids")
     if not configured:
@@ -103,14 +101,11 @@ _op_operators_cache: str | None = None
 
 
 def _op_operators() -> str:
-    """The 1Password fallback, read at most once.
+    """The 1Password fallback, read at most once per process.
 
-    This is consulted from the poll loop, and op_read spawns a subprocess. On
-    a box that has not moved these to the portal yet, reading it every pass
-    would be a `op` invocation every few seconds forever. The value it holds
-    changes when a human edits a vault entry, so once per process is the right
-    frequency — and setting it on the Operations page takes precedence anyway,
-    without a restart.
+    This runs in the poll loop and `op` starts a subprocess, so it is not read
+    on every pass. Setting the ids on the Operations page takes effect without
+    a restart.
     """
     global _op_operators_cache
     if _op_operators_cache is None:

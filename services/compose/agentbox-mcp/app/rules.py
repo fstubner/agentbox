@@ -1,40 +1,35 @@
-"""Cross-service rules: a designed grammar, deliberately not a language.
+"""Cross-service rules: a small grammar, deliberately not a language.
 
     rule = when <bridge-observed event | schedule>
-           if   <literal predicates — no templates, no code>
+           if   <literal predicates, no templates, no code>
            do   <allowlisted calls to tools the assistant already has>
 
 ## Why a grammar rather than n8n
 
-n8n was evaluated and rejected — not because it could not be locked down, but
-because locking it down is the *subtractive* shape: renting a general-purpose
-surface and re-auditing the subtraction on every upgrade. This is the additive
-shape. Expressiveness is a budget, spent only on what we are willing to verify.
+n8n could have been locked down, but that means taking a general-purpose
+engine and re-checking what was removed on every upgrade. A grammar defined
+here cannot express what it leaves out. Expressiveness is spent only on what
+can be verified.
 
-## Why it is not Turing-complete, on purpose
+## Why it is not Turing-complete
 
-Every rule is statically checkable before it is ever stored: the tool exists,
-the arguments satisfy its schema, the predicates compare literals, the identity
-is real. A rule that passes validation cannot fail at fire time for a reason
-anybody has to debug at 3am — which is the whole argument for giving up
-expressiveness.
+Every rule can be checked before it is stored: the tool exists, the arguments
+fit its schema, the predicates compare literals and the identity is real. A
+rule that passes cannot fail later for a reason someone has to debug at 3am.
 
-There are no templates. Not "templates are filtered" — the grammar has no
-syntax for them, so there is nothing to escape and nothing to get wrong. Any
-`{{` anywhere in a rule is a validation error rather than a substitution.
+There are no templates, and no syntax for them, so there is nothing to escape.
+Any `{{` in a rule is a validation error.
 
-## The model authors; it does not evaluate
+## The model writes rules, and code runs them
 
-The assistant proposes rules. Evaluation is deterministic code in this file.
-That split is what keeps a compromised model from turning a stored rule into
-an arbitrary action: it can propose something wrong, and a human reads it,
-and then it runs exactly as written forever.
+The assistant proposes rules and evaluation is plain code here. A compromised
+model can propose something wrong, a person reads it, and then it runs exactly
+as written.
 
 ## Every `do` is an ordinary tool call
 
-No new execution machinery. The policy gate, grants, identity binding and the
-outcome journal all apply unchanged, and the daily reflection sees what rules
-did alongside what the assistant did.
+The policy gate, grants, identity and outcome journal all apply unchanged, and
+reflection sees what rules did alongside what the assistant did.
 """
 from __future__ import annotations
 
@@ -75,10 +70,10 @@ TEMPLATE = re.compile(r"\{\{|\}\}|\$\{|<%")
 
 
 class RuleInvalid(Exception):
-    """Raised at authoring time, never at fire time.
+    """Raised when a rule is written, never when it fires.
 
-    The message reaches whoever proposed the rule — usually the assistant — so
-    it says what to change rather than what went wrong internally.
+    The message goes to whoever proposed the rule, usually the assistant, so it
+    says what to change.
     """
 
 

@@ -61,8 +61,8 @@ def test_a_well_formed_rule_validates(r):
 
 
 def test_templates_are_not_part_of_the_grammar(r):
-    """Not filtered — absent. There is nothing to escape because there is no
-    syntax for substitution."""
+    """Templates are not filtered but impossible, because there is no syntax for
+    them."""
     for bad in ("{{ state }}", "${state}", "<% state %>"):
         rule = good()
         rule["do"][0]["args"]["text"] = f"washer is {bad}"
@@ -79,8 +79,8 @@ def test_templates_are_refused_at_any_depth(r):
 
 
 def test_a_rule_must_belong_to_a_real_identity(r):
-    """A rule fires as somebody — their credentials, their scope. An unowned
-    rule is an unattended action with nobody accountable for it."""
+    """A rule fires as someone, with their credentials and scope. A rule with
+    no owner would be an action nobody is accountable for."""
     rule = good()
     rule["identity"] = "nobody"
     with pytest.raises(r.RuleInvalid) as exc:
@@ -115,7 +115,7 @@ def test_unknown_arguments_are_refused(r):
 
 
 def test_a_predicate_over_an_unknown_field_is_refused(r):
-    """It would never match and never say why — the worst way to be wrong."""
+    """It would never match and never say why."""
     rule = good()
     rule["if"] = [{"field": "moon_phase", "equals": "full"}]
     with pytest.raises(r.RuleInvalid) as exc:

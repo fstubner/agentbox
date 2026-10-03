@@ -12,14 +12,10 @@ from agentbox_approvals_memory import identity_discord_map
 def complete_pairings(token: str) -> None:
     """Finish Discord pairings started in the portal.
 
-    Somebody clicks "Connect Discord" on their own page, gets a short code,
-    and sends it to this bot as a direct message. Receiving it from their
-    account is the proof: anyone can type a user id into a form, only the
-    holder of an account can send from it.
-
-    Replaces an environment variable that an operator had to edit and restart
-    a unit to change — which put the household's job in the operator's hands
-    for no security benefit.
+    Someone clicks "Connect Discord" on their own page, gets a short code, and
+    sends it to the bot as a direct message. Receiving it from their account is
+    the proof, since anyone can type a user id into a form but only the
+    account's owner can send from it.
     """
     try:
         data = json.loads(CHAT_LINKS.read_text(encoding="utf-8"))
@@ -68,25 +64,19 @@ def complete_pairings(token: str) -> None:
 
 
 def send_link_on_request(token: str) -> None:
-    """A paired person DMs `link` and gets one back.
+    """A paired person sends `link` by DM and gets a sign-in link back.
 
-    The mechanical route to a sign-in link, needed because the two other ways
-    each have a gap: the assistant's `request_signin_link` produces a link
-    that deliberately cannot see Operations, and `agentbox-portal link` needs
-    a terminal. Somebody who wants to check on the box from their phone had
-    neither.
+    The assistant's `request_signin_link` makes a link that cannot see
+    Operations, and `agentbox-portal link` needs a terminal. This gives someone
+    on their phone a way in.
 
-    Sending from a paired account is the whole authentication. Pairing already
-    established that this Discord account belongs to this identity, and only
-    the holder of an account can send from it — the same proof the pairing
-    itself rests on.
+    Sending from a paired account is the authentication, the same proof the
+    pairing rests on.
 
-    Minted as ORIGIN_CHAT, never ORIGIN_OPERATOR. It arrives over a channel
-    the assistant can read, so it must be worth little to whoever reads it: it
-    can look at everything, including Operations, and cannot approve a memory,
-    connect or disconnect an account, invite anybody, or change a setting. An
-    operator link delivered this way would hand full privilege to anything
-    with read access to Discord.
+    The link is ORIGIN_CHAT, never ORIGIN_OPERATOR. It arrives on a channel the
+    assistant can read, so it must be worth little to a reader. It can look at
+    everything, including Operations, and cannot approve a memory, connect or
+    disconnect an account, invite anyone or change a setting.
     """
     try:
         data = json.loads(CHAT_LINKS.read_text(encoding="utf-8"))
@@ -103,11 +93,9 @@ def send_link_on_request(token: str) -> None:
         messages = discord("GET", f"/channels/{channel.get('id')}/messages?limit=10",
                            token) or []
         if str(channel.get("id")) not in seen:
-            # First time this loop has looked at this conversation. Record
-            # where it starts and answer nothing: the ten messages already
-            # sitting there are history, and on first deployment every past
-            # `link` would be replied to at once — a burst of live sign-in
-            # links into a channel, for requests nobody is making now.
+            # The first look at this conversation. Note where it starts and
+            # answer nothing, so old `link` messages already there do not all
+            # get live links at once.
             newest = max((int(m.get("id", 0)) for m in messages), default=0)
             remember_link_request(str(channel.get("id")), str(newest))
             continue
@@ -160,12 +148,8 @@ def link_cursor() -> dict:
 
 
 def remember_link_request(channel: str, message_id: str) -> None:
-    """Record the message answered, so a standing `link` DM is not a loop.
-
-    Without this the bot re-answers the same message every poll — five seconds
-    apart, until the hourly mint cap stops it and the person is left with a
-    channel full of dead links.
-    """
+    """Record the message answered, so the same `link` DM is not answered on
+    every poll."""
     seen = link_cursor()
     seen[channel] = message_id
     try:
@@ -177,17 +161,15 @@ def remember_link_request(channel: str, message_id: str) -> None:
 
 
 def deliver_pending_links(token: str) -> None:
-    """Send sign-in links the portal spooled, as a Discord DM.
+    """Send sign-in links the portal queued, as a Discord DM.
 
-    The portal mints the link and writes a request; this process delivers it.
-    That split exists because the portal is LAN-reachable and must not hold the
-    bot token — the same reason it cannot exchange an OAuth code.
+    The portal makes the link and writes a request, and this process delivers
+    it, because the portal faces the LAN and must not hold the bot token, for
+    the same reason it cannot exchange an OAuth code.
 
-    Safe to send over a channel the assistant can read: the link is bound to
-    the browser that requested it by a nonce cookie, so reading it is not
-    enough to use it. That property is what makes this delivery method
-    possible at all, and it is the portal's, not this file's — if it were ever
-    relaxed, this would have to stop.
+    Sending over a channel the assistant can read is safe only because the
+    link is bound to the browser that asked for it. That property belongs to
+    the portal. If it were ever relaxed, this would have to stop.
     """
     directory = PORTAL_DIR / "requests"
     if not directory.is_dir():
@@ -210,10 +192,9 @@ def deliver_pending_links(token: str) -> None:
             continue
         identity = str(record.get("identity", ""))
         if action == "deliver_invite":
-            # There is nobody to look up. An invitation goes to somebody who
-            # has no identity on this box yet — that is what it is for — so
-            # the recipient is carried on the record, put there by an admin
-            # approving a draft rather than by the assistant that wrote it.
+            # An invitation goes to someone with no identity here yet, so the
+            # recipient comes from the record, put there by the admin who
+            # approved the draft, not by the assistant that wrote it.
             user = str(record.get("discord_user_id", ""))
             if not user:
                 log(f"invite for {identity} has no Discord id; not delivered")
@@ -249,8 +230,8 @@ def deliver_pending_links(token: str) -> None:
             "content": content})
         if not posted:
             continue
-        # The URL is a credential until it expires. Drop it as soon as it is
-        # sent, the same way a spent authorisation code is dropped.
+        # The URL is a credential until it expires, so drop it once it is
+        # sent, like a used authorisation code.
         record.pop("url", None)
         record["completed_at"] = int(time.time())
         try:

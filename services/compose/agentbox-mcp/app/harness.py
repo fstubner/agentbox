@@ -1,46 +1,35 @@
-"""Farming work out to the smaller local models, safely.
+"""Handing work to smaller local models, safely.
 
-`router/agentbox_router.py` has always exposed three role endpoints — a context
-worker on `:1235`, a reasoner on `:1236`, the main model on `:1234`. Until now
-only the evaluator used them. This is the dispatch table that lets the
-assistant use them too.
+Retired along with the router it dispatched to, and not wired into the server.
+The tool definitions are kept in RETIRED_TOOLS. See router/README.md.
 
 ## Why this file is mostly validation
 
-`docs/architecture.md` records that FastContext-4B obeyed an instruction
-embedded in tool data in 10 of 10 attempts. That is the model we most want to
-hand a long email to, and handing it a long email is the exact thing that
-document warns against.
+FastContext-4B obeyed an instruction embedded in tool data in 10 of 10
+attempts (docs/architecture.md), and it is the model best suited to reading a
+long email. Cleaning the input first does not help, because the injection is
+in the data, and a model that reads the data to clean it has already done the
+work. So the dispatched model is constrained instead.
 
-The answer taken in `docs/roadmap.md` (under Retired) is not to sanitise the input —
-the injection is in the data, and a model that reads the data to clean it has
-already done the expensive work. It is to constrain the *dispatched* model:
+- **It holds no tools.** The router speaks plain chat completions and returns a
+  string. An injected worker produces a wrong answer rather than a wrong
+  action, and wrong answers are visible.
+- **Its output is typed and checked before anyone sees it.** `FIELDS` below is
+  a fixed set of kinds. A corrupted `date` is rejected because "ignore your
+  previous instructions" is not a date, and a corrupted `enum` because it is
+  not one of the allowed words.
 
-- **It holds no tools.** Structurally, not by instruction: the router speaks
-  plain chat completions with no tool plumbing at all, and what comes back here
-  is a string. An injected worker produces a wrong answer rather than a wrong
-  action — an escalation failure converted into an accuracy failure, which is a
-  trade worth making because accuracy failures are visible.
-
-- **Its output is typed and validated before anyone sees it.** `FIELDS` below is
-  a closed vocabulary of kinds. A corrupted `date` is rejected because
-  "ignore your previous instructions" is not a date; a corrupted `enum` is
-  rejected because it is not one of four words.
-
-Be honest about the limit. `line` is bounded free text, and bounded free text
-carries whatever bytes the model wrote. Tasks that can express their answer in
-dates, enums and booleans should, and the ones that cannot mark
-`carries_text=True` so the tool description can tell the assistant plainly that
-the field is quoted material rather than a finding. The reduction is real —
-one 200-character line instead of a 40KB thread — but it is a reduction, not a
-removal.
+The limit is `line`, bounded free text that carries whatever the model wrote.
+Tasks that can answer in dates, enums and booleans should. The ones that cannot
+set `carries_text=True`, so the tool description can say the field is quoted
+material. One 200-character line instead of a whole thread is a reduction, not
+a removal.
 
 ## Escalation
 
-Try the cheap local model; on *validation* failure only, retry once at the
-escalation role. A model that returns unparseable output twice is a task that
-should fail loudly rather than fall back to prose, because prose is precisely
-the channel we closed.
+Try the small local model, and only on a validation failure retry once at the
+escalation role. A model that returns unusable output twice fails loudly
+rather than falling back to prose, because prose is the channel being closed.
 """
 from __future__ import annotations
 
@@ -84,9 +73,9 @@ class SchemaError(Exception):
 def _coerce_date(value):
     whole = str(value).strip()
     text = whole[:10]
-    # Accept a bare date or a datetime prefix ("2026-08-20T09:00:00"), refuse
-    # a longer digit run: "2026-08-2099" truncating to a plausible date is the
-    # kind of wrong answer nothing downstream can detect.
+    # Accept a date or a datetime prefix, and refuse a longer run of digits,
+    # because "2026-08-2099" cut down to a plausible date would be a wrong
+    # answer nothing downstream could detect.
     if len(whole) > 10 and whole[10] not in "T ":
         raise SchemaError(f"not an ISO date: {whole[:40]!r}")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
@@ -100,8 +89,8 @@ def _coerce_date(value):
 
 def _coerce_line(value):
     text = str(value)
-    # Collapse anything that could rebuild structure — newlines are how a
-    # smuggled instruction would separate itself from the summary it hides in.
+    # Collapse anything that could rebuild structure. Newlines are how a
+    # smuggled instruction would separate itself from the summary.
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > MAX_LINE:
         raise SchemaError(f"line exceeds {MAX_LINE} characters")
@@ -192,9 +181,9 @@ TASKS = {
         "role": "context",
         "escalate_to": "main",
         "untrusted_input": True,
-        # `subject` and `summary` are quoted from the message, so the answer
-        # still carries text the sender chose. Everything a decision would hang
-        # on — whether to reply, by when, how urgent — is a closed vocabulary.
+        # `subject` and `summary` quote the message, so they carry the
+        # sender's text. Everything a decision depends on, whether to reply, by
+        # when and how urgent, is a fixed vocabulary.
         "carries_text": True,
         "instruction": (
             "Read the email below and answer ONLY with a JSON object, no prose "
@@ -267,16 +256,12 @@ def call_router(role: str, instruction: str, text: str, timeout: float = 120) ->
 def _first_json_object(text: str):
     """Pull the JSON object out of a model's answer.
 
-    Small models fence their JSON, prefix it with "Here you go:", or both. This
-    is lenient about the wrapping and strict about the contents — being strict
-    here would only convert a formatting quirk into a task failure, and
-    `validate` is where strictness actually buys something.
+    Small models wrap JSON in code fences or a preamble. This is lenient about
+    the wrapping and strict about the contents, which `validate` checks.
 
-    Braces inside string values are not structure, so the scan tracks whether
-    it is inside a string. Without that, a summary containing "}" ended the
-    candidate early, the parse failed, and a perfectly valid answer became an
-    escalation — a wrong direction to be wrong in twice, since the escalated
-    model tends to write the same summary.
+    Braces inside strings are not structure, so the scan tracks whether it is
+    inside a string. Otherwise a summary containing "}" would end the object
+    early and a valid answer would be escalated.
     """
     depth, start = 0, -1
     in_string = escaped = False
@@ -306,20 +291,19 @@ def _first_json_object(text: str):
 
 
 def run_task(name: str, text: str, transport=call_router) -> dict:
-    """Run one table entry: dispatch, validate, escalate once on a bad answer.
+    """Run one table entry: dispatch, validate, and escalate once on a bad
+    answer.
 
-    The escalation trigger is a *schema* failure, not a low-quality answer.
-    Nothing here can tell whether a summary is good — that judgement would need
-    a model reading the same untrusted text, which is the thing being avoided.
+    Escalation is triggered by a schema failure, not a poor answer. Judging a
+    summary's quality would need a model to read the same untrusted text.
     """
     task = TASKS.get(name)
     if task is None:
         raise HarnessError(f"unknown task: {name}")
 
-    # Emails say "by the 20th", not "by 2026-08-20". Without today's date the
-    # worker invents a year — the first live run returned 2024 — and a wrong
-    # year in a deadline is a plausible-looking answer, which is the worst
-    # kind. Only added where a date is actually asked for.
+    # Emails say "by the 20th", not a full date. Without today's date the
+    # worker guesses the year, and a wrong year in a deadline looks plausible.
+    # Only added where a date is asked for.
     instruction = task["instruction"]
     if any(spec["kind"] == "date" for spec in task["fields"].values()):
         instruction += f"\nToday is {datetime.date.today().isoformat()}."

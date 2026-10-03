@@ -29,33 +29,25 @@ def proposals_dir() -> Path:
 
 # --- keeping the spool from growing forever ------------------------------------
 
-# How long a settled request stays readable. It carries no secret — only who
-# approved what, and how it turned out — so this is a retention window rather
-# than a disclosure fix, and it is generous on purpose: the question it answers
-# is "who let this person in", which is worth being able to ask months later.
+# How long a settled request is kept. It holds no secret, only who approved
+# what and how it went, and "who let this person in" is worth answering months
+# later.
 SETTLED_RETENTION = 90 * 24 * 3600
 
 
 def reap(now: int | None = None) -> tuple[int, int]:
-    """Drop settled requests past their window, and invites that are dead.
+    """Remove settled requests past their window, and dead invites.
 
-    Two different reasons, deliberately not merged.
+    Two separate reasons. A settled request is history and ages out. An invite
+    that expired unused still holds its secret, and although it can no longer
+    be used, there is no reason to keep a credential that authorises nothing.
 
-    A settled request is history, and ages out. An invite that has expired
-    without ever being filled in is something else: its secret is still in the
-    file, and that secret is what makes the link a credential. Nobody can
-    redeem it — `valid_invite` checks the clock — but keeping a credential
-    record past the point where it can authorise anything is a disclosure
-    surface with nothing left to buy, which is the same reasoning the portal
-    reaps spent links under.
+    A submitted invite stays however old, because it still waits on an admin.
+    A completed one has already dropped its secret and records someone joining
+    the household, so it stays permanently.
 
-    Deliberately conservative about what counts as dead. A submitted invite
-    still holds its secret and is waiting on an admin, so it stays however old
-    it is. A completed one has had its secret dropped already and is the record
-    of somebody joining the household, so it stays permanently.
-
-    Never raises: this runs at startup beside the portal's own reaper, and an
-    unreadable file is worth skipping, not worth refusing to serve over.
+    It never raises, so an unreadable file is skipped rather than stopping the
+    portal starting.
     """
     now = int(time.time()) if now is None else now
     settled = invites = 0

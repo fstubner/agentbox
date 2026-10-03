@@ -1,13 +1,13 @@
 FROM python:3.13-alpine
 
 # git is the point of this service: proposals are branches, so the trail is
-# whatever `git log` says. No compilers or package managers beyond it — this
+# whatever `git log` says. No compilers or package managers beyond it, this
 # container reads and writes text and pushes refs, nothing more.
 RUN apk add --no-cache git
 
 # The clone is owned by the operator with group 65532 and setgid, so this
 # container writes it by group. Git refuses a repo it does not own unless told
-# otherwise — and it deliberately ignores `-c safe.directory` from the command
+# otherwise, and it deliberately ignores `-c safe.directory` from the command
 # line, so an attacker-controlled argv cannot disable the check. A system
 # config baked into the image is the supported route, and it names exactly one
 # path.

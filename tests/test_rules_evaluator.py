@@ -1,12 +1,11 @@
 """The evaluator: rules firing, and the ways a rule must not fire.
 
-The load-bearing property is *where approval lives*. Rule files sit on the
-container-writable mount, whose design contract is that writing there confers
-no authority. So approval is an operator-written entry on the read-only
-mount, pinning a fingerprint of what the rule executes — and the attacks that
-motivated that split are the first things tested here: a gateway that writes
-`"active": true` into a proposal, and a gateway that rewrites an approved
-rule's `do` list after the human said yes.
+What matters most is where approval lives. Rule files sit on the mount the
+container can write, where writing must never grant anything. So approval is
+an operator-written entry on the read-only mount, pinning a fingerprint of
+what the rule runs. The first tests here are the attacks that split prevents:
+a server writing `"active": true` into a proposal, and a server rewriting an
+approved rule's actions after a person said yes.
 """
 from __future__ import annotations
 
@@ -99,9 +98,8 @@ def test_a_flag_written_into_the_rule_file_confers_nothing(tmp_path, monkeypatch
 
 
 def test_editing_an_approved_rule_voids_the_approval(tmp_path, monkeypatch):
-    """The approval pins content, not a name. A gateway that swaps the `do`
-    list after the human said yes gets a rule that never fires — not one that
-    inherits the approval."""
+    """Approval pins content, not a name. Changing the actions after approval
+    gives a rule that never fires."""
     _reset(monkeypatch)
     original = _rule("washer", do=[{"tool": "list_speakers", "args": {}}])
     _approve(tmp_path / "policy" / "rules-approved.json", original)
@@ -206,9 +204,8 @@ def test_every_action_passes_the_policy_gate(tmp_path, monkeypatch):
 
 
 def test_a_denied_action_is_dropped_not_retried(tmp_path, monkeypatch):
-    """A rule needing a grant at 3am does nothing. Recorded, never retried —
-    nobody is reading approval prompts at 3am, which is the argument the
-    whole policy design rests on."""
+    """A rule needing a grant at 3am does nothing. Recorded, never retried,
+    because nobody reads approval prompts at 3am."""
     _reset(monkeypatch)
 
     def deny(tool, consume, identity):
@@ -244,8 +241,8 @@ def test_a_failing_action_does_not_kill_the_pass(tmp_path, monkeypatch):
 
 
 def test_firing_runs_as_the_rules_identity(tmp_path, monkeypatch):
-    """A rule fires as somebody — the identity contextvar is what routes the
-    call to that person's bridge and puts their name in the journal."""
+    """A rule fires as someone. The identity context variable routes the call
+    to that person's bridge and puts their name in the journal."""
     _reset(monkeypatch)
     from integrations import _client
     seen = []
@@ -304,9 +301,9 @@ def _load_cli():
 
 
 def test_cli_and_evaluator_fingerprints_agree():
-    """Two implementations on either side of the container boundary. If they
-    drift, every approval the CLI writes is void by the evaluator's reading —
-    rules approve says yes and nothing ever fires."""
+    """The CLI and the evaluator each compute the fingerprint, on either side
+    of the container boundary. If they differed, every approval would be void
+    and nothing would fire."""
     cli = _load_cli()
     record = _rule("parity", when={"source": "homeassistant",
                                    "entity_id": "switch.washer",

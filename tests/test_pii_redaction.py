@@ -161,12 +161,11 @@ def test_summary_counts_without_revealing(red):
 
 
 def test_names_are_not_claimed_to_be_caught(red):
-    """Documented limitation, pinned as a test so nobody later assumes
-    otherwise.
+    """A documented limitation, pinned so nobody later assumes otherwise.
 
-    A regex cannot find names or medical detail in prose, and a system that
-    reports "PII removed" while leaving them in place is worse than one that
-    never claimed it — someone relies on it.
+    A pattern cannot find names or medical detail in prose, and claiming to
+    remove personal data while leaving those in place would be worse than not
+    claiming it.
     """
     text = "Sam's checkup result was clear, she lives at 14 Elm Street"
     assert red.redact(text) == text
@@ -176,7 +175,7 @@ def test_names_are_not_claimed_to_be_caught(red):
     # docstrings would remove the very thing being checked. Marked
     # asserts-on-prose so tests/test_source_assertions.py allows it.
     doc = MODULE.read_text(encoding="utf-8")  # asserts-on-prose
-    assert "does **not** reliably catch names" in doc
+    assert "does not reliably catch names" in doc
     assert "not as anonymisation" in doc
 
 
@@ -225,15 +224,14 @@ def test_strip_respects_checksums(pii):
 
 
 @pytest.mark.parametrize("value", [
-    "GB82 WEST 1234 5698 7654 32",      # UK, spaced — the common form
+    "GB82 WEST 1234 5698 7654 32",      # UK, spaced, the common form
     "GB82WEST12345698765432",           # compact
     "DE89 3704 0044 0532 0130 00",      # German
     "FR14 2004 1010 0505 0001 3M02 606",  # French, with letters mid-string
 ])
 def test_real_ibans_are_stripped_in_every_written_form(pii, value):
-    """Only the compact form matched until 2026-08-14. Banks, invoices and
-    letters print IBANs in groups of four, so the one format this would ever
-    meet was the one it missed."""
+    """Banks, invoices and letters print IBANs in groups of four, so the spaced
+    form must be caught as well as the compact one."""
     assert pii.strip_sensitive(value) == "[IBAN removed]"
 
 

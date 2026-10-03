@@ -1,10 +1,9 @@
-"""Reading and writing are not the same risk, and the origins are not either.
+"""Reading and writing are different risks, and so are the two origins.
 
-`AGENT_WITHHELD` covers agent- and chat-minted links together because for
-*writes* they are the same: neither proves the person acting is the person who
-asked. Reading is where they part company, and conflating them was costing
-something real — an admin could not check on the box from their phone, in
-order to keep Operations from the assistant.
+`AGENT_WITHHELD` covers assistant-made and chat-delivered links together,
+because for writes they are the same: neither proves the person acting is the
+one who asked. For reading they differ, and an admin must be able to check the
+box from their phone while Operations stays hidden from the assistant.
 """
 from __future__ import annotations
 
@@ -26,8 +25,8 @@ def test_the_assistant_cannot_read_operations(portal):
 
 
 def test_a_phone_link_still_can(portal):
-    """A chat link is downgraded because it was not opened in the browser that
-    asked for it — not because anyone untrusted is holding it."""
+    """A chat link is downgraded because it was opened in a different browser,
+    not because anyone untrusted holds it."""
     assert portal.can(portal.ADMIN, "ops:read_health", portal.ORIGIN_CHAT)
 
 
@@ -97,8 +96,8 @@ def test_only_a_paired_account_gets_a_link(portal):
 
 
 def test_the_bot_does_not_answer_the_same_message_forever(portal):
-    """The poll is five seconds. Without a cursor a standing `link` DM mints
-    until the hourly cap and leaves a channel full of dead links."""
+    """The loop polls every five seconds. Without a cursor, one `link` DM would
+    be answered until the hourly cap."""
     source = script_code("agentbox-approvals")
     body = source.split("def send_link_on_request")[1][:2500]
     assert "link_cursor()" in body
@@ -113,11 +112,9 @@ def test_the_portal_cli_defaults_to_operator(portal):
 
 
 def test_a_chat_link_is_not_told_the_assistant_made_it(portal):
-    """Found by an independent acceptance pass.
-
-    Both origins are downgraded, for different reasons. Somebody who DMed the
-    bot `link` was told "this link was created by the assistant" — untrue, and
-    the remedy it implies (ask for your own link) is the thing they just did.
+    """The message must name the right reason. A chat-delivered link is limited
+    because of the browser, not because the assistant made it, and telling
+    them to ask for their own link would send them to do what they just did.
     """
     for action in ("decide", "forget", "disconnect", "pair"):
         chat = portal.flash_text(portal.origin_refusal(portal.ORIGIN_CHAT, action))
@@ -150,12 +147,11 @@ def test_a_link_id_that_is_not_an_id_is_refused(portal):
 
 
 def test_a_malformed_link_id_answers_like_an_unknown_one(portal):
-    """The first version of the traversal fix let ValueError escape.
+    """A malformed id must not raise.
 
-    That killed the handler thread, so a malformed id closed the connection
-    while an unknown one returned a page — a distinguishable answer, and the
-    opposite of what the redemption path is built for. Malformed, missing and
-    tampered must all produce the same sentence.
+    An exception would close the connection while an unknown id returns a page,
+    which would tell the two apart. Malformed, missing and tampered ids must
+    all get the same answer.
     """
     generic = portal.redeem_link("../../etc/passwd", "x")[2]
     for bad in ("a/b", "", "x" * 80, "id with space", "%2e%2e"):

@@ -7,7 +7,7 @@
 # PathExistsGlob, specifically, and not DirectoryNotEmpty. `agentbox invite
 # drain` settles each request into onboarding/settled/ rather than deleting it,
 # so the directory is permanently non-empty once anything has ever been
-# approved — DirectoryNotEmpty would latch true and re-trigger forever. The
+# approved, DirectoryNotEmpty would latch true and re-trigger forever. The
 # glob only matches requests at the top level, which is exactly the set that
 # still wants acting on.
 #

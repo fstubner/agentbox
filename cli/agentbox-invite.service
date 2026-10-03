@@ -1,4 +1,4 @@
-# The collecting half of onboarding — the form somebody fills in on their phone.
+# The collecting half of onboarding, the form somebody fills in on their phone.
 #
 # Install:
 #   cp cli/agentbox-invite.service ~/.config/systemd/user/
@@ -12,7 +12,7 @@
 # sent links to.
 #
 # It runs as a unit rather than being started by hand because the link is now
-# delivered by email or DM — an invitation that arrives while nobody has a
+# delivered by email or DM, an invitation that arrives while nobody has a
 # terminal open would otherwise reach a closed port, which reads to the
 # recipient as the household being broken rather than the page being down.
 #

@@ -14,14 +14,12 @@ from agentbox_identity import identity_add
 
 # --- completing an invite -------------------------------------------------------
 #
-# The privileged half of onboarding. `cli/agentbox-invite` collects her answers
-# on a LAN-reachable page with no privileges at all; this runs as the operator
-# and does the things that need real authority: creating a Vikunja user inside
-# its container, minting her identity token, wiring per-identity routing.
-#
-# The split exists because Vikunja registration is disabled on this deployment,
-# so creating her account genuinely requires `vikunja user create` in the
-# container — a docker-socket privilege that must never sit behind a web form.
+# The privileged half of onboarding. `cli/agentbox-invite` collects answers on
+# an unprivileged page, and this runs as the operator to do what needs real
+# authority: creating a Vikunja user inside its container, issuing an identity
+# token and wiring per-person routing. Vikunja registration is off, so creating
+# an account needs `vikunja user create` in the container, a Docker-socket
+# privilege that must never sit behind a web form.
 
 INVITE_DIR = Path(os.environ.get(
     "AGENTBOX_INVITE_DIR",
@@ -36,11 +34,10 @@ def _invite(token_id: str) -> dict | None:
 
 
 def provision_vikunja_user(name: str, password: str) -> bool:
-    """Create her task account inside the Vikunja container.
+    """Create the person's task account inside the Vikunja container.
 
-    Registration is disabled (VIKUNJA_SERVICE_ENABLEREGISTRATION=false), so the
-    HTTP API cannot do this — the container's own CLI can. Deliberately not
-    reachable from the onboarding page.
+    Registration is off (VIKUNJA_SERVICE_ENABLEREGISTRATION=false), so the
+    HTTP API cannot do it, but the container's CLI can.
     """
     container = os.environ.get("AGENTBOX_VIKUNJA_CONTAINER", "vikunja-vikunja-1")
     probe = subprocess.run(["docker", "ps", "--filter", f"name={container}",
@@ -125,21 +122,18 @@ def invite_complete(token_id: str) -> int:
 
 
 def invite_drain() -> int:
-    """Complete the invites an admin approved from the portal.
+    """Complete the invites an admin approved in the portal.
 
-    The privileged half of onboarding, triggered by a file instead of by a
-    person at a shell. The household decided on 2026-08-19 that onboarding
-    should not need a terminal; this is where that lands without the docker
-    socket moving to a web page.
+    The privileged half of onboarding, triggered by a file rather than by
+    someone at a shell, so onboarding needs no terminal and the Docker socket
+    stays off the web.
 
-    Everything deciding *whether* to act is re-derived here from the invite
-    record. The request is trusted for exactly one thing — which invite is
-    meant — and `pending()` has already checked that claim against the
-    request's own filename before this sees it.
+    Everything about whether to act is re-derived from the invite record. The
+    request is trusted for one thing, which invite is meant, and `pending()`
+    has already checked that against the request's filename.
 
-    Runs unattended, so it never retries: a failure settles with its reason
-    rather than staying in the spool to fire again on the next trigger, which
-    is how an unattended worker turns one bad record into a loop.
+    It runs unattended, so it never retries. A failure is settled with its
+    reason, rather than staying queued and firing again on the next trigger.
     """
     onb = agentbox_onboarding
     requests = onb.pending()

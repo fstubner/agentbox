@@ -1,9 +1,4 @@
-"""The Operations page's two new jobs: showing the box, and adding a person.
-
-Both replaced something that was not really there — a "Connector health" card
-containing only an explanation of why health checks are good, and an onboarding
-path that required the admin to open a terminal.
-"""
+"""The Operations page: showing the state of the box, and adding a person."""
 from __future__ import annotations
 
 import importlib.util
@@ -101,10 +96,8 @@ def test_there_is_exactly_one_definition_of_staleness():
 
 
 def test_the_status_module_never_changes_anything(status):
-    """Read-only by construction — see its module docstring.
-
-    The portal holds sessions that can edit the admin list. A restart button
-    here would make every bug in it considerably more expensive.
+    """Read only. The portal holds sessions that can edit the admin list, and a
+    restart button would make every bug in it much more expensive.
     """
     source = code_of("cli/agentbox_status.py")
     for forbidden in ("docker restart", "docker exec", "docker stop",
@@ -127,13 +120,9 @@ def test_snapshot_health_accounts_for_stale_and_stopped(status):
 
 
 def test_a_model_bound_to_every_interface_is_reported(status, monkeypatch):
-    """The model servers ask for no password, so the bind address is the
-    whole of their access control.
-
-    Observed live: the main model was on 0.0.0.0 while the other three were on
-    127.0.0.1, and after a restart it came back on loopback. It changes across
-    restarts, which is exactly the kind of thing nobody notices without a
-    check — it is invisible unless somebody thinks to run `ss`.
+    """The model servers have no password, so the bind address is their only
+    access control. It can change across restarts, and nobody notices without a
+    check.
     """
     class Result:
         stdout = (
@@ -215,11 +204,10 @@ def test_a_bad_name_is_refused_before_anything_is_written(portal):
 
 
 def test_an_undeliverable_invite_shows_the_link_rather_than_claiming_success(portal):
-    """The alternative is telling somebody an invite was sent when it was not.
+    """Never claim an invite was sent when it was not.
 
-    Delivery failure is invisible everywhere else by design — the sign-in page
-    must answer identically for registered and unregistered addresses — so
-    this is one of the few places it can be said out loud.
+    The sign-in page must answer the same for known and unknown addresses, so
+    this is one of the few places delivery failure can be stated.
     """
     source = portal_code()
     invite = source.split("def _invite(")[1].split("\n    def ")[0]
@@ -228,14 +216,12 @@ def test_an_undeliverable_invite_shows_the_link_rather_than_claiming_success(por
 
 
 def test_an_invited_link_is_downgraded_because_it_travels(portal):
-    """Found by an independent acceptance pass, and the worst thing in it.
+    """A sent invite link must not carry operator privilege.
 
-    The invite minted ORIGIN_OPERATOR with no browser nonce, so the downgrade
-    in redeem_link could never fire — and then emailed it, or spooled it to a
-    Discord DM. An operator-privileged link sat in a mailbox the assistant
-    holds a read tool for, able to approve memories and disconnect accounts.
-    The module docstring states the rule it broke: "Whoever merely reads the
-    link cannot use it. That holds for email, for Discord."
+    With no browser nonce, the downgrade in redeem_link never applies, and an
+    emailed or DMed operator link would sit where the assistant can read it,
+    able to approve memories and disconnect accounts. Whoever merely reads a
+    link must not be able to use it.
     """
     # Behavioural, not a grep. The first version of this test asserted
     # "origin=ORIGIN_CHAT" in a 2600-character slice of the file, which stops
@@ -250,8 +236,8 @@ def test_an_invited_link_is_downgraded_because_it_travels(portal):
 
 
 def test_a_link_secret_never_reaches_the_log(portal):
-    """log_message was overridden and log_request was not, so the stdlib wrote
-    the whole request line — 23 live secrets were found in the journal."""
+    """The standard library logs the whole request line, which includes a
+    sign-in secret, so query strings must be redacted."""
     redact = portal.PortalHandler._redact
     line = redact('"GET /login?id=abc123&k=THE-SECRET HTTP/1.1" 303 -')
     assert "THE-SECRET" not in line and "abc123" not in line
@@ -273,13 +259,11 @@ def test_a_stopped_service_turns_red_rather_than_vanishing(status, monkeypatch):
 
 
 def test_a_hand_over_link_keeps_full_privilege(portal):
-    """The fix for the mailbox hole took the hand-over path with it.
+    """A link shown to the admin to hand over keeps operator privilege.
 
-    With no delivery channel the link is printed on the admin's screen for a
-    human to carry — the same act as `agentbox-portal link`, which has never
-    been downgraded. Minting ORIGIN_CHAT there left a newly invited member
-    unable to approve their own first memory without an operator opening a
-    terminal, which is the thing the invite flow exists to avoid.
+    That is the same act as `agentbox-portal link`. Downgrading it would leave
+    a new member unable to approve their first memory without an operator at a
+    terminal.
     """
     portal.SETTINGS.save({"smtp_host": ""})
     travels = portal.has_delivery_channel("sam", "sam@example.com")
@@ -289,8 +273,8 @@ def test_a_hand_over_link_keeps_full_privilege(portal):
 
 
 def test_not_knowing_the_container_state_is_a_finding(status, monkeypatch):
-    """`services()` returns [] when docker is unreachable, and all([]) is True
-    — so the page said "Everything is running" exactly when it knew least."""
+    """With Docker unreachable `services()` is empty, and all([]) is True, so
+    not knowing must not read as everything running."""
     def explode(*a, **k):
         raise OSError("no docker")
 
@@ -301,8 +285,8 @@ def test_not_knowing_the_container_state_is_a_finding(status, monkeypatch):
 
 
 def test_a_service_nobody_deployed_is_not_a_fault(status):
-    """Otherwise the dashboard is permanently red over a service the household
-    chose not to run — the failure the scaffold exclusion exists to prevent."""
+    """Otherwise the page is permanently red over a service the household chose
+    not to run."""
     up = status.Service(name="a", label="A", container="c", running=True,
                         stale=False)
     never = status.Service(name="b", label="B", container="", running=False,

@@ -1,10 +1,7 @@
-"""The household scenario runner: usefulness measured, not assumed.
+"""The household scenario runner, which measures usefulness.
 
-The property that matters most: a scenario must never conflate "the seam is
-broken" with "the house is empty". Those verdicts drive opposite actions —
-fix code versus press the Hue button — and the week the journal showed
-`whoami` outnumbering every household tool was the week nothing separated
-them.
+A scenario must never confuse "the seam is broken" with "the house is empty".
+They call for opposite actions, fixing code or adding a device.
 """
 from __future__ import annotations
 
@@ -39,9 +36,9 @@ def _fake_gateway(answers):
 
 
 def test_empty_and_blocked_are_different_verdicts():
-    """An empty house is not a broken seam. 56 entities with nothing
-    controllable must read 'empty', while an unreachable bridge reads
-    'blocked' — they demand different actions from different people."""
+    """An empty house is not a broken seam. Entities with nothing controllable
+    read 'empty', while an unreachable bridge reads 'blocked', because each
+    needs a different person to act."""
     working_but_bare = _fake_gateway({
         "list_home_entities": (True, {"entities": [], "total": 56,
                                       "controllable": []})})
@@ -71,12 +68,9 @@ def test_a_ready_house_scores_ready():
 
 
 def test_an_empty_drive_result_names_the_scope_not_an_empty_drive():
-    """The worst kind of wrong answer this suite can give.
-
-    Under the drive.file scope the assistant sees only files it created, so a
-    person with a full Drive gets zero results. Reporting that as "no match"
-    told the operator their Drive was empty when the truth was that Agentbox
-    cannot see any of it — a scope decision, not a fault to fix.
+    """With only the drive.file scope the assistant sees only files it
+    created, so a full Drive returns nothing. That must read as blocked by
+    scope, not as an empty Drive.
     """
     gateway = _fake_gateway({"search_drive": (True, {"files": []})})
     outcome = lib.run(gateway, "tok")
@@ -124,10 +118,8 @@ def test_scenario_tools_exist_on_the_gateway():
 
 
 def test_a_dict_payload_is_never_counted_by_its_keys():
-    """The first live run reported "ready: 4 lights" against a house with
-    zero lights — len() of {"entities": [], "total": 0, "returned": 0,
-    "controllable": []} counted its four keys. The usefulness instrument
-    confidently inventing usefulness is the worst failure it can have."""
+    """`len()` of a dict counts its keys, so a house with no lights must not
+    score as ready."""
     gateway = _fake_gateway({
         "list_home_entities": (True, {"entities": [], "total": 0,
                                       "returned": 0, "controllable": []})})
@@ -146,11 +138,9 @@ def test_an_undeclared_dict_shape_is_blocked_not_counted():
 
 
 def test_summarise_prepares_a_real_message_then_reads_it():
-    """A fake id tested Gmail's error path instead of the route itself. prepare
-    must find a message with readable text, and the read must carry its id.
-
-    This scenario used to dispatch to triage_email. That route is retired with
-    the router, so it now reads the clean text the main model summarises.
+    """A made-up id would test Gmail's error path instead of the route.
+    prepare must find a message with readable text, and the read must use its
+    id. The main model summarises the clean text.
     """
     calls = []
 
@@ -177,11 +167,9 @@ def test_summarise_prepares_a_real_message_then_reads_it():
 
 
 def test_google_payloads_are_read_at_their_real_keys():
-    """Google nests results — calendar under "items", mail under "messages".
-    The first two live runs of this suite read neither: one reported "3
-    events" that were dict keys hiding 25 real events, the other reported an
-    empty inbox it had never actually looked inside. Wrong in both
-    directions, from the same shape mistake."""
+    """Google nests results, calendar events under "items" and mail under
+    "messages". Reading the wrong level counts dict keys, or misses everything,
+    so both are checked."""
     gateway = _fake_gateway({
         "list_calendar_events": (True, {"summary": "x", "nextPageToken": "t",
                                         "items": [{"id": 1}, {"id": 2}]}),

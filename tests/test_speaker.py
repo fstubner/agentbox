@@ -57,7 +57,7 @@ def test_window_crossing_midnight_is_handled(spk):
 
 
 def test_daytime_window_also_works(monkeypatch):
-    """A window that does not cross midnight — someone who works nights."""
+    """A window that does not cross midnight, for someone who works nights."""
     spk = load(monkeypatch, quiet="09:00-17:00")
     assert spk.in_quiet_hours(at(12)) is True
     assert spk.in_quiet_hours(at(8)) is False
@@ -151,8 +151,8 @@ def test_playback_failure_is_reported_not_swallowed(spk, monkeypatch):
             self.stderr = b"connection refused"
 
     def fake_run(cmd, *args, **kwargs):
-        # Synthesis succeeds, playback fails — the case where the speaker has
-        # wandered off since it was last connected.
+        # Synthesis succeeds and playback fails, as when the speaker has moved
+        # out of range since it last connected.
         return Result(0 if "piper" in cmd[0] else 1)
 
     monkeypatch.setattr(spk.subprocess, "run", fake_run)

@@ -1,10 +1,5 @@
-"""Tests for runtime policy enforcement at the MCP layer.
-
-The architecture diagram always drew a policy engine, but nothing outside
-cli/agentbox read the policy — so at runtime every assistant tool call was
-ungated. These cover the gate that closes it, and specifically the ways a gate
-like this fails open.
-"""
+"""Tests for runtime policy enforcement on tool calls, especially the ways a
+gate like this can fail open."""
 from __future__ import annotations
 
 import json
@@ -48,13 +43,9 @@ def write_grant(path, tool, ttl=60, single_use=True):
     ]}))
 
 
-# The gated exemplar throughout is set_home_climate / home_control_climate.
-# It used to be archive_gmail, until that capability was moved to `allowed` on
-# evidence and thirteen tests broke that had nothing to do with email — they
-# were testing grant mechanics and only needed *something* gated. Climate is a
-# better stand-in: it is gated for a reason that will not expire (it costs
-# money and can wake a household), so these stay about the gate rather than
-# about the example.
+# The gated example throughout is set_home_climate and home_control_climate,
+# which stays gated for lasting reasons (it costs money and can wake people).
+# These tests are about the gate, not the example.
 
 
 def test_shipped_policy_parses_and_has_all_tiers(tiers):
@@ -184,7 +175,7 @@ def test_unwritable_consumption_store_refuses_rather_than_allows(tiers, grants, 
 
 
 def test_every_live_mcp_tool_is_mapped(tool_map):
-    """An unmapped tool fails closed, but silently — catch it here."""
+    """An unmapped tool fails closed without saying why, so catch it here."""
     import re
     tiered = set(tool_map)
     integrations = REPO / "services" / "compose" / "agentbox-mcp" / "app" / "integrations"
@@ -227,9 +218,9 @@ def test_grant_named_by_tool_authorises_the_capability(tiers, grants, consumed, 
 
 
 def test_non_consuming_check_leaves_the_grant_for_the_bridge(tiers, grants, consumed, tool_map):
-    """The MCP checks without consuming so it cannot spend a single-use grant
-    the bridge then needs — otherwise every gated call would fail at the layer
-    whose answer actually matters."""
+    """agentbox-mcp checks without using up a single-use grant, so the bridge
+    still has it. Otherwise every gated call would fail at the layer whose
+    answer counts."""
     write_grant(grants, "set_home_climate")
     pg.check("set_home_climate", tiers, grants, consumed, tool_map, consume=False)
     pg.check_capability("home_control_climate", tiers, grants, consumed, tool_map=tool_map)
@@ -246,12 +237,11 @@ def test_always_denied_capability_cannot_be_granted(grants, consumed):
 
 
 def test_google_bridge_declares_its_gated_capabilities():
-    """The bridge must name the capability each action exercises, or the
-    second gate is decorative.
+    """Each bridge must name the capability an action uses, or the second gate
+    means nothing.
 
-    It declares the capability; the policy file decides the tier. Those are
-    deliberately different jobs — email_state_change moved to `allowed`
-    without this line changing, which is the separation working.
+    The bridge declares the capability and the policy file decides its tier,
+    so moving a capability to `allowed` changes no bridge code.
     """
     src = (REPO / "services" / "compose" / "google-workspace-bridge" /
            "app" / "bridge.py").read_text()
@@ -274,16 +264,8 @@ def _policy_services():
 
 
 def test_no_image_bakes_the_policy():
-    """Baking it coupled a file that changes weekly to the lifecycle of code
-    that changes rarely.
-
-    It also outlived the fix: the runtime moved to the mount and `policy_sync`
-    started describing the COPY in the past tense, but the COPY was still
-    there — so one policy edit marked six services stale and told an operator
-    to rebuild all of them for a change that had already reached them. A
-    freshness check that fires on things that do not matter is one people
-    learn to click past, which is the failure this whole check exists to
-    prevent.
+    """The policy is read from the mount, not built into images, so editing it
+    does not mark every service stale or ask for rebuilds that change nothing.
     """
     services = _policy_services()
     assert services, "no policy-enforcing services found; this test is blind"
@@ -293,9 +275,8 @@ def test_no_image_bakes_the_policy():
 
 
 def test_every_enforcing_service_reads_the_mount():
-    """Nothing is baked any more, so a service that enforces policy and does
-    not mount it fails closed at runtime — correct, but only discovered when
-    every tool starts refusing."""
+    """Nothing is built in, so a service that enforces policy without mounting
+    it would refuse every tool at runtime."""
     for service in _policy_services():
         compose = (service / "compose.yaml").read_text(encoding="utf-8")
         assert ":/policy:ro" in compose, f"{service.name} does not mount /policy"

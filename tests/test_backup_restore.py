@@ -1,9 +1,7 @@
-"""Backup and restore — the one failure here that cannot be undone.
+"""Backup and restore, where a failure cannot be undone.
 
-Neither had a single test until 2026-08-14, which is how the backup came to
-leak an unremovable copy of every private memory on thirteen consecutive runs
-without anyone noticing. `tar -tzf` proved the archive was readable; nothing
-proved it held anything, and no restore had ever been rehearsed.
+Checks that the archive holds real data and can be restored, and that backing
+up leaves no readable copy of private memory behind.
 """
 from __future__ import annotations
 
@@ -124,8 +122,8 @@ def test_cleanup_failure_is_reported_not_swallowed():
 
 
 def test_archives_and_staging_are_not_world_readable():
-    """They hold private memories. Archives were 664 and the staging tree 644
-    until 2026-08-14."""
+    """Archives and the staging tree hold private memories, so only the owner
+    can read them."""
     source = (REPO / "cli" / "agentbox_backup.py").read_text()
     block = source.split("def backup(")[1].split("\ndef ")[0]
     assert "archive.chmod(0o600)" in block

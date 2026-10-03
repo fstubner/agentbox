@@ -1,34 +1,27 @@
 #!/usr/bin/env python3
-"""Invite onboarding for a non-technical person.
+"""Onboarding for someone who has never used a terminal.
 
-Alex runs `agentbox invite create sam`, sends her a link, and she fills in a
-short form on her phone. She never sees Vikunja's login page, a terminal, or
-Google Cloud Console.
+An admin runs `agentbox invite create sam` and sends the link, and the person
+fills in a short form on their phone. They never see Vikunja's login page, a
+terminal or the Google Cloud console.
 
-## Why this process is deliberately powerless
+## Why this process has no privileges
 
-The obvious design is one service that does everything: takes her answers,
-creates her Vikunja account, provisions her Google bridge, redeploys. That
-service would need the docker socket — and a LAN-reachable web page holding the
-docker socket is the worst thing that could run on this box. `docker inspect`
-reads every bridge credential; `docker run -v /:/host` is a root shell.
+One service that took the answers, created the Vikunja account and set up the
+Google bridge would need the Docker socket, and a web page on the LAN holding
+the Docker socket is the worst thing that could run here. `docker inspect`
+reads every bridge credential, and `docker run -v /:/host` is a root shell.
 
-So this is the *collecting* half and nothing else. It has no docker socket, no
-1Password token, no bridge tokens, and cannot create an identity. It writes one
-spool file. The operator then runs `agentbox invite complete`, which has the
-privileges and is run by a human who chose to.
-
-That split is not tidiness. Vikunja registration is disabled on this
-deployment, so creating her account requires `vikunja user create` *inside the
-container* — the privilege is genuinely needed, and it must not live here.
+So this only collects. It has no Docker socket, no secret manager token and no
+bridge tokens, cannot create an identity, and writes one spool file. The
+privileged half runs separately. That split is necessary, because Vikunja
+registration is off and creating an account needs `vikunja user create`
+inside the container.
 
 ## The invite token is a credential
 
-It authorises creating an identity on someone's home server. Single use,
-expiring, and compared in constant time. Treated with the same seriousness as a
-bridge token, because it buys more.
-
-Stdlib only, like everything else that runs on this host.
+It authorises creating an identity on someone's home server, so it is single
+use, expires, and is compared in constant time.
 """
 from __future__ import annotations
 
@@ -67,10 +60,8 @@ from agentbox_invite_records import (  # noqa: E402, F401
     valid_invite,
 )
 
-# Broad Drive read is opt-in, by the same flag and for the same reason as
-# services/compose/google-workspace-bridge/oauth-setup.py — which had the
-# mechanism while this consent path did not, so the safer default was only
-# actually enforced on one of the three ways to grant a credential.
+# Broad Drive read is opt-in, using the same flag as oauth-setup.py, so every
+# way of granting a credential has the same default.
 if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
         "1", "true", "yes"):
     GOOGLE_SCOPES += " https://www.googleapis.com/auth/drive.readonly"
@@ -182,8 +173,8 @@ class InviteHandler(BaseHTTPRequestHandler):
         record["connectors"] = chosen
         save_invite(record)
 
-        # If she asked for Google, consent has to happen now — a code is only
-        # valid for minutes, so collecting it later would mean asking twice.
+        # If they asked for Google, consent happens now, because a code is only
+        # valid for minutes.
         if "google" in chosen and GOOGLE_CLIENT_ID and PUBLIC_ORIGIN:
             return self._send(200, PAGE.format(
                 household=html.escape(self.household),
@@ -260,27 +251,14 @@ def cmd_create(args) -> int:
 def cmd_serve(args) -> int:
     """Serve the form.
 
-    Two modes, because two things want this page and they disagree about
-    whether it should be running.
+    Run by hand, it refuses to start with no invite outstanding, which usually
+    means `create` was forgotten.
 
-    Run by hand, the original case, it refuses to start with nothing
-    outstanding — that almost always means `create` was forgotten, and the
-    note below says to stop it again afterwards. The reasoning was sound while
-    an operator read the link off a terminal and handed it over: the page is
-    reachable on the LAN, and there was no reason for it to be up when nobody
-    was being onboarded.
-
-    `--unattended` is the other case, and it exists because delivery changed.
-    An invitation now arrives by email or DM, so the person holding the link
-    is a stranger with no terminal, no account here, and nobody to ask. A page
-    that is only up while somebody remembered to leave it up is, from where
-    they are standing, a household that looks broken.
-
-    The surface this opens is a port, not an authority. Every route already
-    requires a valid invite token — single use, expiring, compared in constant
-    time — and with nothing outstanding every request is refused exactly as it
-    is now. What changes is that the refusal happens per request instead of by
-    the process being absent.
+    `--unattended` keeps it running. Invitations arrive by email or DM, and the
+    person opening one has no terminal and nobody to ask, so the page has to be
+    up whenever a link might be opened. Every route still needs a valid invite
+    token, which is single use, expires and is compared in constant time, so
+    with nothing outstanding every request is refused.
     """
     pending = [r for r in _all_invites() if not r.get("used_at")
                and now() <= int(r.get("expires_at", 0))]

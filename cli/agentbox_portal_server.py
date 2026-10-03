@@ -26,11 +26,9 @@ __all__ = [
 def wrong_origin_page(host: str) -> str:
     """Explain why connecting Google has to happen on the box itself.
 
-    Written out in full because the failure it prevents is genuinely
-    confusing: the consent screen succeeds, Google redirects to 127.0.0.1,
-    and the browser lands on whatever is running on *the user's own* machine
-    — usually nothing. The operator who hit this rescued it by editing the
-    address bar by hand, which works but nobody should have to guess it.
+    Without this the failure is confusing. Consent succeeds, Google redirects to
+    127.0.0.1, and the browser lands on whatever is running on the person's own
+    machine, usually nothing.
     """
     port = urllib.parse.urlparse(portal.PUBLIC_URL).port or 8771
     return (
@@ -67,15 +65,11 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
     def _redact(line: str) -> str:
         """Strip query strings before anything reaches the log.
 
-        `log_message` was overridden and `log_request` was not, so the stdlib
-        logged the whole request line — including `/login?id=…&k=<secret>`.
-        The link secret is hashed on disk precisely so that directory leaking
-        yields nothing usable; writing the plaintext into the journal put it
-        somewhere longer-lived and less protected. 23 live secrets were found
-        there.
-
-        Redacting every query string rather than the `k` parameter alone: the
-        next parameter worth hiding should not need anyone to remember this.
+        The standard library logs the whole request line, which includes a
+        sign-in link's secret in `/login?id=…&k=<secret>`. The secret is only
+        stored hashed, so writing it to the journal would undo that. Every
+        query string is redacted, so the next sensitive parameter is covered
+        without anyone remembering to add it.
         """
         return re.sub(r"(\?)\S*", r"\1<redacted>", line)
 
@@ -184,10 +178,8 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
             return
 
         if parsed.path == "/admin":
-            # The origin was not passed here, so the second gate never ran on
-            # this route at all — every capability check in the system takes
-            # both, and this one silently took the default. That is why a link
-            # the assistant minted could read Operations.
+            # Both gates take the origin. Without it the default would apply
+            # and an assistant-made link could read Operations.
             why = portal.refusal(session["role"], "ops:read_health",
                           session.get("origin", portal.ORIGIN_AGENT))
             if why:
@@ -215,27 +207,17 @@ class PortalHandler(portal.PortalActions, portal.SigninRoutes, BaseHTTPRequestHa
     def _read_form(self) -> dict | None:
         """The request body, or None if the request is not well formed.
 
-        Both halves of this were defects, on the most privileged web surface
-        on the box and reachable without a session.
+        Runs before authentication on the most privileged web page here, so it
+        must not raise. A bad Content-Length would otherwise kill the handler
+        and make a malformed request distinguishable from a valid one. The
+        length is also capped rather than trusted.
 
-        `int()` on the header raised ValueError before any authentication or
-        routing. That killed the handler thread, so a malformed request got no
-        answer at all while a well-formed one got a page — a difference
-        anybody can measure — and put a traceback in the journal. It is the
-        same failure the link ids had, where letting ValueError escape made
-        malformed and unknown ids distinguishable.
-
-        The length was then trusted, so a request could declare any size and
-        this would sit reading it.
-
-        Every failure answers identically, because which part was wrong is not
-        the client's business.
+        Every failure gets the same answer, because which part was wrong is
+        not the client's business.
         """
         raw = (self.headers.get("Content-Length") or "0").strip() or "0"
-        # ASCII digits specifically. `int()` accepts other numeral systems —
-        # int("\u0663") is 3 — and while the bounds check below makes that
-        # harmless, a header the spec says is DIGIT is not the place to be
-        # inventive.
+        # ASCII digits only. `int()` accepts other numeral systems, and the
+        # standard says this header is digits.
         if not (raw.isascii() and raw.isdigit()):
             return None
         length = int(raw)

@@ -1,34 +1,26 @@
-"""Handing somebody a link to their own portal.
+"""Giving someone a link to their own portal.
 
-Reaches cli/agentbox-portal on the host over host.docker.internal, the same
-shape as the speaker and Home Assistant integrations.
+Reaches cli/agentbox-portal on the host through host.docker.internal, like the
+speaker and Home Assistant integrations.
 
-## There is no identity parameter, and that is the whole design
+## There is no identity parameter
 
-The person a link is minted for comes from `CURRENT_IDENTITY` — resolved from
-the bearer token before any tool runs — and never from an argument. If the
-assistant could name the identity, an instruction embedded in an email could
-name one too, and one poisoned context would reach into another person's
-account. The gateway's own module docstring argues this at length; this tool
-would be the obvious place to quietly break it, because "who is the link for"
-looks so much like an ordinary parameter.
+The link is for whoever `CURRENT_IDENTITY` says, which comes from the bearer
+token before any tool runs, never from an argument. If the assistant could name
+the person, an instruction in an email could too. "Who is the link for" looks
+like an ordinary parameter, which is why it is worth saying.
 
-So `request_signin_link` mints for whoever is asking, and there is no way to
-ask on somebody else's behalf. An admin adding a new person uses the invite
-form on the Operations page, which is a deliberate human act with a session
-behind it.
+So `request_signin_link` makes a link for whoever is asking, and nobody can ask
+on someone else's behalf. Adding a new person goes through the invite form on
+the Operations page.
 
-## Why this is safe to hand the assistant at all
+## Why it is safe to give the assistant
 
-The link is ORIGIN_AGENT, which the portal treats as read-mostly: it can
-review memories and connector status, and it cannot approve a memory,
-disconnect an account, connect a chat account, invite anybody, or change a
-household setting. The assistant can read a link it delivers — it delivers
-over channels it can read, and no amount of care changes that — so the link
-is built to be worth little to whoever reads it.
-
-That is `constrain rather than gate` applied to a credential: rather than
-approving each mint, the thing minted is bounded.
+The link is ORIGIN_AGENT, which can review memories and account status and
+cannot approve a memory, disconnect an account, connect a chat account, invite
+anyone or change a household setting. The assistant can read any link it
+delivers, so the link is built to be worth little to whoever reads it. Rather
+than approving each one, what it can do is limited.
 """
 from __future__ import annotations
 
@@ -114,9 +106,8 @@ def dispatch(name, args):
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
-            # The portal caps links per person per hour. A refusal is an
-            # answer — say so plainly rather than making the assistant retry
-            # into a wall.
+            # The portal caps links per person per hour. Say so plainly, so the
+            # assistant does not keep retrying.
             raise ToolError(
                 "too many sign-in links have been sent to this person in the "
                 "last hour. Wait, or ask an operator to hand one over.") from None
@@ -144,13 +135,10 @@ def dispatch(name, args):
 
 
 def _propose_invite(args):
-    # Named `account_name`, not `identity`, and the distinction is the reason
-    # this tool is allowed to exist. `identity` in this codebase means "who
-    # the assistant is acting as", which never comes from an argument. This is
-    # the opposite: a label for an account that does not exist yet, belonging
-    # to somebody with no session. Reusing the word would have made an
-    # ordinary parameter look like the forbidden one — and did, until the
-    # suite caught it.
+    # Named `account_name`, not `identity`. Here `identity` means who the
+    # assistant is acting for, which never comes from an argument. This is the
+    # opposite, a label for an account that does not exist yet, so it must not
+    # look like the forbidden parameter.
     account_name = str(args.get("account_name") or "").strip().lower()
     if not account_name:
         raise ToolError("a short account name is required, for example sam.")

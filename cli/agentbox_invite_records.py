@@ -12,11 +12,10 @@ STATE = Path(os.environ.get(
     "AGENTBOX_INVITE_DIR",
     str(Path("~/.local/state/agentbox/invites").expanduser())))
 DEFAULT_TTL_HOURS = int(os.environ.get("AGENTBOX_INVITE_TTL_HOURS", "24"))
-# Public by design — a client id is not a secret. The *secret* stays on the
-# operator side, which is why this page can start Google's consent flow but
-# cannot finish it: it receives an authorisation code, and a code is useless
-# without the secret that exchanges it. That is the whole reason onboarding is
-# two phases rather than one privileged service.
+# A client id is public. The secret stays on the operator side, so this page
+# can start Google's consent but not finish it. It receives an authorisation
+# code, which is useless without the secret. That is why onboarding has two
+# halves.
 GOOGLE_CLIENT_ID = os.environ.get("AGENTBOX_GOOGLE_CLIENT_ID", "").strip()
 # Must stay in step with google-workspace-bridge/oauth-setup.py. A member
 # onboarded with fewer scopes than the bridge calls gets a token that fails at
@@ -31,9 +30,8 @@ GOOGLE_SCOPES = os.environ.get(
 
 PUBLIC_ORIGIN = os.environ.get("AGENTBOX_INVITE_ORIGIN", "").rstrip("/")
 
-# What a person can be given their own account for, and what they cannot.
-# Whether a service is *shared* is not a per-person choice — one house has one
-# Home Assistant — so those are stated rather than offered.
+# What a person can have their own account for. Shared services, such as the
+# one Home Assistant, are stated rather than offered.
 CONNECTORS = {
     "vikunja": {
         "label": "Tasks and lists",
@@ -69,13 +67,11 @@ def now() -> int:
 
 
 def google_auth_url(token_id: str, secret: str) -> str:
-    """Where to send her for consent.
+    """Where to send the person for consent.
 
-    `prompt=consent` and `access_type=offline` together are what make Google
-    return a *refresh* token rather than only an access token. Without them a
-    person who has approved this client before gets no refresh token and the
-    bridge cannot be provisioned — a failure that shows up minutes later on the
-    operator side rather than here, so it is worth being explicit.
+    `prompt=consent` and `access_type=offline` together make Google return a
+    refresh token. Without them, someone who approved this client before gets
+    none, and the bridge cannot be set up.
     """
     redirect = f"{PUBLIC_ORIGIN}/google/callback"
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
@@ -119,11 +115,9 @@ def valid_invite(token_id: str, secret: str) -> tuple[dict | None, str]:
     if not hmac.compare_digest(str(record.get("secret", "")), secret):
         return None, generic
     if record.get("used_at"):
-        # Not an error, and "ask for a new one" was the wrong instruction:
-        # they already did the only thing being asked of them. The DONE page
-        # is served as the POST response, so a refresh — or tapping the link
-        # again from the message it arrived in — lands here, on the least
-        # technical person in the flow.
+        # Not an error. They already did what was asked. The confirmation page
+        # is the POST response, so a refresh or a second tap on the link lands
+        # here.
         return None, ("You have already filled this in \u2014 thank you. "
                       "Nothing more is needed from you. Whoever runs this box "
                       "finishes the setup, and you will be able to sign in "

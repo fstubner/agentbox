@@ -1,14 +1,11 @@
-"""The portal asks for an onboarding; a privileged worker decides.
+"""The portal asks for an onboarding, and a privileged worker decides.
 
-Completing an invite runs `docker compose up` for a new bridge. That privilege
-was deliberately kept off the LAN-reachable page, and the household's decision
-that onboarding should not need a terminal does not change where it lives — it
-changes what triggers it.
+Completing an invite starts a new bridge with `docker compose up`, a privilege
+kept off the web page. The portal only triggers it.
 
-So the property under test is not "the button works". It is that the request
-buys exactly one thing: *which* invite is meant. Every other question is
-re-derived by the worker from the invite record, and a request that lies about
-any of them changes nothing.
+So what is tested is that a request settles one thing, which invite is meant.
+The worker re-derives everything else from the invite record, so a request
+that lies about anything else changes nothing.
 """
 from __future__ import annotations
 
@@ -166,12 +163,11 @@ def test_an_already_completed_invite_settles_quietly(cli, spool, tmp_path,
 
 def test_the_approver_is_recorded_but_never_consulted(cli, spool, tmp_path,
                                                       monkeypatch):
-    """The audit fields are audit fields.
+    """The approver and origin are recorded for auditing, not trusted.
 
-    A request carrying a nonsense approver and an untrusted origin still
-    completes a genuinely valid invite — because the worker reads the invite,
-    not the request. The converse test above is the one that matters: a
-    perfect-looking approver on a bogus invite completes nothing.
+    A request with a nonsense approver still completes a valid invite, because
+    the worker reads the invite. The converse matters more: a plausible
+    approver on a bogus invite completes nothing.
     """
     write_invite(tmp_path)
     spool.request(GOOD, requested_by="", origin="agent")
@@ -253,8 +249,8 @@ def test_a_completed_invite_leaves_the_waiting_list(portal, tmp_path):
 
 
 def test_the_card_warns_when_the_google_step_was_skipped(portal, tmp_path):
-    """Completing without it silently leaves her on the shared bridge, which
-    is wrong for mail — said before the click, not after."""
+    """Completing without Google consent leaves the person on the shared
+    bridge, which is wrong for mail, so it is said before the click."""
     write_invite(tmp_path, google_code="")
     assert "consent" in portal.render_onboarding_card().lower()
     write_invite(tmp_path, google_code="4/abc")

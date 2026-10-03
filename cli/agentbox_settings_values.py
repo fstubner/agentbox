@@ -1,4 +1,9 @@
-"""Validators for portal settings: each turns typed text into a clean value or refuses it with a reason."""
+"""Validators for portal settings.
+
+Each one returns a cleaned value or raises InvalidSetting with a reason. None
+of them silently drops part of the input, because a list that quietly loses an
+entry leaves the person believing they configured something they did not.
+"""
 from __future__ import annotations
 
 import re
@@ -6,21 +11,18 @@ import re
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 HOSTNAME = re.compile(r"^[a-zA-Z0-9.-]+$")
-# Discord ids are snowflakes: decimal integers, currently 17-20 digits. Checked
-# for shape only. The real check is that the approval loop refuses to accept
-# instructions from an id that is not on the operator list, so a mistyped id
-# grants nothing to anybody — it just quietly stops working for you, which is
-# the safe direction but a confusing one, hence validating what we can here.
+# Discord ids are snowflakes, decimal integers of currently 17 to 20 digits.
+# Only the shape is checked. The approval loop ignores any id not on the
+# operator list, so a mistyped id grants nothing, but it would quietly stop
+# working for you, so the shape is checked here.
 SNOWFLAKE = re.compile(r"^[0-9]{15,25}$")
 
 
 class InvalidSetting(ValueError):
     """A submitted value was rejected. The message is shown to the person.
 
-    `key` says which setting was at fault, so a form can put the message
-    against the right field. Validators raise without it — they are given a
-    value, not a name — and `SettingsStore.save` fills it in, which keeps the
-    knowledge of which field was being cleaned in the one place that has it.
+    `key` names the setting, so a form can show the message beside the right
+    field. Validators only see a value, so `SettingsStore.save` fills it in.
     """
 
     def __init__(self, message: str, key: str = "") -> None:
@@ -57,19 +59,13 @@ def clean_names(raw: str) -> str:
 def clean_admins(raw: str) -> str:
     """Identity names, and never an empty list.
 
-    `admins` is the one setting that can make itself uneditable. Saving it
-    blank stores an empty string, and a stored value beats the environment
-    fallback by design — so the box goes from "alex is an admin" to nobody
-    is, Operations becomes unreachable for everyone, and the only way back is
-    hand-editing settings.json as the operator. There is no confirmation step
-    in front of it and no route through the UI to undo it.
+    A stored value beats the environment fallback, so saving `admins` blank
+    would leave nobody an admin and Operations unreachable, with no way back
+    through the page. An admin list may still be handed over, and any
+    non-empty list saves, including one without the person saving it.
 
-    "Empty means nobody is an admin, which is the right direction for a
-    mistake to fail in" is still true of the value being *absent* — a garbled
-    or missing environment variable removes privilege rather than granting
-    it. It is not a reason to let a form abolish administration of the box.
-    Handing over is still allowed: any non-empty list saves, including one
-    that does not contain the person saving it.
+    A missing or garbled environment variable still means nobody is an admin,
+    which is the safe direction for that kind of mistake.
     """
     names = clean_names(raw)
     if not names:

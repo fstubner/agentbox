@@ -1,16 +1,16 @@
-"""Tests for the builder sandbox (architecture extension point #4).
+"""Tests for `agentbox scaffold`.
 
-The sandbox generates a new bridge and stops. The properties that matter are
-about what it refuses and what it guarantees, not what it writes:
+The scaffold generates a new bridge and stops. What matters is what it refuses
+and what it guarantees.
 
-- it never deploys and never merges — merge_own_pr is always_denied, and a
-  generated service that deployed itself would route straight around that;
-- the output is correct-by-construction, so review is about whether the service
-  should exist rather than whether it forgot a guardrail;
-- it refuses rather than overwrites, and refuses rather than colliding.
+- It never deploys or merges. merge_own_pr is always_denied, and a generated
+  service that deployed itself would get around that.
+- The output has every guardrail already, so review is about whether the
+  service should exist, not whether it forgot one.
+- It refuses rather than overwrites, and refuses rather than collides.
 
-These run the scaffolder against a throwaway copy of the repo so no test can
-leave a service behind in the real one.
+These run against a throwaway copy of the repository, so no test leaves a
+service behind.
 """
 from __future__ import annotations
 

@@ -1,35 +1,33 @@
 #!/usr/bin/env python3
-"""Mint a Google OAuth refresh token for google-workspace-bridge.
+"""Get a Google OAuth refresh token for google-workspace-bridge.
 
-Stdlib only, matching the rest of the platform. Runs the installed-app
-loopback flow: starts a local listener, prints an authorisation URL, waits for
-Google to redirect back with a code, exchanges it, and prints the refresh
-token. The token is written to stdout only — never to disk — so you can paste
-it into 1Password yourself.
+Standard library only. It runs Google's installed-app loopback flow: it starts
+a local listener, prints an authorisation URL, waits for Google to redirect
+back with a code, exchanges the code and prints the refresh token. The token
+goes to stdout only, never to disk, for you to store in your secret manager.
 
 Usage
 -----
-    python3 oauth-setup.py                 # reads client id/secret from 1Password
+    python3 oauth-setup.py                 # reads client id and secret from 1Password
     python3 oauth-setup.py --client-id X --client-secret Y
 
-Working over SSH? The redirect lands on the *server's* loopback, so forward the
-port from the machine with the browser:
+Over SSH, the redirect lands on the server's loopback, so forward the port
+from the machine with the browser.
 
-    ssh -L 8899:127.0.0.1:8899 alex@<host>
+    ssh -L 8899:127.0.0.1:8899 you@<host>
 
-then open the printed URL in your local browser. Use --port to change it.
+Then open the printed URL in your local browser. --port changes the port.
 
-After it prints the token, update 1Password:
+Once it prints the token, store it and redeploy.
 
     op item edit google-workspace-bridge refresh_token=<token> --vault Agentbox
     cli/agentbox deploy google-workspace-bridge
     cli/agentbox doctor          # google-workspace-bridge should read ready
 
-If the token stops working again within about a week, the OAuth consent screen
-is almost certainly still in "Testing" publishing status, where Google expires
-refresh tokens after 7 days. Publishing the app (Google Cloud console → APIs &
-Services → OAuth consent screen → Publish app) makes them durable. Re-minting
-without changing that just resets the clock.
+If the token stops working within about a week, the OAuth consent screen is
+probably still in Testing, where Google expires refresh tokens after 7 days.
+Publishing the app (Google Cloud console, APIs & Services, OAuth consent
+screen, Publish app) makes them last.
 """
 from __future__ import annotations
 
@@ -48,47 +46,42 @@ from pathlib import Path
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 
-# Derived from what app/bridge.py actually calls:
-#   gmail.modify  — read messages/labels, mark read, archive, apply labels
-#   calendar      — list calendars, read events, freebusy, create events
-#   drive.file    — create and read *only files this app created*
-# Keep this list minimal; widening it widens the blast radius of the token.
+# What app/bridge.py calls.
+#   gmail.modify  read messages and labels, mark read, archive, apply labels
+#   calendar      list calendars, read events, free/busy, create events
+#   drive.file    create and read only files this app created
+# Keep it minimal, because every scope widens what the token can do.
 SCOPES = (
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/drive.file",
-    # Read-only audit trail: who changed what, when. Cannot alter history, and
-    # cannot read file *contents* — a narrower thing than it sounds.
+    # Read-only history of who changed what and when. It cannot alter
+    # history or read file contents.
     "https://www.googleapis.com/auth/drive.activity.readonly",
-    # Turns "someone edited the budget" into a name. Drive Activity returns a
-    # people/{id}, and only the People API maps that to a human.
+    # Turns "someone edited the budget" into a name, since Drive Activity
+    # returns a people/{id} and only the People API maps it to a person.
     #
-    # This reads the contact list, which is a real widening and worth being
-    # deliberate about — it is the difference between the assistant knowing who
-    # collaborates on a document and knowing everyone you have ever emailed.
-    # Activity queries work without it and simply say "someone", so a
-    # deployment that would rather not grant it loses a courtesy, not a feature.
+    # It reads the contact list, which is a real widening: knowing who works on
+    # a document versus knowing everyone you have emailed. Activity works
+    # without it and says "someone" instead.
     "https://www.googleapis.com/auth/contacts.readonly",
     # Workspace domains only; silently returns nothing on a personal account,
     # where it costs nothing to have asked.
     "https://www.googleapis.com/auth/directory.readonly",
 )
 
-# Opt-in, and the single most consequential choice in this file.
+# Opt-in, and the most consequential choice in this file.
 #
-# drive.file (above) lets the assistant read and write the files it created and
-# nothing else — a boundary Google enforces, so it holds even if this bridge is
-# compromised. It cannot answer "find my tenancy agreement", because it cannot
-# see it.
+# drive.file (above) reads and writes only files the assistant created. Google
+# enforces that, so it holds even if this bridge is compromised, but it cannot
+# find your tenancy agreement because it cannot see it.
 #
-# drive.readonly lets it read every file in the drive. That is what makes Drive
-# search useful and it is a genuinely large widening: tax returns, medical
-# letters, contracts. Set GOOGLE_ENABLE_DRIVE_READ_ALL=1 to request it, having
-# decided that on purpose.
+# drive.readonly reads every file in the drive, including tax returns, medical
+# letters and contracts. That makes Drive search useful and is a large
+# widening. Set GOOGLE_ENABLE_DRIVE_READ_ALL=1 to request it, deliberately.
 #
-# Note this is the *credential's* boundary, not a policy check. An approval
-# prompt on a tool call only helps if a human reads carefully every time; a
-# scope that was never granted cannot be spent at all.
+# This is the credential's boundary, not a policy check. A scope that was never
+# granted cannot be used at all.
 if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip() in ("1", "true", "yes"):
     SCOPES = SCOPES + ("https://www.googleapis.com/auth/drive.readonly",)
 
@@ -102,11 +95,8 @@ AUTH_FILES = (
 def op_environment() -> dict[str, str]:
     """Load the 1Password service account token the way cli/agentbox does.
 
-    Without OP_SERVICE_ACCOUNT_TOKEN, `op` tries to authenticate interactively
-    and prompts on the terminal — which a subprocess with captured output turns
-    into an invisible hang. Sourcing the file here means the caller does not
-    have to remember to, which is a documented footgun that has already caused
-    a session to wrongly conclude 1Password was broken.
+    Without OP_SERVICE_ACCOUNT_TOKEN, `op` asks to sign in on the terminal,
+    which hangs invisibly inside a subprocess with captured output.
     """
     env = dict(os.environ)
     if env.get("OP_SERVICE_ACCOUNT_TOKEN"):

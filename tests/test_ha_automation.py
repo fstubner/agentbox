@@ -1,14 +1,13 @@
-"""Tests for assistant-authored Home Assistant automations.
+"""Tests for Home Assistant automations the assistant writes.
 
 An automation is stored code that Home Assistant runs later with its own
-privileges. Every refusal in the bridge happens at call time, and an automation
-is not a call — so without validation, an assistant forbidden from unlocking a
-door can simply write an automation that unlocks it at 3am. Same escalation as
-merging your own PR, on a timer.
+privileges. The bridge refuses things at call time, and an automation is not a
+call, so without validation an assistant that may not unlock a door could
+write an automation that unlocks it at 3am.
 
-Most of these are attempts to reach a lock. The one that matters most is the
-template test: templates are refused wholesale, because `service: "{{ ... }}"`
-defers the decision to runtime and makes every other check here a guess.
+Most of these try to reach a lock. The most important is the template test.
+Templates are refused outright, because `service: "{{ ... }}"` decides at
+runtime and would make every other check a guess.
 """
 from __future__ import annotations
 
@@ -51,8 +50,8 @@ def test_an_ordinary_automation_passes():
     summary = check("alias: x", GOOD)
     assert summary["services"] == ["light.turn_on"]
     assert summary["acts_on"] == ["light.hall"]
-    # The motion sensor is read, not acted on — and the assistant cannot
-    # control it, which must not make the automation illegal.
+    # The motion sensor is read, not acted on, so the assistant not being able
+    # to control it must not make the automation invalid.
     assert "binary_sensor.hall_motion" in summary["reads"]
 
 
@@ -197,9 +196,8 @@ def test_an_automation_that_does_nothing_is_refused():
 
 
 def test_the_summary_separates_what_it_reads_from_what_it_changes():
-    """This is what the operator reads when approving, so the distinction has
-    to be accurate — 'acts on your hall light' is a different decision from
-    'reads your motion sensor'."""
+    """The operator reads this when approving, so it must say accurately which
+    entities are acted on and which are only read."""
     summary = check("alias: x", GOOD)
     assert summary["acts_on"] == ["light.hall"]
     assert "light.hall" not in summary["reads"]
@@ -228,10 +226,8 @@ def test_forbidden_domains_match_the_bridge():
     "script.reload",
 ])
 def test_supervisor_and_reload_services_are_refused(service):
-    """Added after `rest_command.post` slipped through: the first version
-    listed bare domains alongside full service names and compared both against
-    the full name, so a domain entry matched nothing. Domains are matched as
-    domains now."""
+    """Refused domains are matched as domains, so any service in them, such as
+    `rest_command.post`, is refused."""
     body = {"trigger": {}, "action": {"service": service,
                                       "entity_id": "light.hall"}}
     with pytest.raises(auto.AutomationRefused):
@@ -239,11 +235,10 @@ def test_supervisor_and_reload_services_are_refused(service):
 
 
 def test_the_apparmor_profile_permits_bluetooth_device_discovery():
-    """BlueZ announces a device appearing with InterfacesAdded on the root
-    path, from its unique connection name — not under /org/bluez and not from
-    the well-known org.bluez. The profile permitted only those two, so every
-    announcement was denied: 446 times between 13 and 14 August, silently,
-    while the household's SwitchBot sensors never appeared in Home Assistant.
+    """BlueZ announces a new device with InterfacesAdded on the root path, from
+    its unique connection name, not under /org/bluez or from org.bluez. The
+    AppArmor profile must allow that, or Bluetooth sensors never appear in
+    Home Assistant.
     """
     from pathlib import Path
     profile = (Path(__file__).resolve().parents[1]

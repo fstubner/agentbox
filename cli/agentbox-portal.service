@@ -4,7 +4,7 @@
 # Same property as the approval loop, and for a stronger reason: this process
 # holds MEMORY_REVIEW_TOKEN, which approves any memory proposal. If the
 # assistant could start, stop, signal or share a uid with it, the review gate
-# would be a formality — self-approval is exactly what that gate prevents.
+# would be a formality, self-approval is exactly what that gate prevents.
 #
 # Install:
 #   cp cli/agentbox-portal.service ~/.config/systemd/user/
@@ -13,7 +13,7 @@
 #   sudo loginctl enable-linger "$USER"
 #
 # Then sign in at http://127.0.0.1:8771 on this box, or at the LAN address
-# from a phone. See docs/runbook.md — the LAN address works for everything
+# from a phone. See docs/runbook.md, the LAN address works for everything
 # except the Google consent redirect, which Google will only accept on
 # loopback or a real https domain.
 
@@ -32,7 +32,7 @@ Type=simple
 # MEMORY_BRIDGE_TOKEN and MEMORY_REVIEW_TOKEN from the first, GOOGLE_CLIENT_ID
 # from the second.
 #
-# These files hold `op://` references, not literal secrets — the same files
+# These files hold `op://` references, not literal secrets, the same files
 # `agentbox deploy` feeds to `op run`. systemd's EnvironmentFile does NOT
 # resolve them: it would set MEMORY_BRIDGE_TOKEN to the literal string
 # "op://Agentbox/..." and the portal would present that as a bearer token,
@@ -45,7 +45,7 @@ Type=simple
 # The service-account token that authorises that resolution lives in
 # 1password.env, sourced below; a leading dash means a box without 1Password
 # still starts (with unresolved refs, which then fail loudly rather than
-# silently — that is the bug this replaced).
+# silently, that is the bug this replaced).
 EnvironmentFile=-%h/.config/agentbox/1password.env
 
 # Broad Drive read, opted into by the operator on 2026-08-13. Without this the
@@ -58,19 +58,19 @@ Environment=GOOGLE_ENABLE_DRIVE_READ_ALL=1
 # connectors, no operations. Empty would mean nobody is an admin, which is the
 # right direction for a misread value to fail in.
 # Identities the gateway is configured to act for, so the portal can show
-# somebody who exists to the assistant but has no way to sign in — the state
+# somebody who exists to the assistant but has no way to sign in, the state
 # the "Who lives here" card exists to surface. Names only: the gateway's own
 # AGENTBOX_IDENTITIES carries bearer credentials, and this service is the
 # LAN-facing one.
 Environment=AGENTBOX_IDENTITY_NAMES=alex,sam
 Environment=AGENTBOX_ADMINS=alex
 
-# Sign-in addresses. An address here is not a credential — it only decides
+# Sign-in addresses. An address here is not a credential, it only decides
 # where a magic link is sent, and the link is useless in another browser.
 Environment=AGENTBOX_IDENTITY_EMAILS=alex:alex@example.com
 
 # Delivery for sign-in links. Without a host here, links are minted and never
-# sent — and the sign-in page cannot say so, because answering differently for
+# sent, and the sign-in page cannot say so, because answering differently for
 # a registered address would reveal who lives here. `agentbox doctor` warns
 # instead.
 #
@@ -109,7 +109,7 @@ Environment=AGENTBOX_OAUTH_REDIRECT_BASE=http://127.0.0.1:8771
 # flow is what protects it, not the network boundary.
 #
 # Launched under `op run` so the op:// references in the two --env-file
-# arguments are resolved into real values for this process only — never
+# arguments are resolved into real values for this process only, never
 # written to disk, never in the unit. This mirrors `agentbox deploy`, which
 # wraps docker compose the same way. The portal's own plain-value settings
 # (admins, addresses, SMTP, URL) stay as Environment=/EnvironmentFile= above

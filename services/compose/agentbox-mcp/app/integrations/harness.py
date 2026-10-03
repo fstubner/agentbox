@@ -1,17 +1,12 @@
-"""Tools that hand work to the smaller local models.
+"""Tools that handed work to the smaller local models. Retired, see below.
 
-Two of them, and they are opposites on purpose.
+`triage_email` kept an email body out of the assistant's context entirely. The
+bridge fetched it, a small model read it, and only four validated fields and
+one bounded line came back. A message trying to give instructions could only
+reach a model holding no tools.
 
-`triage_email` is the case the constraints in `harness.py` exist for. The point
-is not that it is cheaper — it is that the email body never enters this
-assistant's context at all. The bridge fetches it, the context worker reads it,
-and what comes back here is four validated fields and one bounded line. A
-message that tries to give instructions gets to talk to a model holding no
-tools, and its influence on the caller is capped at a wrong urgency label.
-
-`check_reasoning` is the case that needs none of that: its input is the
-assistant's own words, so there is no attacker-authored text and a free-text
-answer is the useful answer.
+`check_reasoning` had the assistant's own argument reviewed, so there was no
+attacker-written text and a free-text answer was the useful one.
 """
 from __future__ import annotations
 
@@ -20,14 +15,12 @@ from mcp_base import ToolError, schema_object
 
 from integrations.google import bridge_post
 
-# Retired 2026-09-16, along with the router these depend on. Both small
-# workers failed the agent-capability baseline of 2026-08-18 with 80 failures
-# each, and FastContext obeyed an instruction embedded in tool data, which
-# disqualifies it here whatever its throughput. See router/README.md.
+# Retired with the router these depend on. Both small worker models failed
+# their capability evaluation, and FastContext obeyed an instruction embedded
+# in tool data. See router/README.md.
 #
-# The definitions are kept as they were so re-enabling is one line. The
-# assistant does not see them, because the server only collects TOOLS. A tool
-# that is registered and fails on every call is worse than one that is absent.
+# The definitions are kept so re-enabling is a one-line change. The server only
+# collects TOOLS, so the assistant does not see these.
 RETIRED_TOOLS = [
     {"name": "triage_email",
      "description": "Classify one email without reading it into this "
@@ -66,12 +59,8 @@ def _triage(args):
     # happens. Fetched here rather than by the caller so the body has no route
     # into this context even if the dispatch fails.
     message = bridge_post("/v1/gmail/clean", {"message_id": message_id})
-    # The clean route returns `clean_text` and puts the subject under
-    # `headers`. This read `untrusted_text`/`text` and a top-level `subject`
-    # — keys the bridge never emits — so triage_email raised "no readable
-    # body" on every real message while the unit test passed against a stub
-    # that used the wrong keys on both sides of the seam. The fallbacks stay
-    # for older bridges, but the live key leads.
+    # The clean route returns `clean_text`, with the subject under `headers`.
+    # The other keys are fallbacks for older bridges.
     body = str(message.get("clean_text")
                or message.get("untrusted_text")
                or message.get("text") or "")

@@ -56,24 +56,20 @@ SESSION_TTL_SECONDS = int(os.environ.get("AGENTBOX_PORTAL_SESSION_TTL", "1800"))
 # name into an unbounded supply of guesses at the delivery channel.
 MAX_LINKS_PER_HOUR = int(os.environ.get("AGENTBOX_PORTAL_MAX_LINKS", "5"))
 
-# The largest request body this will read. Every form here is a handful of
-# short fields; 64 KiB is far above any of them and far below anything worth
-# calling an upload. Until this existed the portal read whatever length a
-# request declared, while cli/agentbox-invite — the deliberately *less*
-# privileged of the two surfaces — had capped its body since it was written.
+# The largest request body this will read. Every form here is a few short
+# fields, so 64 KiB is far above any of them and far below an upload.
 MAX_BODY_BYTES = 64 * 1024
 
-# How many drafted invitations may sit unanswered. The assistant may write
-# these and cannot send them, so the protection is the admin reading each one
-# — which is exactly what stops working when there are forty of them. The
-# harm from a flood is not privilege, it is an approval step that degrades
-# into clicking, so the bound is on queue depth rather than on rate. It clears
-# itself as the admin acts.
+# How many drafted invitations may wait unanswered. The assistant can write
+# them but not send them, so the safeguard is an admin reading each one, which
+# stops working when there are forty. A flood gains no privilege, only an admin
+# who starts clicking, so the limit is on queue depth. It clears as the admin
+# acts.
 MAX_PENDING_PROPOSALS = int(
     os.environ.get("AGENTBOX_PORTAL_MAX_PROPOSALS", "5"))
-# Lets the assistant mint a sign-in link so a person does not have to go and
-# find an email. Unset means the endpoint does not exist — a capability nobody
-# configured should be absent, not merely unused.
+# Lets the assistant make a sign-in link so a person need not go and find an
+# email. Unset means the endpoint does not exist, because a capability nobody
+# configured should be absent.
 AGENT_TOKEN = os.environ.get("AGENTBOX_PORTAL_AGENT_TOKEN", "").strip()
 
 # identity -> email, as "alex:alex@example.com,sam:sam@example.com".
@@ -101,17 +97,13 @@ GOOGLE_SCOPES = os.environ.get(
     "https://www.googleapis.com/auth/drive.activity.readonly "
     "https://www.googleapis.com/auth/contacts.readonly")
 
-# Broad Drive read is opt-in, by the same flag and for the same reason as
-# services/compose/google-workspace-bridge/oauth-setup.py — which had the
-# mechanism while these two consent paths did not, so the safer default was
-# only actually enforced on one of the three ways to grant a credential.
+# Broad Drive read is opt-in, using the same flag as oauth-setup.py, so all
+# three ways of granting a credential enforce the same default.
 #
-# drive.file alone sees ONLY files the assistant created. That is the right
-# default and it is also why "find that lease in my Drive" could not be
-# answered: a full Drive returned nothing and read as empty. With the flag
-# set, the assistant can read anything the person can read — and still cannot
-# write outside its own folder, delete, or share, because those are absent
-# rather than gated.
+# drive.file alone sees only files the assistant created, which is why "find
+# that lease in my Drive" finds nothing. With the flag set, the assistant can
+# read anything the person can, and still cannot write outside its folder,
+# delete or share, because those do not exist.
 if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
         "1", "true", "yes"):
     GOOGLE_SCOPES += " https://www.googleapis.com/auth/drive.readonly"
@@ -120,43 +112,36 @@ if os.environ.get("GOOGLE_ENABLE_DRIVE_READ_ALL", "").strip().lower() in (
 # endpoint is how a portal ends up quietly pointed at nothing.
 PUBLIC_URL = os.environ.get("AGENTBOX_PORTAL_URL", "http://127.0.0.1:8771")
 
-# Where Google is told to send somebody back, which is deliberately NOT
-# PUBLIC_URL even though it was for a long time.
+# Where Google sends someone back after consent. This is separate from
+# PUBLIC_URL because the two have conflicting requirements. PUBLIC_URL must
+# resolve from a phone, or sign-in links and invitations are useless. Google
+# only accepts HTTPS on a real hostname, or loopback, and loopback on a phone
+# is the phone.
 #
-# One value was doing two jobs with incompatible requirements. PUBLIC_URL has
-# to resolve from a phone, or every sign-in link and invitation is unusable.
-# Google refuses a private IP as a redirect URI and accepts only HTTPS on a
-# real hostname, or loopback — and loopback on somebody's phone is their
-# phone. Set PUBLIC_URL to something a phone can reach and Google rejects the
-# consent flow; set it to loopback and the links go nowhere.
+# Kept apart, a box with no extra infrastructure gets onboarding, tasks, memory
+# and house control over plain LAN HTTP. Only granting Google consent from
+# another device needs a hostname, and pointing both at one https:// name
+# provides it.
 #
-# That collision, not Google itself, was the reason this looked like it needed
-# Tailscale or a domain to adopt at all. Split apart, a box with no
-# infrastructure gets working onboarding, tasks, memory and house control over
-# plain LAN HTTP, and the one thing that still wants a hostname — granting
-# Google consent from somewhere other than this machine — is an upgrade rather
-# than a prerequisite. Point both at the same https:// name to get it.
-#
-# The default is loopback because that is the setting that always works: it
-# means consent is granted in a browser on this box, which for a household is
-# a person sitting down at it once.
+# The default is loopback because it always works. Consent happens in a
+# browser on this box, which for a household means sitting down at it once.
 OAUTH_REDIRECT_BASE = os.environ.get("AGENTBOX_OAUTH_REDIRECT_BASE",
                                      "http://127.0.0.1:8771")
 
 def oauth_redirect_uri() -> str:
-    """The redirect URI, derived once.
+    """The redirect URI, built in one place.
 
-    Both halves of the flow must send Google the identical string — the
-    consent request and the token exchange — and Google compares it to what is
-    registered. Two call sites building it separately is how they drift.
+    The consent request and the token exchange must send Google the identical
+    string, which Google compares to the registered one.
     """
     return f"{OAUTH_REDIRECT_BASE.rstrip('/')}/google/callback"
 MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
                                    "http://127.0.0.1:3471")
 
 SETTINGS = portal.agentbox_settings.SettingsStore(directory=STATE)
-# Device permissions go on the policy mount, not in the portal's private
-# directory — a container has to read them. See agentbox_household.
+# Device permissions live on the policy mount rather than in the portal's
+# private directory, because a container has to read them. See
+# agentbox_household.
 HOUSEHOLD = portal.agentbox_household.HouseholdPolicy(directory=Path(os.environ.get(
     "AGENTBOX_POLICY_DIR",
     os.path.expanduser("~/.local/state/agentbox/policy"))))
@@ -164,53 +149,41 @@ HOUSEHOLD = portal.agentbox_household.HouseholdPolicy(directory=Path(os.environ.
 ADMIN = "admin"
 MEMBER = "member"
 
-# How a session was authenticated. This is not decoration: it decides what the
-# session may do.
+# How a session was authenticated, which decides what it may do.
 #
 # EMAIL    the person proved control of their inbox and their browser.
-# OPERATOR the operator minted a link and handed it over directly.
-# AGENT    the assistant minted it on request, so the person did not have to
-#          go and check their email.
+# OPERATOR the operator made a link and handed it over directly.
+# AGENT    the assistant made it on request, to save checking email.
 #
-# The last one is convenient and cannot be trusted, for a reason that has
-# nothing to do with the assistant misbehaving: whatever channel it delivers
-# the link over, it can read that channel. It is the Discord bot. So any
-# capability an AGENT session has is a capability the assistant effectively
-# has.
-#
-# The response is not to forbid agent-minted links — they are genuinely useful,
-# and the assistant already holds most of what the portal exposes. It is to
-# make an agent-minted session grant *nothing the assistant could not already
-# do*, so stealing one buys nothing.
+# AGENT links are convenient and cannot be trusted, because the assistant can
+# read whatever channel it delivers them on. Anything an AGENT session can do,
+# the assistant can effectively do. So those sessions are useful but grant
+# nothing the assistant could not already do, and stealing one gains nothing.
 ORIGIN_EMAIL = "email"
 ORIGIN_OPERATOR = "operator"
 ORIGIN_AGENT = "agent"
-# Opened in a browser other than the one that asked for the link.
+# A link opened in a browser other than the one that asked for it.
 #
-# This is the ordinary case on a phone, not an attack: Discord and most mail
-# apps open links in their own in-app browser, which has its own cookie jar,
-# so the nonce set when the link was requested is simply not there. Treating
-# that as a dead end made the whole delivery useless to anyone not sitting at
-# the same desktop browser they started from.
+# On a phone this is the normal case. Discord and most mail apps open links in
+# their own browser, which has its own cookies, so the nonce from the request
+# is not there.
 #
-# So the binding decides the *privilege*, not the access. Same browser proves
-# the person who asked is the person opening it, and gets everything. Any
-# other browser gets a session that can read but not approve a memory or
-# disconnect an account — the same limits as an assistant-minted link, for the
-# same reason: whoever merely read the link could be doing this.
+# So the binding decides privilege, not access. The same browser proves the
+# person opening the link is the one who asked, and gets everything. Any other
+# browser can read but not approve a memory or disconnect an account, the same
+# limits as an assistant-made link, because whoever merely read the link could
+# be the one opening it.
 ORIGIN_CHAT = "chat"
 
-# Capabilities withheld from an agent-minted session.
+# Capabilities withheld from an assistant-made session.
 #
-# Approving a memory is the one that matters. The review gate is the
-# assistant's only route to durable memory, and self-approval collapses it
-# entirely — it would be writing its own long-term memory with no human in the
-# loop. Disconnecting is here because revoking someone's account access on
-# their behalf is not a convenience.
+# Approving a memory is the important one. The review gate is the assistant's
+# only route to lasting memory, and approving its own proposals would remove
+# the person from the loop. Disconnecting is here because revoking someone's
+# account access is not a convenience.
 #
-# Everything else — reading your own memories, seeing connector status,
-# starting a reconnect that an operator must still finish — is safe to reach
-# from a link the assistant produced.
+# Reading your own memories, seeing account status and starting a reconnect
+# that the operator side finishes are all safe.
 AGENT_WITHHELD = frozenset({
     "memory:decide_own",
     "memory:decide_household",
@@ -229,29 +202,26 @@ AGENT_WITHHELD = frozenset({
     "ops:invite",
 })
 
-# Withheld from assistant-minted links only, not from chat-delivered ones.
+# Withheld from assistant-made links only, not from links delivered by chat.
 #
-# AGENT_WITHHELD above covers both because for *writes* they are the same
-# risk: neither proves the person doing it is the person who asked. Reading is
-# where they part company, and conflating them was costing something real.
+# For writes the two are the same risk, since neither proves the person acting
+# is the one who asked. For reading they differ.
 #
-#   ORIGIN_AGENT  the assistant made this link and can read it, so anything
-#                 the link can see, the assistant can see.
-#   ORIGIN_CHAT   a person has this link on their phone. It is downgraded
-#                 because it was not opened in the browser that asked for it,
-#                 not because anyone untrusted holds it.
+#   ORIGIN_AGENT  the assistant made the link and can read it, so anything the
+#                 link can see, the assistant can see.
+#   ORIGIN_CHAT   a person has the link on their phone. It is downgraded
+#                 because it was opened in a different browser, not because
+#                 anyone untrusted holds it.
 #
-# Operations lists who lives here, their sign-in addresses and their Discord
-# ids. Withholding it from both would have stopped an admin checking on the
-# box from their phone — an ordinary thing to want — in order to keep it from
-# the assistant. Withholding it from the assistant alone costs nothing.
+# Operations lists who lives here, with their addresses and Discord ids.
+# Withholding it from chat links would stop an admin checking the box from
+# their phone. Withholding it from the assistant alone costs nothing.
 AGENT_ONLY_WITHHELD = frozenset({
     "ops:read_health",
 })
 
-# What each role may do. Enumerated rather than computed: a capability that
-# nobody granted should be absent, not merely unreachable by the current UI.
-# Deny by default — an action missing from this table is refused.
+# What each role may do, listed explicitly so a capability nobody granted is
+# absent. Deny by default, so an action missing from this table is refused.
 ROLE_CAPABILITIES = {
     MEMBER: frozenset({
         "memory:read_own",
@@ -268,12 +238,9 @@ ROLE_CAPABILITIES = {
         "connector:disconnect_own",
         "connector:pair_chat",
         "ops:read_health",
-        # `ops:stage_messaging_credential` was removed on 2026-08-18: it was
-        # granted here and checked nowhere. This table is deliberately
-        # enumerated so that a capability nobody granted is absent rather than
-        # merely unreachable; one that is granted and never consulted is the
-        # same confusion pointing the other way. It comes back with its check,
-        # or not at all.
+        # Only capabilities that something checks belong here. One that is
+        # granted and never checked is as confusing as one that is checked
+        # and never granted.
         "ops:write_settings",
         "ops:write_household",
         "ops:invite",

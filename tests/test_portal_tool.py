@@ -149,12 +149,9 @@ def test_it_is_allowed_rather_than_gated():
     """Putting an approval in front of somebody asking for their own sign-in
     link is the exact everyday prompt that trains people to approve unread.
     What keeps it safe is that the link is bounded, not that the mint is."""
-    # Read through the parser the gate itself uses, not PyYAML. Two reasons:
-    # PyYAML is not in the standard library and was declared nowhere, so this
-    # passed on machines that happened to have it and failed collection in CI.
-    # And policy_gate runs in containers with nothing extra installed, so its
-    # own reader is what will actually see this file in production — asserting
-    # through it tests the thing that matters.
+    # Read through the gate's own parser rather than PyYAML, which is not in
+    # the standard library. It is also the reader that sees this file in
+    # production.
     import sys
     sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
     import policy_gate as pg

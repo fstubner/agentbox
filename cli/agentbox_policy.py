@@ -14,13 +14,8 @@ from agentbox_common import FAIL, OK, REPO, WARN, report
 
 
 def source_sha(service: str) -> str:
-    """Delegates to agentbox_status, which is the one definition of this.
-
-    The portal needs the same answer to say whether a service is stale, and a
-    second implementation written for that page hashed git history instead of
-    file contents — reporting every service on the box as stale. One function,
-    imported by both, is the only way that stays true.
-    """
+    """Delegates to agentbox_status, the one definition, which the portal
+    also uses."""
     return agentbox_status.source_sha(service)
 
 
@@ -72,19 +67,12 @@ def policy_dir() -> Path:
 def policy_sync(quiet: bool = False) -> int:
     """Copy the committed approval policy onto the read-only bridge mount.
 
-    The policy used to be COPYd into every image, so changing one line meant
-    rebuilding and redeploying seven containers. That coupled a file that
-    changes weekly to the lifecycle of code that changes rarely — and it was
-    already inconsistent, because `grants.json` has always been read live from
-    this same mount, and a grant is the sharper decision of the two: it
-    permits one specific action right now.
+    The policy is read live from this mount, like grants, so changing it does
+    not mean rebuilding every image. `policy_drift` checks that what is
+    enforced matches what is committed.
 
-    What baking it in did buy was provenance — the image hash said which
-    policy was being enforced. `policy_drift` replaces that with a comparison
-    of the actual bytes, which answers the same question better.
-
-    Writing where the assistant can write confers no authority: this directory
-    is operator-owned and mounted :ro into every bridge.
+    The directory is owned by the operator and mounted read-only into every
+    bridge.
     """
     source = REPO / "policies" / "approval-policy.yaml"
     target = policy_dir() / "approval-policy.yaml"
@@ -109,12 +97,8 @@ def policy_sync(quiet: bool = False) -> int:
 
 
 def policy_drift() -> int:
-    """Whether the policy bridges enforce still matches the committed one.
-
-    This is the check the image hash used to provide. It is a better one: it
-    compares what is actually being enforced rather than when the image
-    happened to be built.
-    """
+    """Whether the policy the bridges enforce matches the committed one,
+    compared byte for byte."""
     source = REPO / "policies" / "approval-policy.yaml"
     target = policy_dir() / "approval-policy.yaml"
     try:
@@ -212,13 +196,10 @@ OUTCOME_DIR = Path(os.environ.get(
 def record_decision(actor: str, action: str, subject: str, detail: str = "") -> None:
     """Append an operator decision to the outcome journal.
 
-    These are the only records in the journal containing a human judgement, and
-    they are what makes a tier argument possible: "you approved this nine times
-    out of nine" is evidence, and nothing else in the system remembers it.
-
-    Written to the same directory the MCPs write to, so `review_own_activity`
-    reads both halves — what the assistant tried, and what the operator said
-    about it.
+    These are the journal's only records of a person's judgement, such as
+    approving something nine times out of nine. They go in the same directory
+    agentbox-mcp writes to, so `review_own_activity` sees both what the
+    assistant tried and what the operator decided.
     """
     path = OUTCOME_DIR / "operator-outcomes.jsonl"
     entry = {"ts": int(time.time()), "actor": actor,

@@ -78,12 +78,10 @@ def test_there_is_no_delete_or_share_route(gb):
     for path in gb._POST_ROUTES:
         assert "delete" not in path
 
-    # Permissions may be *read* — "is this shared publicly?" is worth asking.
-    # They may never be written: that call is what turns a private document
-    # into a public link, and it belongs to a human who can see the file.
-    #
-    # Checked by walking the syntax tree rather than grepping, because a string
-    # search over source is satisfied by a comment and proves nothing.
+    # Sharing may be read, because "is this public?" is worth asking, but
+    # never changed, because that turns a private document into a public link.
+    # Checked through the syntax tree, since a text search would match a
+    # comment.
     import ast
     tree = ast.parse((APP / "bridge.py").read_text())
     for node in ast.walk(tree):
@@ -225,12 +223,9 @@ def urllib_unquote(value: str) -> str:
 
 
 def test_onboarding_scopes_match_what_the_bridge_calls():
-    """A member onboarded with fewer scopes than the bridge uses gets a token
-    that fails at the first Drive call, days later, with an opaque 403.
-
-    Two files declare scopes — the operator's oauth-setup and the invite page —
-    and they drift silently because nothing fails until someone uses the
-    feature.
+    """A member onboarded with fewer scopes than the bridge uses would fail at
+    the first Drive call, days later, with an unexplained 403. Two files declare
+    scopes, so they must agree.
     """
     setup = (REPO / "services/compose/google-workspace-bridge"
                     "/oauth-setup.py").read_text()
@@ -258,11 +253,9 @@ def _oauth_scopes(monkeypatch, enabled: str | None):
 
 
 def test_broad_drive_read_is_opt_in(monkeypatch):
-    """drive.readonly reaches every document in the drive — tax returns,
-    medical letters, contracts. It must never be granted by default.
-
-    Asserted against the value the module actually computes, not against the
-    comment explaining it.
+    """drive.readonly reaches every document in the drive, including tax
+    returns and medical letters, so it must never be granted by default.
+    Checked against the value the module computes, not the comment.
     """
     default = _oauth_scopes(monkeypatch, None)
     assert not [s for s in default if "drive.readonly" in s]
@@ -365,10 +358,8 @@ def test_current_user_needs_no_lookup(gb):
 
 
 def test_missing_contacts_scope_does_not_break_activity(gb, monkeypatch):
-    """Name resolution is a courtesy on top of the feed.
-
-    A household that never granted the contacts scope should still get its
-    history, with actors reading "someone" — losing a nicety, not a feature.
+    """Names are a courtesy. Without the contacts scope the history still
+    works, with actors shown as "someone".
     """
     def fake(method, url, payload=None, **kwargs):
         if "people" in url:
@@ -468,10 +459,8 @@ def _consent_scopes(monkeypatch, path, enabled):
 
 @pytest.mark.parametrize("path", ["cli/agentbox-portal", "cli/agentbox-invite"])
 def test_every_consent_path_honours_the_same_opt_in(monkeypatch, path):
-    """The flag existed in oauth-setup.py only, while the portal and the
-    invite built their own consent URLs — so the safer default was enforced
-    on one of the three ways to grant a credential and not the other two.
-    A control that one path skips is not a control.
+    """All three ways to grant a credential must honour the same opt-in, or the
+    safer default only applies to one of them.
     """
     assert "drive.readonly" not in _consent_scopes(monkeypatch, path, None)
     assert "drive.readonly" in _consent_scopes(monkeypatch, path, "1")
@@ -484,13 +473,11 @@ def test_ambiguous_values_do_not_widen_any_consent_path(monkeypatch, path, value
 
 
 def test_no_delete_helper_exists_in_the_credential_holder():
-    """"Absent beats gated" applied to the bridge itself.
+    """The bridge contains no delete helper at all.
 
-    google_delete() was implemented and called by nothing until 2026-08-14.
-    Deleting mail and files is always_denied and has no tool, so it was absent
-    from the assistant's surface while sitting in the process holding the
-    OAuth credential, one call site from reachable. Unused code implementing a
-    forbidden capability is the weakest form of absent there is.
+    Deleting mail and files is always_denied and has no tool. Code that could
+    do it would still sit in the process holding the OAuth credential, one call
+    away from being reachable.
     """
     source = (REPO / "services/compose/google-workspace-bridge"
               / "app" / "bridge.py").read_text()

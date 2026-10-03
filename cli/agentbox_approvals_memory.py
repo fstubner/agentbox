@@ -9,26 +9,20 @@ import urllib.request
 
 from agentbox_approvals_discord import discord, dm_channel, log, op_read, short_id
 
-# --- memory review, in the same conversation --------------------------------
+# --- memory review in Discord ---------------------------------------------------
 #
-# The portal is the full surface, but it needs a browser and a fresh link, and
-# a memory proposal is a five-second decision. Reviewing them where the
-# conversation already happens is the difference between a queue that gets
-# cleared and one that grows for six weeks — which is what actually happened.
+# The portal does everything, but needs a browser and a fresh link, while a
+# memory proposal is a five-second decision. Reviewing them in the conversation
+# keeps the queue from growing.
 #
-# Every property that makes the grant loop safe applies unchanged, because it
-# is the same loop: replies from bots are ignored outright, so the assistant
-# cannot approve its own memory even if an injected instruction makes it type
-# the words; only configured operator ids are accepted; and this process holds
+# The protections of the approval loop apply, because it is the same loop. Bot
+# messages are ignored, so the assistant cannot approve its own memory by typing
+# the words. Only configured operator ids are accepted, and this process holds
 # the review token, which the assistant never sees.
 #
-# The one thing this adds is a privacy rule the grant loop never needed. A
-# grant is about a tool and is nobody's secret. A memory proposal can be
-# private to one person, and a shared channel is the wrong place for it —
-# posting Alex's private proposal where Sam reads it would be a disclosure
-# neither of them chose. So: household proposals go to the channel, private
-# ones only to that person's DM, and if nobody has mapped them to a Discord
-# account it stays in the portal rather than leaking.
+# It adds one privacy rule. A memory proposal can be private to one person, so
+# household proposals go to the channel and private ones only to that person's
+# DM. Without a paired Discord account a private proposal stays in the portal.
 
 MEMORY_BRIDGE_URL = os.environ.get("AGENTBOX_MEMORY_BRIDGE",
                                    "http://127.0.0.1:3471")
@@ -111,10 +105,9 @@ def announce_proposals(channel: str, token: str, state: dict) -> None:
 def resolve_memory(prefix: str) -> tuple[str, str]:
     """Find a proposal or a stored memory by id prefix.
 
-    Returns (id, where) where `where` is 'proposal' or 'memory', or ("", "").
-    Ambiguous prefixes resolve to nothing rather than to the first match —
-    acting on the wrong memory because two ids share four characters is not a
-    mistake worth risking to save typing.
+    Returns (id, where), where `where` is "proposal" or "memory", or ("", "").
+    An ambiguous prefix finds nothing rather than the first match, so a short
+    prefix cannot act on the wrong memory.
     """
     hits = []
     for where, path in (("proposal", "/v1/proposals?limit=200"),

@@ -1,19 +1,11 @@
-"""Shared helpers for tests that assert on source files.
+"""Shared helpers for the test suite.
 
-A test that greps source has bitten this suite three times, always the same
-way: the assertion matched a *comment* rather than code.
-
-- `assert "x" not in source` fails when a comment explains why x was removed —
-  the test breaks on the change that fixed the thing it guards. That happened
-  to the `ignore_errors` check the moment the backup leak was fixed.
-- `assert "x" in source` is worse: a comment mentioning x makes the test pass
-  while the code is wrong, which is a test that cannot fail for the right
-  reason.
-
-`code_of()` strips comments and docstrings, so an assertion is about code.
-Prefer exercising behaviour where you can; where the property really is
-structural — "this file must not import that", "this call must come before
-that one" — assert on `code_of(...)` rather than raw text.
+Tests that assert on source must not be fooled by comments.
+`assert "x" not in source` fails when a comment explains why x was removed, and
+`assert "x" in source` passes when a comment mentions x even if the code is
+wrong. `code_of()` strips comments and docstrings, so an assertion is about
+code. Prefer testing behaviour, and use `code_of(...)` where the property
+really is structural, such as "this file must not import that".
 """
 from __future__ import annotations
 
@@ -65,10 +57,10 @@ def strip_comments(text: str) -> str:
 
 
 def code_of(path: str | Path) -> str:
-    """A file's executable text: no comments, no docstrings.
+    """A file's executable text, with no comments or docstrings.
 
-    Falls back to comment-stripping alone for files that are not importable
-    Python — cli/agentbox is extensionless but parses, so it works there too.
+    Falls back to stripping comments only for files that do not parse as
+    Python. The extensionless CLI scripts do parse.
     """
     full = Path(path)
     if not full.is_absolute():

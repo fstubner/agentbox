@@ -154,7 +154,7 @@ def test_garbage_cookie_resolves_to_nobody(portal):
 
 def test_member_cannot_decide_another_identity_proposal(portal, monkeypatch):
     """The id is a form field, and a form field must not choose whose memory
-    is touched — the same rule that binds identity to the session everywhere."""
+    is touched."""
     monkeypatch.setattr(portal, "memory_call", lambda *a, **k: {
         "proposals": [{"id": "p1", "scope": "alex", "statement": "secret"},
                       {"id": "p2", "scope": "sam", "statement": "hers"}]})
@@ -218,16 +218,14 @@ def test_portal_is_not_reachable_as_a_tool(portal):
 def test_link_is_bound_to_the_requesting_browser(portal):
     """Reading the link must not be enough to use it.
 
-    The assistant has search_gmail and read_gmail on the very inbox these are
-    delivered to. Without this binding, a prompt-injected model could find its
-    own login link and approve its own memory proposals — defeating the review
-    gate, which is its only route to durable memory.
+    The assistant can search and read the inbox these are sent to. Without the
+    binding, an injected model could find its own sign-in link and approve its
+    own memory proposals, which would defeat the review gate.
     """
     url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc123")
 
-    # An interceptor holding the link but not the browser cookie gets a
-    # session — opening a link on a phone is the ordinary case — but not the
-    # capability that matters. The binding decides the privilege, not access.
+    # Someone with the link but not the browser cookie gets a session, as
+    # opening a link on a phone does, but not the capability that matters.
     identity, origin, reason = portal.redeem_link(link_id, secret_of(url), "")
     assert identity == "alex" and reason == ""
     assert origin == portal.ORIGIN_CHAT
@@ -244,9 +242,8 @@ def test_link_is_bound_to_the_requesting_browser(portal):
 
 
 def test_a_downgraded_redemption_does_not_burn_the_link(portal):
-    """An attacker must not be able to lock the real user out by touching the
-    link first — denial of service is still a failure, and requesting another
-    would only deliver it to the same channel the reader is watching."""
+    """Opening the link first must not lock the real person out, and a new
+    link would arrive on the same channel the reader is watching."""
     url, link_id = portal.mint_link("alex", "http://x", request_nonce="abc")
     # Someone reads the message and opens it: limited session, link survives.
     assert portal.redeem_link(link_id, secret_of(url), "wrong")[1] == \
@@ -398,12 +395,11 @@ def test_agent_endpoint_is_absent_when_unconfigured(portal):
 
 
 def test_startup_warns_when_links_cannot_be_delivered(portal):
-    """The only place this failure can surface.
+    """The only place this failure can show.
 
-    The sign-in page must answer identically for registered and unregistered
-    addresses, or it enumerates the household — so it cannot report that
-    delivery failed. Somebody is told a link is on its way and nothing arrives.
-    The portal ran for a day like this.
+    The sign-in page answers the same for known and unknown addresses, so it
+    cannot report that delivery failed. Someone is told a link is coming and
+    nothing arrives.
     """
     import inspect
     source = inspect.getsource(portal.cmd_serve)
@@ -571,10 +567,8 @@ def test_an_agent_session_cannot_forget(portal, monkeypatch):
 
 
 def test_the_signed_out_page_never_echoes_the_url(portal):
-    """A redirect meant for a signed-in page — "Google consent received. An
-    operator has to finish it…" — greeted anyone opening a stale URL, cut off
-    at 120 characters, long after the thing it described was done. It also
-    told an unauthenticated visitor what the box had been doing."""
+    """A message meant for a signed-in page must not be shown to someone
+    opening an old URL, and must not tell a visitor what the box was doing."""
     body = portal.render_signin(sent=False).decode()
     assert "Google consent" not in body
     assert "class=flash" not in body
@@ -594,10 +588,8 @@ def test_requesting_a_link_redirects_without_a_message_parameter(portal):
 
 
 def test_no_page_renders_free_text_from_the_url(portal):
-    """`?m=<prose>` was truncated at 120 characters, so a redirect meant for a
-    signed-in page greeted the operator with a sentence cut mid-word — "…so
-    ask now if y" — still there on every refresh, long after the thing it
-    described had been finished."""
+    """Messages come from keys, never from free text in the URL, so they
+    cannot be cut off or linger in a bookmarked link."""
     from conftest import portal_code
     source = portal_code()
     assert 'urlencode({"m"' not in source
@@ -612,8 +604,8 @@ def test_an_unknown_key_renders_nothing_rather_than_itself(portal):
 
 
 def test_every_key_the_portal_redirects_to_actually_exists(portal):
-    """A typo'd key would render a blank message and look like nothing
-    happened — the silent-success failure this project keeps hunting."""
+    """A mistyped key would show a blank message and look like nothing
+    happened."""
     import re
 
     from conftest import portal_code

@@ -1,7 +1,7 @@
 # Finishes what the portal spooled: reconnects and disconnects.
 #
 # Runs as the OPERATOR's user instance and holds what the portal deliberately
-# does not — the Google client secret, write access to the env directory, and
+# does not, the Google client secret, write access to the env directory, and
 # the docker socket. That is the whole reason the two are separate processes:
 # a LAN-reachable page that could run containers is the worst thing that could
 # exist on this box, and `docker run -v /:/host` is a root shell.

@@ -1,15 +1,9 @@
-"""Tests for the shared MCP base — specifically that auth fails closed.
+"""Tests for the shared MCP base, above all that auth fails closed.
 
-The three MCPs were written separately and their auth diverged. Each carried:
-
-    if MCP_SHARED_TOKEN and provided != MCP_SHARED_TOKEN: reject
-
-With the token unset — which it was, on all three — the condition
-short-circuits and no check runs. An unauthenticated request from the host
-reached Gmail, because the MCP holds the bridge token.
-
-The bridges had a shared base and a regression test for exactly this shape.
-The MCPs did not. These are that test.
+A check written as `if MCP_SHARED_TOKEN and provided != MCP_SHARED_TOKEN:
+reject` runs no check at all when the token is unset. Because the server holds
+bridge tokens, an unauthenticated request from the host would then reach Gmail.
+These tests pin the base so that cannot happen.
 """
 from __future__ import annotations
 
@@ -27,8 +21,8 @@ MCP_APP = REPO / "services" / "templates" / "mcp"
 sys.path.insert(0, str(MCP_APP))
 
 # policy_gate binds its paths as default arguments at import, so the real policy
-# has to be in place before mcp_base imports it. Without this every tool looks
-# unmapped and the gate denies it — correct behaviour, wrong thing to test here.
+# has to be in place before mcp_base imports it. Otherwise every tool looks
+# unmapped and is denied, which is correct but not what these tests are about.
 import os
 
 from conftest import code_of
@@ -57,8 +51,8 @@ def serve(cls):
 
 
 def rpc(base, method, params=None, token=None, omit_headers=False):
-    """Behaves like a conforming client: a modern request mirrors method and
-    name into headers, because 2026-07-28 requires them to match the body."""
+    """Behaves like a conforming client. A current request copies the method and
+    name into headers, because the 2026-07-28 revision requires them to match."""
     params = params or {}
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
                        "params": params}).encode()
@@ -187,8 +181,8 @@ def test_negotiates_rather_than_echoing_the_requested_version():
 
 
 def test_accepts_a_version_we_actually_support():
-    """initialize negotiates within the legacy set only — the modern revision
-    has no handshake, so offering it here would be incoherent."""
+    """initialize only negotiates an older version, because the current
+    revision has no handshake."""
     server, base = serve(make("secret"))
     try:
         for version in mb.protocol.LEGACY_VERSIONS:
@@ -200,8 +194,8 @@ def test_accepts_a_version_we_actually_support():
 
 
 def test_tools_are_returned_in_deterministic_order():
-    """Stable ordering lets a client cache the tool list and improves prompt
-    cache hits — the schemas are the largest fixed per-turn cost."""
+    """A stable order lets a client cache the tool list and keeps the prompt
+    cache warm, since the schemas are the largest fixed cost per turn."""
     cls = type("H", (mb.McpHandler,), {
         "service_name": "test-mcp", "shared_token": "secret",
         "tools": [{"name": n, "description": "x", "inputSchema": {}}
@@ -222,15 +216,14 @@ def test_schemas_declare_the_json_schema_dialect():
 
 
 def test_tool_failures_are_tool_errors_not_protocol_errors(monkeypatch):
-    """2025-11-25 (SEP-1303): input validation failures must come back as tool
-    execution errors so the model can self-correct, not as JSON-RPC errors."""
+    """Since 2025-11-25 (SEP-1303), invalid input comes back as a tool error the
+    model can correct, not as a JSON-RPC error."""
     def bad(name, args):
         raise mb.ToolError("message_id is required")
 
-    # This test is about the shape of a tool failure, not the gate. policy_gate
-    # binds its paths as default arguments at import, so which policy file it
-    # sees depends on test module import order — pin the gate open here and let
-    # test_policy_gate own that behaviour.
+    # This is about the shape of a tool failure, not the gate. Which policy
+    # file policy_gate sees depends on import order, so pin the gate open here
+    # and leave that to test_policy_gate.
     monkeypatch.setattr(mb.policy_gate, "check", lambda *a, **k: None)
 
     cls = type("H", (mb.McpHandler,), {
@@ -342,7 +335,7 @@ def test_get_on_the_mcp_endpoint_returns_405():
         server.shutdown()
 
 
-# --- dual-era: 2026-07-28 alongside the legacy handshake --------------------
+# --- the 2026-07-28 revision alongside the older handshake -------------------
 
 
 MODERN_META = {"_meta": {mb.protocol.META_VERSION: mb.protocol.MODERN_VERSION,
@@ -350,7 +343,7 @@ MODERN_META = {"_meta": {mb.protocol.META_VERSION: mb.protocol.MODERN_VERSION,
 
 
 def test_server_discover_is_implemented():
-    """A MUST at 2026-07-28. Clients use it to learn versions up front."""
+    """Required by the 2026-07-28 revision. Clients use it to learn versions."""
     server, base = serve(make("secret"))
     try:
         result = rpc(base, "server/discover", dict(MODERN_META), token="secret")["result"]
@@ -390,7 +383,7 @@ def test_unsupported_version_in_meta_returns_the_modern_error():
 
 
 def test_legacy_initialize_still_works():
-    """The whole point of dual-era: Hermes tops out at 2025-11-25 today."""
+    """Older clients still work. The gateway's client stops at 2025-11-25."""
     server, base = serve(make("secret"))
     try:
         result = rpc(base, "initialize", {"protocolVersion": "2025-11-25"},
@@ -401,8 +394,8 @@ def test_legacy_initialize_still_works():
 
 
 def test_initialize_never_answers_with_a_handshakeless_version():
-    """2026-07-28 has no handshake. Answering initialize with it would tell a
-    legacy client to speak a dialect whose semantics it just used wrongly."""
+    """The current revision has no handshake, so answering initialize with it
+    would tell an older client to use a version it cannot."""
     server, base = serve(make("secret"))
     try:
         result = rpc(base, "initialize", {"protocolVersion": "1999-01-01"},
@@ -435,7 +428,7 @@ def test_tools_list_is_cacheable():
         server.shutdown()
 
 
-# --- header/body agreement (2026-07-28 server validation) -------------------
+# --- header and body agreement (2026-07-28 revision) ------------------------
 
 
 def test_missing_mcp_method_header_is_rejected():
@@ -526,8 +519,8 @@ def test_legacy_request_needs_none_of_those_headers():
 
 
 def test_unknown_method_is_404():
-    """2026-07-28: an unimplemented method returns 404 with -32601, which is how
-    a client distinguishes a modern server from a legacy 404."""
+    """An unknown method gets 404 with -32601 under the 2026-07-28 revision,
+    which is how a client tells a current server from an older one."""
     server, base = serve(make("secret"))
     try:
         rpc(base, "resources/list", dict(MODERN_META), token="secret")
