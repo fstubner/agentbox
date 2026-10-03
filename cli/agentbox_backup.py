@@ -1,8 +1,5 @@
-"""agentbox_backup — backup archiving, listing, and restore rehearsals.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 250 LOC)
-- Preserves exact exception contracts, permission modes (0o600 / 0o700), and messages
+"""`agentbox backup`: archive the task and memory stores, list archives, and
+rehearse a restore before pruning old ones.
 """
 from __future__ import annotations
 

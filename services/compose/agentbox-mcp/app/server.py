@@ -1,51 +1,33 @@
 #!/usr/bin/env python3
-"""Agentbox MCP gateway — one front door, many bridges, many identities.
+"""agentbox-mcp, the assistant's one tool server, in front of every bridge.
 
-This replaces five near-identical MCP services. Each was a tool registry plus an
-HTTP proxy, and each carried its own copy of the policy gate — policy replicated
-five times is the opposite of a policy enforcement point.
-
-The consolidation is not tidying. It is the topology `2026-07-28` was shaped
-for: the header/body agreement we already implement exists so an intermediary
-can route and filter without parsing bodies, the `-32020..-32099` range is a
-gateway-class error allocation, and `server/discover` plus stateless
-per-request versioning let one endpoint multiplex many backends without
-per-connection handshake state. We had built gateway conformance into five
-servers that were not a gateway.
+Every tool comes from an integration module, and every call goes through one
+policy check and one dispatch point.
 
 ## Identity
 
-The gateway serves one or more identities. Which one is calling is decided by
-**which bearer token was presented** — resolved in `mcp_base._require_auth`
-before any tool runs, and never taken from a tool argument.
+The server serves one or more people. Which person is calling is decided by
+the bearer token presented, in `mcp_base._require_auth`, before any tool runs.
+It is never taken from a tool argument. If the assistant could choose who to
+act as, an instruction in an email could choose too, and one compromised
+conversation could reach everyone's accounts.
 
-That distinction is the whole security property. If the assistant could name
-the identity it wants to act as, an instruction embedded in an email could name
-one too, and a single compromised context would reach both people's accounts.
-Because identity is the credential, a process holding only one person's token
-cannot act as anyone else — the other credential is simply not there to
-present. Identity is bound to the session, not to a parameter.
+The identity then does three things.
 
-Downstream, identity does three things:
+- It picks the bridge a call goes to (`GOOGLE_BRIDGE_URL_<NAME>`), so each
+  person's mail credential lives in its own container.
+- It travels to the bridge in `X-Agentbox-Identity`, so grants can be scoped
+  to one person.
+- It is written to the outcome journal, so reflection knows whose calls it is
+  reading.
 
-- selects which bridge a call routes to (`GOOGLE_BRIDGE_URL_ALEX` and
-  friends), so each person's mail credential lives in a separate container;
-- travels to the bridge as `X-Agentbox-Identity` so the authoritative gate can
-  match identity-scoped grants;
-- is written to the outcome journal, so reflection and tier arguments can tell
-  whose calls they are reading.
+## Credentials
 
-## Credential isolation, restated
-
-The gateway holds bridge tokens and never an upstream credential. A leak here —
-a log line, an error echoing the environment — costs a scoped, local, revocable
-token, not a permanent handle on somebody's mail. That is why consolidating the
-MCPs is safe while consolidating the *bridges* would not be.
-
-One process now holds every bridge token instead of five processes holding one
-each, which is a larger prize. Accepted deliberately: still no upstream
-credentials, and one hardened front door is easier to reason about than five
-copies drifting apart — which is exactly how the fail-open auth bug shipped.
+This server holds bridge tokens and never an upstream credential. A leak here,
+such as a log line or an error that echoes the environment, exposes a local,
+revocable bridge token rather than access to somebody's mail. The bridges
+publish no host ports, so a leaked token is only usable from inside this
+container.
 """
 from __future__ import annotations
 
@@ -77,19 +59,18 @@ INTEGRATIONS = {
     "homeassistant": homeassistant,
     "speaker": speaker,
     "rulebook": rulebook,
-    # harness is retired with the router it dispatches to, and is not wired in.
-    # Its module and tool definitions are kept. See router/README.md.
+    # harness is retired along with the router it dispatched to, and is not
+    # wired in. See router/README.md.
     "portal": portal,
 }
 
 
 def _assemble() -> tuple[list[dict], dict[str, str]]:
-    """Merge every integration's tools, refusing name collisions.
+    """Merge every integration's tools, refusing duplicate names.
 
-    Two integrations exposing the same tool name would make dispatch depend on
-    dict ordering — silently routing a call to the wrong bridge. Refuse at
-    startup instead, where it is one obvious error rather than an intermittent
-    mystery.
+    With two tools of the same name, dispatch would depend on dict order and
+    could route a call to the wrong bridge. Failing at startup makes it one
+    obvious error.
     """
     tools: list[dict] = []
     owner: dict[str, str] = {}
@@ -110,10 +91,9 @@ TOOLS, TOOL_OWNER = _assemble()
 
 
 def load_identities() -> dict[str, str]:
-    """Parse AGENTBOX_IDENTITIES: `alex:token,sam:token`.
+    """Parse AGENTBOX_IDENTITIES, which looks like `alex:token,sam:token`.
 
-    Empty means single-operator: fall back to one shared token with no
-    identity, which is exactly how every existing deployment behaves.
+    Empty means single-operator mode, with one shared token and no identity.
     """
     raw = os.environ.get("AGENTBOX_IDENTITIES", "").strip()
     identities: dict[str, str] = {}
@@ -131,10 +111,9 @@ def load_identities() -> dict[str, str]:
 def dispatch(name: str, args: dict):
     """Route to the integration that declared this tool.
 
-    The identity resolved at auth time is published here rather than passed
-    down, because the integration modules' dispatch signatures predate identity
-    and threading it through every call site would touch all of them to say the
-    same thing.
+    The caller's identity is published in a context variable rather than passed
+    down, so the integrations' dispatch functions do not each need a parameter
+    for it.
     """
     owner = TOOL_OWNER.get(name)
     if owner is None:
@@ -152,15 +131,14 @@ class AgentboxMcp(McpHandler):
     dispatch = staticmethod(dispatch)
     identity_tokens = load_identities()
     shared_token = os.environ.get("AGENTBOX_MCP_SHARED_TOKEN", "")
-    # Readiness is per-bridge below rather than the single upstream the base
-    # class assumes, so this stays empty on purpose.
+    # Empty because readiness is checked per bridge below, not through one
+    # upstream URL.
     bridge_url = ""
 
     def _handle(self, message):  # type: ignore[override]
-        # Publish the identity resolved during _require_auth so the shared
-        # bridge client picks it up for this request. Contextvars are
-        # per-thread under ThreadingHTTPServer, so concurrent requests from
-        # different identities cannot see each other's.
+        # Publish the identity from _require_auth so the bridge client uses it
+        # for this request. Each request runs in its own thread with its own
+        # context, so concurrent requests cannot see each other's identity.
         _client.CURRENT_IDENTITY.set(self.identity or "")
         return super()._handle(message)
 
@@ -168,20 +146,19 @@ class AgentboxMcp(McpHandler):
         if self.path == "/ready":
             return self._ready()
         if self.path == "/health":
-            # Includes the tool count so `doctor` can tell whether the gateway
-            # is narrowing what the assistant sees.
+            # The tool count lets `doctor` tell whether the gateway config is
+            # hiding tools from the assistant.
             return self.send_json(200, {"ok": True, "service": self.service_name,
                                         "tools": len(self.tools),
                                         "integrations": len(INTEGRATIONS)})
         return super().do_GET()
 
     def _ready(self) -> None:
-        """Ready when every bridge that has a URL configured is ready.
+        """Ready when every configured bridge is ready.
 
-        A gateway fronting five bridges cannot report a single upstream. Each
-        is probed, and one unreachable bridge makes the gateway not-ready with
-        the reason named — otherwise `doctor` would show green while a quarter
-        of the assistant's tools were dead.
+        Each bridge is probed, and any one that is not ready makes this not
+        ready, with the bridge named. Otherwise `doctor` could show green while
+        some of the assistant's tools were dead.
         """
         import urllib.error
         import urllib.request
@@ -209,10 +186,9 @@ class AgentboxMcp(McpHandler):
 if __name__ == "__main__":
     print(f"agentbox-mcp: {len(TOOLS)} tools from "
           f"{len(INTEGRATIONS)} integrations", file=sys.stderr, flush=True)
-    # The rules evaluator lives in this process because firing a rule IS a
-    # tool call: same dispatch, same policy gate, same identity contextvar,
-    # same outcome journal. A separate service would need its own copy of all
-    # four, which is the divergence this gateway exists to end.
+    # The rules evaluator runs in this process because firing a rule is a tool
+    # call, with the same dispatch, policy check, identity and outcome journal.
+    # A separate service would need its own copy of all four.
     import evaluator
     evaluator.start(dispatch)
     serve(AgentboxMcp)

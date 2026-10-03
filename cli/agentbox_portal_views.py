@@ -1,9 +1,5 @@
-"""agentbox_portal_views — self-service portal HTML views.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 400 LOC)
-- Preserves exact markup, escaping, form targets, and test compatibility
-- Professional vector SVG icons instead of colored emojis
+"""Page layout and the portal's main views. Rendering only, with data and
+permissions reached through the bound portal module.
 """
 from __future__ import annotations
 

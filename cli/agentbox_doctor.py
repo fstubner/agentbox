@@ -36,18 +36,11 @@ ENDPOINT_UNITS = {"portal": "agentbox-portal"}
 
 
 def third_party_images() -> list[tuple[str, str, str, int]]:
-    """(service, image, local build date, age in days) for images this repo does not build.
+    """Service, image, build date and age in days for images built elsewhere.
 
-    Every one of these is pinned to a floating tag — `stable`, `latest`, or no
-    tag at all — and `deploy` runs `docker compose up -d --build`, which
-    rebuilds what this repo builds and reuses whatever is already cached for
-    everything else. So a floating tag never floats: it freezes at whenever it
-    was first pulled and stays there.
-
-    Found on 2026-08-14 while asking why Home Assistant was three weeks
-    behind. Vikunja's image was four months old. Nothing reported either,
-    because `doctor`'s staleness check compares source SHAs for images built
-    here and has no notion of upstream ones.
+    These use floating tags such as `stable` or `latest`, but `deploy` reuses
+    whatever is cached, so a floating tag stays at whatever was first pulled.
+    Reporting the age is what prompts `agentbox update`.
     """
     import datetime
     out = []
@@ -75,14 +68,11 @@ def third_party_images() -> list[tuple[str, str, str, int]]:
 
 
 def stopped_hint(name: str) -> str:
-    """Say whether an unreachable service is *stopped*, and how to start it.
+    """Say whether an unreachable service is stopped, and how to start it.
 
-    "not responding" covers two conditions that need opposite responses: a
-    process that is running and wedged, and one that is not running at all.
-    The router was cleanly stopped twice in two days — signal TERM, not a
-    crash, so `Restart=on-failure` never applied — and each time the only
-    symptom was `triage_email` failing with "router unreachable", which reads
-    like a network fault rather than a service somebody turned off.
+    "Not responding" can mean running but stuck, or not running at all, and
+    the two need opposite fixes. A cleanly stopped unit is not restarted by
+    `Restart=on-failure`, so it can look like a network fault.
     """
     unit = ENDPOINT_UNITS.get(name)
     if not unit:
@@ -99,62 +89,29 @@ def stopped_hint(name: str) -> str:
            f"start it: systemctl --user start {unit})"
 
 
-# Every service in docs/architecture.md, so "is the platform up" is one command
-# rather than a set of remembered curls.
-#
-# Severity is deliberate, and was corrected on 2026-08-02.
-#
-# The role workers were FAIL on the assumption that the router hands
-# /context/extract and /reason/check to them. It does not: the live gateway
-# talks straight to the main model and the MCPs, so the router and both workers
-# are evaluator infrastructure, not assistant infrastructure. The evaluator's
-# quiesce_commands stops both on every compare run, so FAIL meant doctor was
-# red by design during every benchmark — and a check that is normally red is a
-# check people stop reading.
-#
-# FAIL is now reserved for what the assistant actually needs to serve a
-# request: the main model, and the bridge/MCP chain. Everything the assistant
-# does not depend on warns.
-#
-# Amended 2026-10-03: the router, both workers and the vision model are
-# retired, and so are the three tools that called them. They are no longer
-# probed. A check for a service that is meant to be off reports it down on
-# every install forever, and a check that is always red is one people stop
-# reading. See router/README.md for why they were retired.
+# The endpoints `doctor` and `status` probe. FAIL is for what the assistant
+# needs to answer a request, which is the main model and agentbox-mcp.
+# Everything else warns. A check that is red during normal operation is one
+# people stop reading.
 ENDPOINTS = {
     "main model": (os.environ.get("AGENTBOX_MAIN_BASE", "http://127.0.0.1:1234/v1") + "/models", FAIL),
     "agentbox-mcp": ("http://127.0.0.1:3465/health", FAIL),
-    # The builder is not on the assistant's critical path — it proposes code,
-    # it does not serve a request. A warning, so an outage here never masks one
-    # that stops the assistant working.
+    # The control plane is not on the assistant's request path, so it warns.
     "control plane api": ("http://127.0.0.1:8000/api/evals/health", WARN),
     "control plane ui": ("http://127.0.0.1:4321/", WARN),
 }
 
 
-# The gateway allowlists which MCP tools the assistant may see. A tool absent
-# from that list is invisible — not refused, not logged, not an error anywhere:
-# the assistant simply never knows it exists. That has already happened twice,
-# once leaving create_gmail_draft and find_or_create_task unreachable for days.
-#
-# Deliberately a warning, and deliberately quiet when unreadable. The gateway
-# runs as another user and the config holds its bearer tokens, so `doctor` run
-# as the operator usually cannot read it — which is correct, and not a fault to
-# report as one.
+# The gateway config can list which tools the assistant sees, and a tool left
+# off that list is invisible, with no error anywhere. This warns about it. The
+# config belongs to the gateway user and holds its tokens, so the operator
+# usually cannot read it, and that is reported quietly rather than as a fault.
 GATEWAY_CONFIG = os.environ.get("AGENTBOX_GATEWAY_CONFIG",
                                 os.path.expanduser("~agentbox/agentbox/config.yaml"))
 
 
 def gateway_tool_visibility() -> int:
-    """Check the gateway can see every tool the MCP gateway serves.
-
-    Before consolidation this compared five per-server `include` allowlists
-    against five MCPs, and it earned its keep — a tool missing from one was
-    invisible to the assistant, not refused and not logged. With one endpoint
-    and no allowlist the failure mode changes: the policy is the only gate, so
-    what matters now is that the gateway is actually pointed at the gateway and
-    that the tool count matches what the service assembles.
-    """
+    """Check the gateway points at agentbox-mcp and can see every tool it serves."""
     try:
         text = Path(GATEWAY_CONFIG).read_text(encoding="utf-8")
     except OSError:
@@ -180,8 +137,8 @@ def gateway_tool_visibility() -> int:
             served = json.loads(r.read()).get("tools", 0)
     except Exception:  # noqa: BLE001
         pass
-    # An `include` list is optional now, but if one exists it silently narrows
-    # what the assistant sees — the exact failure this check was written for.
+    # An `include` list is optional, but if present it hides every tool not
+    # on it.
     includes = re.findall(r"^      - ([a-z_]+)\s*$", text, re.M)
     if includes and served and len(includes) < served:
         report(WARN, f"gateway allowlists {len(includes)} of {served} tools; "

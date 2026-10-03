@@ -1,38 +1,19 @@
-"""Shared base for Agentbox MCP services.
+"""The MCP server base that agentbox-mcp is built on.
 
-An MCP service is the assistant-facing surface: it advertises tools, gates each
-call against the approval policy, and forwards the allowed ones to a bridge
-that holds the actual credential.
+It advertises tools, checks every call against the approval policy, and hands
+allowed calls to `dispatch`, which forwards them to the bridge holding the
+credential.
 
-This exists because the three MCPs were written separately and their auth
-diverged. The bridges have had a shared base with a fail-closed regression test
-since a real bypass shipped; the MCPs each got hand-written auth, and one of
-them read:
+Auth lives here so no server writes its own. An earlier hand-written check was
+`if MCP_SHARED_TOKEN and token != MCP_SHARED_TOKEN: reject`, which skips the
+check entirely when the token is unset. The rules here are:
 
-    if MCP_SHARED_TOKEN and request_token != MCP_SHARED_TOKEN: reject
-
-With the token unset — which it was, on all three — that condition
-short-circuits and no check runs. An unauthenticated request from the host
-reached straight through to Gmail, because the MCP holds the bridge token. The
-same class of bypass as the bridge one, in the layer nobody had written the
-test for.
-
-The fix is structural rather than a patch: auth lives here, fails closed, and a
-new MCP inherits it instead of reimplementing it.
-
-Security properties baked in:
-
-- **Fail-closed auth**: an unset shared token rejects every /mcp request. Never
-  silently open. Constant-time comparison.
-- **Policy gate**: every tools/call passes `policy_gate.check` at one choke
-  point, so a tool cannot skip it by omission.
-- **Bounded bodies**: requests over MAX_BODY_BYTES are refused.
-- **Unauthenticated /health and /ready**: liveness and transitive readiness,
-  which carry no data and no capability.
-
-Copy this file verbatim into a new MCP's app/ directory alongside
-policy_gate.py and approval-policy.yaml; do not edit it per-service.
-`cli/agentbox validate` fails on drift in any of the three.
+- **Auth fails closed.** With no token configured, every /mcp request is
+  refused. Tokens are compared in constant time.
+- **One policy check.** Every tools/call goes through `policy_gate.check` in
+  one place, so a tool cannot skip it.
+- **Bounded bodies.** Requests over MAX_BODY_BYTES are refused.
+- **Open /health and /ready.** They carry no data and grant nothing.
 """
 from __future__ import annotations
 
@@ -52,57 +33,51 @@ from typing import Any
 import outcome_log
 import policy_gate
 
-# Dual-era, as the specification names it: modern clients declare their version
-# in per-request `_meta` and need no handshake; legacy clients open with
-# `initialize` and get session semantics. A server MAY serve both on the same
-# endpoint, which is how we can be current without breaking the only client we
-# have — Hermes ships mcp 1.28.1, whose ceiling is 2025-11-25.
+# Current clients declare their version in each request's `_meta` and need no
+# handshake. Older clients open with `initialize`. The specification allows one
+# endpoint to serve both, which keeps this current without breaking the gateway,
+# whose MCP client stops at 2025-11-25.
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18")
 SUPPORTED_PROTOCOL_VERSIONS = (MODERN_VERSION,) + LEGACY_VERSIONS
-# What we answer a legacy `initialize` with when the client asks for something
-# we do not know. A modern client never calls initialize.
+# The answer to an `initialize` asking for a version not listed above. Current
+# clients never call initialize.
 PROTOCOL_VERSION = LEGACY_VERSIONS[0]
 
-# _meta keys carrying per-request identity and version at 2026-07-28.
+# _meta keys that carry the version and client and server info per request.
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
 META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
 META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
 
-# Error codes from the 2026-07-28 allocation policy: -32020..-32099 is reserved
-# for the specification, and these three were renumbered into it.
+# The specification reserves -32020 to -32099, and these three live there.
 ERR_HEADER_MISMATCH = -32020
 ERR_MISSING_CAPABILITY = -32021
 ERR_UNSUPPORTED_VERSION = -32022
 ERR_UNAUTHORIZED = -32001
 ERR_FORBIDDEN_ORIGIN = -32003
 
-# tools/list is a CacheableResult at 2026-07-28: ttlMs is a freshness hint so a
-# client can cache the tool block instead of refetching it, and cacheScope says
-# whether a shared intermediary may hold it. Ours is per-operator, so private.
+# tools/list can be cached by the client. ttlMs says for how long, and
+# cacheScope says whether a shared intermediary may hold it. This list belongs to
+# one household, so it is private.
 TOOLS_TTL_MS = int(os.environ.get("MCP_TOOLS_TTL_MS", str(3_600_000)))
 CACHE_SCOPE = "private"
 
-# JSON Schema 2020-12 is the default dialect as of 2025-11-25 (SEP-1613).
-# Declared explicitly so a client need not infer it.
+# JSON Schema 2020-12, declared so a client does not have to infer it.
 SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 MAX_BODY_BYTES = int(os.environ.get("MCP_MAX_BODY_BYTES", str(128 * 1024)))
 
-# Streamable HTTP requires Origin validation: "Servers MUST validate the Origin
-# header on all incoming connections to prevent DNS rebinding attacks."
+# The specification requires checking Origin against DNS rebinding, where a web
+# page on this machine points an attacker's domain at 127.0.0.1 and talks to a
+# local server as if it were the same origin. The bearer token already stops
+# that, and this is a second layer.
 #
-# The attack: a page in a browser on this host resolves an attacker domain to
-# 127.0.0.1 and then talks to a local MCP server as if it were same-origin.
-# Auth blunts it — the page has no bearer token — but the specification names
-# Origin as the control, and defence in depth is the point.
-#
-# A non-browser client sends no Origin at all, which is why absent is allowed
-# and present-but-unlisted is refused. Hermes sends none.
+# Clients that are not browsers send no Origin, so a missing header is allowed
+# and only an unlisted one is refused. The gateway sends none.
 ALLOWED_ORIGINS = frozenset(
     o.strip() for o in os.environ.get("MCP_ALLOWED_ORIGINS", "").split(",") if o.strip())
 
-# Assumed when a client sends no MCP-Protocol-Version header, per the spec's
-# backwards-compatibility rule.
+# What the specification says to assume when a client sends no
+# MCP-Protocol-Version header.
 ASSUMED_PROTOCOL_VERSION = "2025-03-26"
 
 
@@ -133,8 +108,8 @@ class ToolError(Exception):
 
 
 def tool_result(payload: Any, is_error: bool = False) -> dict[str, Any]:
-    """Serialise compactly. indent=2 inflated every result by ~17% and buys a
-    model nothing."""
+    """Serialise compactly. Pretty-printing added about 17% to every result and
+    gives a model nothing."""
     text = payload if isinstance(payload, str) else json.dumps(
         payload, sort_keys=True, separators=(",", ":"))
     return {
@@ -151,10 +126,9 @@ def response(message_id: Any, result: Any = None, error: Any = None,
         payload["error"] = error
         return payload
     if isinstance(result, dict):
-        # Every result carries resultType at 2026-07-28; "complete" means this
-        # is the answer rather than a request for more input. Clients on earlier
-        # revisions must treat a missing field as "complete", so sending it
-        # always is safe and saves branching on era.
+        # "complete" means this is the answer rather than a request for more
+        # input. Older clients treat a missing field as "complete", so it is
+        # always safe to send.
         result.setdefault("resultType", "complete")
         if service_name:
             meta = result.setdefault("_meta", {})
@@ -182,20 +156,17 @@ class McpHandler(BaseHTTPRequestHandler):
     dispatch: Callable[[str, dict], Any] = staticmethod(lambda name, args: None)
     bridge_url: str = ""
     shared_token: str = ""
-    # Identity-aware auth: {identity_name: token}. When set, the presented
-    # bearer token *is* the identity assertion — whoever holds alex's token is
-    # alex, for the lifetime of that process. This is what binds identity to
-    # the session rather than to an argument: the process serving one person's
-    # conversation holds only that person's token, so an instruction embedded
-    # in content cannot switch identities — the other credential simply is not
-    # there to present. Empty dict falls back to the single shared_token with
-    # no identity, which is the pre-consolidation behaviour.
+    # {identity: token}. The bearer token presented is the identity, so whoever
+    # holds a person's token is that person. The process serving one person's
+    # conversation only has that person's token, so an instruction hidden in
+    # content cannot switch to someone else. With no identities, the single
+    # shared_token is used and there is no identity.
     identity_tokens: dict[str, str] = {}
     identity: str | None = None
 
     # --- internals -------------------------------------------------------
     def _require_origin(self) -> None:
-        """403 on a present-but-unrecognised Origin (spec MUST)."""
+        """Refuse an Origin header that is present but not on the list."""
         origin = self.headers.get("Origin")
         if origin is None:
             return
@@ -203,17 +174,12 @@ class McpHandler(BaseHTTPRequestHandler):
             raise McpError(ERR_FORBIDDEN_ORIGIN, f"origin not allowed: {origin[:80]}")
 
     def _validate_arguments(self, name: str, arguments: dict) -> None:
-        """Enforce the tool's own declared `required` list before dispatch.
+        """Check the tool's declared `required` arguments before dispatch.
 
-        Every tool publishes an inputSchema saying which arguments are
-        required, and nothing checked it: a model that omitted one reached the
-        handler, hit `args["project_id"]`, and got back `internal error:
-        KeyError`. That is unactionable — it does not name the argument, and it
-        reads as a server fault rather than a malformed call, so the model's
-        reasonable next move is to retry the same broken call.
-
-        Driven by the schema rather than per-tool code so a new tool cannot
-        forget to do it.
+        Without this, a missing argument surfaces as `internal error:
+        KeyError`, which names nothing and looks like a server fault, so a
+        model retries the same broken call. Reading the schema rather than
+        writing per-tool checks means a new tool cannot forget.
         """
         for tool in self.tools:
             if tool.get("name") != name:
@@ -230,15 +196,14 @@ class McpHandler(BaseHTTPRequestHandler):
         raise ToolError(f"unknown tool: {name}")
 
     def _validate_headers(self, message: dict) -> None:
-        """Header/body agreement, required at 2026-07-28.
+        """Require the routing headers to match the body.
 
-        The transport mirrors `method` and `params.name` into headers so
-        intermediaries can route without parsing the body. If a load balancer
-        routes on the header while we execute on the body, the two disagree and
-        that gap is the vulnerability. So: they must match, or -32020.
+        Current clients copy `method` and `params.name` into headers so a proxy
+        can route without reading the body. If a proxy routed on the header
+        while this server acted on the body, a mismatch would be an attack, so
+        a mismatch is refused with -32020.
 
-        Only enforced for modern requests. A legacy client sends none of these
-        and is served by the handshake instead — that is what dual-era means.
+        Older clients send none of these headers and are not checked here.
         """
         method = message.get("method")
         params = message.get("params") or {}
@@ -280,10 +245,9 @@ class McpHandler(BaseHTTPRequestHandler):
                            f"Mcp-Name header does not match body value for {method}")
 
     def _require_protocol_version(self) -> None:
-        """Reject an unsupported MCP-Protocol-Version header (spec MUST).
+        """Refuse an MCP-Protocol-Version header this server cannot serve.
 
-        Absent is not an error — the spec says assume 2025-03-26, which we can
-        still serve.
+        A missing header is fine. The specification says to assume 2025-03-26.
         """
         version = self.headers.get("MCP-Protocol-Version")
         if version is None:
@@ -294,13 +258,12 @@ class McpHandler(BaseHTTPRequestHandler):
                             "requested": version[:32]})
 
     def _require_auth(self) -> None:
-        """Fail closed. An unset token rejects everything rather than
-        disabling the check — the defect this base class exists to prevent."""
+        """Fail closed. With no token configured, everything is refused rather
+        than the check being skipped."""
         provided = self.headers.get("Authorization", "")
         if self.identity_tokens:
-            # Compare against every identity, not just until the first match
-            # succeeds structurally — each comparison is constant-time, and the
-            # loop leaks only how many identities exist, which is not a secret.
+            # Each comparison is constant-time. The loop can only reveal how
+            # many identities exist, which is not a secret.
             for name, token in self.identity_tokens.items():
                 if token and hmac.compare_digest(provided, f"Bearer {token}"):
                     self.identity = name
@@ -325,16 +288,15 @@ class McpHandler(BaseHTTPRequestHandler):
         params = message.get("params") or {}
         meta = params.get("_meta") or {}
 
-        # Modern era: the client declares its version per request and expects no
-        # handshake. Reject a version we cannot serve rather than answering in
-        # a dialect the client did not ask for.
+        # A current client declares its version on each request. Refuse one
+        # this server cannot speak rather than answer in a different version.
         requested = meta.get(META_VERSION)
         if requested is not None and requested not in SUPPORTED_PROTOCOL_VERSIONS:
             raise McpError(ERR_UNSUPPORTED_VERSION, "Unsupported protocol version",
                            {"supported": list(SUPPORTED_PROTOCOL_VERSIONS),
                             "requested": requested})
 
-        # MUST be implemented, and answerable by either era.
+        # Required by the specification, for clients of any version.
         if method == "server/discover":
             return self._reply(message_id, {
                 "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
@@ -345,12 +307,9 @@ class McpHandler(BaseHTTPRequestHandler):
             })
 
         if method == "initialize":
-            # Negotiate rather than echo. Echoing the client's version claims
-            # support for anything it asks for, including revisions that changed
-            # the wire format underneath us.
-            # Legacy only: a modern client never sends initialize. Negotiate
-            # within the legacy set so we never answer the handshake with a
-            # version whose semantics have no handshake.
+            # Only older clients send initialize. Agree on an older version
+            # rather than echo whatever was asked for, because the current
+            # version has no handshake.
             asked = params.get("protocolVersion")
             agreed = asked if asked in LEGACY_VERSIONS else PROTOCOL_VERSION
             return self._reply(message_id, {
@@ -362,20 +321,15 @@ class McpHandler(BaseHTTPRequestHandler):
         if method == "notifications/initialized":
             return None
         if method == "ping":
-            # Removed at 2026-07-28, kept for legacy clients that still send it.
+            # Gone from the current version, kept for older clients.
             return self._reply(message_id, {})
         if method == "tools/list":
-            # Deterministic order. 2026-07-28 makes this a SHOULD explicitly for
-            # client-side caching and LLM prompt-cache hit rates; it is harmless
-            # and beneficial at any version, and the tool schemas are the single
-            # largest fixed cost in this system — ~7,750 tokens per turn across
-            # 53 tools as of 2026-08-14. That figure read ~2,250 for months
-            # after it stopped being true; `agentbox validate` now measures it
-            # against a budget so it cannot drift silently again.
+            # Sorted, so the tool block is identical every turn and stays in
+            # the model's prompt cache. These schemas are the largest fixed
+            # cost per turn, and `agentbox validate` holds them to a budget.
             return self._reply(message_id, {
                 "tools": sorted(self.tools, key=lambda tool: tool["name"]),
-                # CacheableResult: let the client hold the tool block rather
-                # than refetch it. Private because this list is per-operator.
+                # Let the client cache the tool block.
                 "ttlMs": TOOLS_TTL_MS,
                 "cacheScope": CACHE_SCOPE,
             })
@@ -394,46 +348,32 @@ class McpHandler(BaseHTTPRequestHandler):
                     detail=detail, identity=self.identity or "")
 
             try:
-                # Non-consuming: deny early with a good message, but leave the
-                # single-use grant for the bridge, whose answer is authoritative.
+                # Check without using up a single-use grant. The bridge checks
+                # again and consumes it, and its answer is the one that counts.
                 policy_gate.check(name, consume=False, identity=self.identity)
                 self._validate_arguments(name, arguments)
                 payload = self.dispatch(name, arguments)
                 note(outcome_log.OK, payload=payload)
                 return self._reply(message_id, tool_result(payload))
             except policy_gate.PolicyDenied as exc:
-                # The most interesting record in the file: the assistant wanted
-                # something it could not have. Bridges never see these at all.
+                # Recorded because a bridge never sees these, and they show
+                # what the assistant wanted and could not have.
                 note(outcome_log.DENIED)
                 return self._reply(message_id, tool_result(str(exc), True))
             except ToolError as exc:
-                # A fixed reason, not the exception class: every failure here is
-                # a ToolError, so `detail: "ToolError"` told a reflecting
-                # assistant only that something went wrong — which it already
-                # knew from the outcome. The reason is the actionable part, and
-                # these strings are fixed rather than derived from the message,
-                # which would quote the input.
+                # Record a fixed reason rather than the message, which can quote
+                # the input. The reason is what self-reflection can act on.
                 text = str(exc)
                 if "missing required argument" in text:
                     note(outcome_log.INVALID, detail="missing_required_argument")
                 elif "unknown tool" in text:
                     note(outcome_log.INVALID, detail="unknown_tool")
                 elif "HTTP 403" in text:
-                    # A bridge 403 is a REFUSAL, not a fault. The bridge is the
-                    # authoritative gate, and it says no for exactly the reasons
-                    # it is supposed to: an entity not on the operator's
-                    # allowlist, a path outside the repo, a guarded file.
-                    #
-                    # Recorded as an error until 2026-08-12, which made a
-                    # working guardrail indistinguishable from a broken tool —
-                    # and the assistant, reading its own journal, drew the wrong
-                    # conclusion in writing: "look_at_camera returned
-                    # upstream_rejected on every call (0% success), it appears
-                    # broken, do not retry it". Every one of those calls was the
-                    # bridge correctly refusing a camera nobody had configured,
-                    # and 45 propose_change "failures" were the smoke suite
-                    # verifying that guarded files cannot be edited. The tools
-                    # were working perfectly; only the record of them was wrong.
+                    # A 403 from a bridge is a refusal, not a fault: an entity
+                    # not on the allowlist, a path outside the repository, a
+                    # protected file. Logging it as an error would make a working
+                    # guardrail look like a broken tool, and self-reflection
+                    # would then advise against using it.
                     note(outcome_log.DENIED, detail="upstream_refused")
                 else:
                     note(outcome_log.ERROR, detail="upstream_rejected")
@@ -443,8 +383,7 @@ class McpHandler(BaseHTTPRequestHandler):
                 return self._reply(message_id, tool_result(
                     f"internal error: {type(exc).__name__}", True))
         if message_id is not None:
-            # 404 for an unimplemented method at 2026-07-28, which is how a
-            # client tells a modern server apart from a legacy 404.
+            # The current specification answers an unknown method with 404.
             raise McpError(-32601, f"method not found: {method}")
         return None
 
@@ -467,9 +406,9 @@ class McpHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, "service": self.service_name})
             return
         if self.path == "/ready":
-            # Transitive: this MCP is only useful if the bridge it fronts can
-            # reach its own upstream. /health stays liveness-only so a bridge
-            # outage cannot restart-loop a working MCP.
+            # Ready only if the bridge behind it is ready. /health does not
+            # depend on the bridge, so a bridge outage cannot restart-loop this
+            # server.
             try:
                 with urllib.request.urlopen(f"{self.bridge_url}/ready", timeout=10) as resp:
                     self.send_json(200, {"ok": True, "bridge": json.loads(resp.read())})
@@ -490,8 +429,8 @@ class McpHandler(BaseHTTPRequestHandler):
             self.send_empty(404)
             return
         try:
-            # Origin first: a rebinding attempt should be refused before it can
-            # probe whether a token is valid.
+            # Origin first, so a rebinding attempt is refused before it can test
+            # whether a token is valid.
             self._require_origin()
             self._require_protocol_version()
             self._require_auth()

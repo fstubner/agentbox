@@ -1,49 +1,43 @@
-"""Shared base for Agentbox credential bridges.
+"""The base every credential bridge is built on.
 
-A bridge is a narrow HTTP service that holds a credential (an API token, OAuth
-refresh token, etc.) and exposes a small allowlisted API. The assistant talks
-to the bridge with a *bridge token*; it never sees the upstream credential.
+A bridge is a small HTTP service that holds one credential, such as an API
+token or an OAuth refresh token, and exposes a narrow API in front of it.
+Callers present a bridge token and never see the upstream credential.
 
-This module bakes in the security-critical parts so individual bridges only
-declare their routes:
+Each bridge only declares its routes. This module supplies the rest.
 
-- **Fail-closed auth**: if the bridge token is unset, every authed request is
-  rejected 503 (never silently open). Comparison is constant-time.
-- **JSON errors**: unexpected exceptions become a JSON 500, never a raw
+- **Auth fails closed.** With no bridge token configured, every authenticated
+  request gets a 503. Tokens are compared in constant time.
+- **JSON errors.** An unexpected exception becomes a JSON 500, never a
   traceback on the socket.
-- **Bounded bodies**: request bodies over `MAX_BODY_BYTES` are refused.
-- **Unauthenticated `/health`** for liveness probes.
-- **Unauthenticated `/ready`** for readiness, including upstream reachability.
-- **Structured request logs** on stdout, one JSON object per request.
+- **Bounded bodies.** Bodies over `MAX_BODY_BYTES` are refused.
+- **Open `/health` and `/ready`** for liveness and readiness.
+- **Request logs**, one JSON object per request.
 
-Copy this file verbatim into a new bridge's `app/` directory; do not edit it
-per-bridge (that is how divergence bugs start). See
-`skills/adding-a-bridge/SKILL.md`.
+Every bridge image copies this file from services/templates at build time, so
+there is one copy. See `skills/adding-a-bridge/SKILL.md`.
 
-## /health vs /ready
+## /health and /ready
 
-`/health` is liveness: is this process answering? It never touches the
-upstream. The container healthcheck uses it, and it must stay that way — if
-liveness depended on the upstream, a Vikunja outage would mark every bridge
-unhealthy and Docker would restart-loop processes that were working fine.
+`/health` says whether the process answers, and never touches the upstream.
+The container healthcheck uses it. If it depended on the upstream, a Vikunja
+outage would mark every bridge unhealthy and Docker would restart-loop
+processes that were working fine.
 
-`/ready` is readiness: can this bridge actually do its job right now? It calls
-`upstream_status()`, so it does reach the backing service. `cli/agentbox
-doctor` probes it. This split exists because a Vikunja outage on 2026-07-31
-went unnoticed: all six bridges reported healthy while the task backend behind
-them was gone.
+`/ready` says whether the bridge can do its job. It calls `upstream_status()`,
+which does reach the backing service, and `cli/agentbox doctor` checks it.
+Without it, a stopped Vikunja looks healthy everywhere.
 
 ## Request logging
 
-One JSON line per request on stdout, for answering "where do the tokens
-actually go" from real traffic. Deliberately conservative about content:
+One JSON line per request, to show where the bytes go in real traffic. It is
+careful about content.
 
-- Never logs the Authorization header, request bodies, or response bodies.
-- Logs only allowlisted query parameters (`LOGGED_QUERY_PARAMS`). Free-text
-  params like a search string can carry personal data, so they are excluded by
-  default rather than opted out one at a time.
-- `/health` and `/ready` are suppressed unless `BRIDGE_LOG_PROBES=1`; probes
-  fire every 30s per bridge and would otherwise bury real traffic.
+- The Authorization header and request and response bodies are never logged.
+- Only allowlisted query parameters are logged (`LOGGED_QUERY_PARAMS`). A
+  free-text parameter such as a search string can carry personal data.
+- `/health` and `/ready` are left out unless `BRIDGE_LOG_PROBES=1`, because
+  probes every 30 seconds would bury real traffic.
 """
 from __future__ import annotations
 
@@ -61,31 +55,31 @@ from typing import Any
 
 MAX_BODY_BYTES = int(os.environ.get("BRIDGE_MAX_BODY_BYTES", str(1 << 20)))
 LOG_PROBES = os.environ.get("BRIDGE_LOG_PROBES", "0") == "1"
-# Persisted request log. stdout is for tailing; this is the record that
-# survives a container recreate, which every deploy performs.
+# The request log on disk. stdout is for tailing. This file survives the
+# container being recreated, which every deploy does.
 LOG_FILE = os.environ.get("BRIDGE_LOG_FILE", "")
 LOG_MAX_BYTES = int(os.environ.get("BRIDGE_LOG_MAX_BYTES", str(32 << 20)))
 
-# Allowlist, not a denylist: anything not named here is never logged.
+# An allowlist. Anything not named here is never logged.
 LOGGED_QUERY_PARAMS = ("view", "page", "per_page", "expand")
 
-# --- projection pushdown ------------------------------------------------------
+# --- projection pushdown -----------------------------------------------------
 #
-# Shared so every bridge narrows results the same way. Named views rather than
-# a caller-supplied field list: the agent spends one token and needs no schema
-# knowledge, and /schema advertises what each view contains.
+# Shared so every bridge narrows results the same way. Callers pick a named
+# view rather than a list of fields, which costs the model one token and no
+# knowledge of the schema. /schema says what each view contains.
 #
-# `lean` means fewer FIELDS on the same items. Two neighbouring names are
-# reserved for different contracts and must not be used for this:
-#   `summary` — counts + top-N, i.e. fewer ITEMS
-#   `compact` — a reduced view PLUS a raw-reference handle to rematerialise
+# `lean` means fewer fields on the same items. Two other names are reserved
+# for different meanings and must not be used for this.
+#   `summary` means counts and the top few, so fewer items.
+#   `compact` means a reduced view plus a handle to fetch the full one.
 VIEWS = ("full", "lean")
 
 
 def resolve_view(value: str | None, allowed: tuple[str, ...] = VIEWS,
                  default: str = "full") -> str:
-    """Validate a requested view. Rejects unknown values rather than silently
-    falling back, so a typo cannot quietly return more data than intended."""
+    """Validate a requested view. An unknown value is refused rather than
+    ignored, so a typo cannot quietly return more data than intended."""
     view = value or default
     if view not in allowed:
         raise BridgeError(400, f"view must be one of: {', '.join(sorted(allowed))}")
@@ -95,10 +89,8 @@ def resolve_view(value: str | None, allowed: tuple[str, ...] = VIEWS,
 def resolve_limit(value: Any, default: int, maximum: int) -> int:
     """Resolve a caller-supplied result limit.
 
-    Every list endpoint takes one. An unbounded list is a context-economy
-    problem before it is a performance problem: the caller cannot know how much
-    of its window a call will consume, and the largest payload in this platform
-    was found exactly this way.
+    Every list endpoint takes one. Without a limit, a caller cannot know how
+    much of the model's context a call will use.
     """
     if value is None or value == "":
         return default
@@ -124,18 +116,17 @@ def project_fields(items: Any, fields: tuple[str, ...]) -> Any:
             for item in items if isinstance(item, dict)]
 
 
-# --- authoritative policy enforcement ----------------------------------------
+# --- policy enforcement -----------------------------------------------------
 #
-# The MCP already gates tool calls, but the MCP also holds this bridge's token
-# — gate and credential in one process, so compromising it defeats both. This
-# is the second, independent gate, in the process the compromised one cannot
-# bypass. Borrowed from OpenShell, where egress enforcement sits outside the
-# sandbox entirely rather than inside the agent.
+# agentbox-mcp already checks every tool call, but it also holds this bridge's
+# token. If the check and the token lived only in that one process, compromising
+# it would defeat both. So the bridge checks again, against the same policy and
+# grants, and its check is the one that counts. The idea comes from OpenShell,
+# which enforces egress outside the agent's sandbox.
 #
-# A bridge declares which capability an incoming request exercises; the base
-# resolves that against the same policy file and grant store the MCP uses. The
-# MCP checks without consuming (fast, informative denial); the bridge consumes,
-# because it is the one whose answer is authoritative.
+# A bridge declares which capability a request uses. agentbox-mcp checks
+# without using up a grant, for a quick refusal with a clear message, and the
+# bridge uses it up.
 
 try:
     import policy_gate
@@ -150,17 +141,18 @@ class BridgeError(Exception):
         self.message = message
 
 
-# route key: (METHOD, path) -> handler(self, body) -> (status, payload)
+# Routes map (METHOD, path) to handler(self, body), which returns
+# (status, payload).
 Route = Callable[["BridgeHandler", dict[str, Any] | None], "tuple[int, Any]"]
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    """Subclass and set `bridge_token` + `routes`. Nothing else is required.
+    """Subclass and set `bridge_token` and `routes`. Nothing else is required.
 
-    `bridge_token`: the expected token (usually read from env at import time).
-    `routes`: dict mapping (method, path) to a handler. Handlers may raise
-    BridgeError for expected failures; anything else becomes a JSON 500.
-    Paths listed in `public_paths` skip auth (e.g. "/health").
+    `bridge_token` is the expected token, usually read from the environment.
+    `routes` maps (method, path) to a handler. A handler raises BridgeError for
+    an expected failure, and anything else becomes a JSON 500. Paths in
+    `public_paths`, such as "/health", skip auth.
     """
 
     server_version = "agentbox-bridge/1.0"
@@ -196,9 +188,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def note(self, key: str, value: Any) -> None:
         """Attach a field to this request's log line.
 
-        Query parameters are picked up automatically, but POST-body endpoints
-        (the Google routes) would otherwise be unobservable — bodies are never
-        logged. Handlers call this so the resolved view still shows up.
+        Query parameters are logged automatically, but bodies never are, so a
+        POST endpoint such as the Google routes calls this to log its view.
         """
         if not hasattr(self, "_log_extra"):
             self._log_extra = {}
@@ -207,10 +198,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def upstream_status(self) -> dict[str, Any]:
         """Report whether the backing service is reachable.
 
-        Override in bridges that front a service. Must return a dict with an
-        `ok` key; anything else is passed through to /ready for diagnostics.
-        The default reports no upstream, which is correct for bridges that only
-        call a remote API with a stored credential.
+        Override in a bridge that fronts a service. Return a dict with an `ok`
+        key, and anything else in it is passed through to /ready. The default
+        reports no upstream, which suits a bridge that only calls a remote API.
         """
         return {"ok": True, "upstream": None}
 
@@ -224,11 +214,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def capability_for(self, method: str, path: str,
                        body: dict[str, Any] | None) -> str | None:
-        """Which policy capability does this request exercise?
+        """The policy capability this request uses, or None if it needs none.
 
-        Return None for requests that need no approval. Override in bridges
-        that expose anything gated. Body-aware on purpose: gmail/modify carries
-        its verb in the body, so the path alone cannot decide.
+        Override in a bridge that exposes anything gated. It sees the body,
+        because some routes, such as gmail/modify, carry their verb there.
         """
         return None
 
@@ -238,11 +227,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
         if policy_gate is None:
             raise BridgeError(503, "policy enforcement unavailable; refusing a gated request")
-        # The gateway asserts who is calling. Trusted because only the gateway
-        # can present the bridge token — the caller of this bridge IS the
-        # gateway, and the header is its statement of which session it is
-        # serving. Identity-scoped grants match against it; absent means the
-        # legacy single-operator path and matches only unscoped grants.
+        # agentbox-mcp says who it is acting for. This is trusted because only
+        # agentbox-mcp holds the bridge token. Scoped grants match against it,
+        # and without it only unscoped grants apply.
         identity = self.headers.get("X-Agentbox-Identity", "").strip() or None
         try:
             policy_gate.check_capability(capability, subject=path,
@@ -251,9 +238,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             raise BridgeError(403, str(exc)) from None
 
     def route_fallback(self, method: str, path: str, body: dict[str, Any] | None) -> tuple[int, Any]:
-        """Override for dynamic paths (e.g. /v1/things/{id}/action).
+        """Override for dynamic paths such as /v1/things/{id}/action.
 
-        Called only AFTER auth has passed — never before.
+        Only called after auth has passed.
         """
         raise BridgeError(404, "not found")
 
@@ -288,15 +275,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.send_json(status, {"error": exc.message})
         except Exception as exc:  # noqa: BLE001 — never leak a traceback
             status = 500
-            # To the client: the class name only, because an exception message
-            # routinely quotes the input that caused it.
-            #
-            # To the operator's container log: the whole traceback. Without
-            # this a 500 produced `internal error: TypeError` and absolutely
-            # nothing else, anywhere — the response withheld it by design and
-            # the log never had it. Debugging meant adding prints and
-            # redeploying. stderr goes to `docker logs`, which the assistant
-            # cannot read.
+            # The caller gets only the class name, because an exception message
+            # often quotes the input that caused it. The full traceback goes to
+            # stderr, which ends up in `docker logs`, where the operator can
+            # read it and the assistant cannot.
             traceback.print_exc(file=sys.stderr)
             self.send_json(status, {"error": f"internal error: {type(exc).__name__}"})
         finally:
@@ -305,15 +287,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def _write_log_file(self, line: str) -> None:
         """Append the record to the mounted log, if one is configured.
 
-        stdout alone is not a record. `docker logs` does not survive a container
-        recreate, and every `cli/agentbox deploy` recreates — so a day of
-        traffic disappears the next time anything ships. That defeats the reason
-        the request log exists, which is deciding the lean default from evidence.
-
-        Rotation is size-based and deliberately crude: one previous generation,
-        no compression. This is a decision aid, not an audit trail, and a
-        logging path that can fill the disk is worse than one that loses old
-        lines.
+        `docker logs` does not survive a deploy, so this file is the record.
+        It rotates by size and keeps one previous file, uncompressed. It is for
+        measuring traffic, not auditing, and a log that can fill the disk would
+        be worse than one that loses old lines.
         """
         if not LOG_FILE:
             return
@@ -359,11 +336,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self._dispatch("PATCH")
 
     def log_request(self, code: Any = "-", size: Any = "-") -> None:
-        """Suppressed: _log_request emits a structured line instead."""
+        """Silenced, because _log_request writes a structured line instead."""
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        # Still used by BaseHTTPRequestHandler for protocol-level errors
-        # (malformed request lines etc.), which never reach _dispatch.
+        # BaseHTTPRequestHandler still uses this for protocol errors, such as
+        # a malformed request line, which never reach _dispatch.
         print(f"{self.address_string()} - {fmt % args}", flush=True)
 
 

@@ -1,77 +1,44 @@
 #!/usr/bin/env python3
-"""Per-identity self-service, and the operations plane for the operator.
+"""The self-service portal for household members, and Operations for admins.
 
-Two audiences, one process, one authorisation model:
+- **Members** review the memories the assistant proposed about them, and
+  connect or disconnect their own accounts, without a terminal.
+- **Admins** also see service health and settings, and invite people.
 
-- **Members** review the memories the assistant proposed about *them*, and
-  connect or disconnect their own accounts. Sam should never need a terminal
-  to say "no, don't remember that" or "use my other Google account".
-- **Admins** additionally see connector health and set up the messaging apps
-  the gateway talks through.
+Private memory proposals need someone other than the operator to approve
+them, because the operator approving another person's private memories would
+defeat the point. This page is how each person reaches their own.
 
-## Why this exists at all
+## Sign-in links
 
-Private memory proposals used to be approvable by nobody. The review token is
-the only route to approval, the operator CLI is the only holder of it, and
-having Alex approve Sam's *private* memories would defeat the point of them
-being private. The queue was therefore unreachable by design once more than one
-person existed. A self-service surface is not a convenience here; it is the
-missing half of the review gate.
+You enter your email address, a link arrives, and opening it signs you in.
+There is no password. A link works once, expires after ten minutes, is stored
+only as a hash, is compared in constant time, and is rate-limited per address.
 
-## Magic links
+A link is also bound to the browser that asked for it. The assistant can read
+the inbox the link is sent to, so a link that worked anywhere would let an
+injected instruction sign in and approve the assistant's own proposals.
+Requesting a link sets a nonce cookie, and using the link needs that cookie.
+Reading a link, in any channel, is not enough to use it.
 
-You type your email address, a link arrives, opening it signs you in. No
-password to choose, forget, or reuse — which matters when the people using this
-are a household rather than a company.
-
-The link is single-use, expires in ten minutes, is stored only as a hash so
-this directory leaking yields nothing usable, is compared in constant time, and
-is rate-limited per address.
-
-### Why the link is also bound to your browser
-
-Ordinarily a magic link is a bearer token: whoever holds it is you. That is a
-bad fit *here specifically*, because *the assistant can read the inbox the link
-is sent to*. It has search_gmail and read_gmail on Alex's account. A
-prompt-injected model could search for the message, follow the link, sign in as
-Alex, and approve its own memory proposals — and the review gate is its only
-route to durable memory, so self-approval collapses it entirely.
-
-Blocking that by hiding the sender from the assistant's Gmail queries would be
-an allowlist the assistant could reason its way around. Instead the link is
-constrained: requesting one sets a nonce cookie, and redemption requires that
-cookie. The link works in the browser that asked for it and nowhere else.
-
-Whoever merely *reads* the link cannot use it. That holds for email, for
-Discord, for a screenshot in a chat log — any channel, including ones added
-later, rather than a defence aimed at one of them. Discord is just how you talk
-to the assistant; it is not part of the trust path.
-
-The assistant has exactly one route in: `POST /agent/link`, behind a token it
-holds, which mints an ORIGIN_AGENT link that can read but not decide.
-Everything else here is closed to it: it cannot list links, read a session, or
-reach any other route on this port.
-
-Be precise about where the identity binding lives, because it is not
-here.
-This endpoint takes an identity in the request body and will mint for any
-name it recognises. What makes that safe is the caller: the MCP tool exposes no
-identity parameter and passes the one its own bearer token resolved to. This
-port trusts its token holder to have bound identity already.
-
-That paragraph used to read "Nothing here is an MCP tool. The assistant cannot
-mint a link" and stayed that way after the tool was added. A trust claim that
-has quietly stopped being true is worse than none, because it is the thing
-somebody checks instead of the code.
+The assistant has one route in, `POST /agent/link`, behind its own token. It
+mints a link that can read but not decide. That endpoint accepts an identity in
+the request body, so the identity binding lives in the caller, not here. The
+MCP tool has no identity parameter and passes the one its own bearer token
+resolved to.
 
 ## Roles
 
-Two, not an engine. `admin` and `member`, deny by default, resolved from
-AGENTBOX_ADMINS. A general RBAC system would be a second policy vocabulary
-sitting next to approval-policy.yaml, and two policy systems disagree about
-who may do what — usually at the moment it matters.
+Two roles, `admin` and `member`, deny by default, taken from AGENTBOX_ADMINS.
+A general role system would be a second policy vocabulary next to
+approval-policy.yaml, and two policy systems can disagree.
 
-Stdlib only, like everything else on this host.
+## Layout
+
+This file holds the commands and wiring. The rest is in sibling modules,
+loaded in order by `_part`: config, messages, auth, memory, accounts,
+delivery, and the request handler in server, actions and signin. Rendering is
+in the agentbox_portal_views, cards, admin, engine and calendar modules.
 """
 from __future__ import annotations
 

@@ -11,35 +11,27 @@ from pathlib import Path
 
 from agentbox_common import FAIL, GATEWAY_HOME, GATEWAY_USER, OK, WARN, agent_can, env_dir, report
 
-# Bridges that front a backing service expose /ready, which probes it. Their
-# container healthcheck deliberately does not — see bridge_base's module
-# docstring. Without this check a downed backing service is invisible: on
-# 2026-07-31 Vikunja was down for hours while all six bridges reported healthy.
-# One entry: the gateway's /ready probes every bridge over the container
-# networks and names the ones that are not. Probing bridges from the host is no
-# longer possible — they publish no host ports, which is the point: a leaked
-# bridge token is unusable by anything outside the gateway's networks.
+# Bridges publish no host ports, so their readiness is read through
+# agentbox-mcp's /ready, which probes each bridge over the container networks
+# and names any that are not ready. A bridge's /ready also probes the service
+# behind it, so a stopped Vikunja shows up here even while its bridge is
+# healthy.
 BRIDGE_READY_PORTS = {
     "agentbox-mcp": 3465,
 }
 
 
-# Must exceed the bridge's own upstream probe timeout (5s in bridge_base), or
-# a hanging upstream trips this timeout first and the outage is misreported as
-# "not deployed" — a warning, which would let doctor exit 0 during an outage.
+# Longer than the bridge's own upstream timeout (5 seconds), so a hanging
+# upstream is reported as an outage rather than as "not deployed".
 READY_TIMEOUT = 10
 
 
 def portal_email_delivery() -> int:
-    """Warn when the portal can mint sign-in links but cannot deliver them.
+    """Warn when the portal can make sign-in links but cannot deliver them.
 
-    This failure is invisible by construction. The sign-in page must answer
-    identically for a registered and an unregistered address, or it becomes a
-    way to enumerate who lives here — so it cannot report that delivery failed.
-    Somebody asks for a link, is told one is on its way, and nothing arrives.
-
-    Found the hard way: the portal ran for a day with addresses configured and
-    no SMTP host.
+    The sign-in page answers the same way for known and unknown addresses, so
+    it cannot say delivery failed. Someone is told a link is on its way and
+    nothing arrives. This is the only place that problem shows.
     """
     unit_env = {}
     result = subprocess.run(
@@ -50,10 +42,8 @@ def portal_email_delivery() -> int:
         unit_env[key] = value
     if not unit_env.get("AGENTBOX_IDENTITY_EMAILS"):
         return 0
-    # Email is one channel, not the only one. Discord DM delivery needs no
-    # SMTP credential and no personal address in the From line, and it is safe
-    # for the same reason email is: the link is bound to the browser that
-    # requested it, so reading it is not enough to use it.
+    # Discord DMs count as delivery too. They are safe for the same reason
+    # email is, because the link only works in the browser that asked for it.
     channels = []
     if unit_env.get("AGENTBOX_SMTP_HOST"):
         channels.append("email")
@@ -73,13 +63,8 @@ def portal_email_delivery() -> int:
 
 
 def portal_redirect_uri() -> int:
-    """Fail early if the portal's OAuth redirect is one Google will refuse.
-
-    Registering it is a console step nobody can automate, so the least this can
-    do is not send an operator to register something impossible. It sent them
-    twice: both the invite page and the portal documented an agentbox.local
-    URI, which Google rejects outright.
-    """
+    """Fail early if the portal's OAuth redirect is one Google will refuse,
+    such as a `.local` name, before anyone tries to register it."""
     url = os.environ.get("AGENTBOX_PORTAL_URL", "")
     if not url:
         return 0
@@ -100,17 +85,11 @@ def portal_redirect_uri() -> int:
 
 
 def connector_credentials() -> int:
-    """Check each identity's Google credential still works.
+    """Check each person's Google credential still works.
 
-    A refresh token revoked at Google leaves this box holding a dead
-    credential, and nothing notices: /health stays green because the container
-    is fine, and the first symptom is an opaque 403 during an unrelated task
-    days later. That exact failure already happened once on the shared bridge,
-    which is why the bridge grew an upstream_status probe — this extends it to
-    the per-identity bridges, which nothing was checking.
-
-    Warns rather than fails: a disconnected account is a legitimate state, not
-    a broken deployment. The point is that it should be *visible*.
+    A token revoked at Google leaves the container healthy and the first sign
+    is an unexplained 403 days later. A disconnected account is a legitimate
+    state, so this warns rather than fails.
     """
     directory = Path(env_dir())
     for env_path in sorted(directory.glob("*-google-bridge.env")):
@@ -132,18 +111,15 @@ def connector_credentials() -> int:
             report(WARN, f"{identity}'s google credential looks dead — they "
                          f"can reconnect at the portal, then run: "
                          f"cli/agentbox identity reconnect {identity}")
-    # Always zero. A disconnected account is a legitimate state rather than a
-    # broken deployment, so this reports and never fails the run.
+    # Always zero, because a disconnected account is not a broken deployment.
     return 0
 
 
 def assistant_containment() -> int:
     """Verify the assistant still cannot rewrite what constrains it.
 
-    Three policy tiers were bypassable until 2026-08-05 because the gateway
-    could write its own config, skills and source — enforced against tool calls
-    while a shell sat beside them. The fix was ownership, and ownership is
-    exactly the kind of thing a later `chown -R` undoes without comment.
+    This rests on file ownership, which a careless `chown -R` could undo
+    without any error.
     """
     checks = [
         ("modify_production_gateway_config", GATEWAY_HOME / "agentbox/config.yaml"),
@@ -155,8 +131,8 @@ def assistant_containment() -> int:
     bad = 0
     unknown = False
     for capability, path in checks:
-        # Asked as the gateway user throughout: its home is mode 750, so
-        # the operator cannot even stat inside it — Path.exists() raises.
+        # Asked as the gateway user, because its home is mode 750 and the
+        # operator cannot look inside it.
         if agent_can("-e", str(path)) is not True:
             continue
         writable = agent_can("-w", str(path))
@@ -170,8 +146,8 @@ def assistant_containment() -> int:
         else:
             report(OK, f"{capability} enforced ({path.name} not writable)")
 
-    # Credential isolation currently rests on these two facts, not on the
-    # architecture. Both are one command away from silently disappearing.
+    # Credential isolation rests on these two facts, and either could be
+    # undone by one command without any error.
     if agent_can("-r", "/var/run/docker.sock"):
         bad += 1
         report(FAIL, f"{GATEWAY_USER} can reach the docker socket — it can read "
@@ -223,8 +199,8 @@ def bridge_readiness() -> int:
             bad += 1
             continue
         except urllib.error.URLError as exc:
-            # Connection refused means nothing is listening — most likely the
-            # service is simply not deployed, which is not a readiness failure.
+            # Connection refused means nothing is listening, most likely
+            # because the service is not deployed.
             if isinstance(exc.reason, ConnectionRefusedError):
                 report(WARN, f"{service} /ready refused; is it deployed?")
                 continue
@@ -237,8 +213,8 @@ def bridge_readiness() -> int:
             continue
         bridges = payload.get("bridges")
         if isinstance(bridges, dict):
-            # The gateway's aggregate: name each bridge individually so a
-            # failure reads "google: unreachable", not "gateway not ready".
+            # Name each bridge, so a failure reads "google: unreachable"
+            # rather than "not ready".
             for bridge, state in sorted(bridges.items()):
                 if state is True:
                     report(OK, f"{service}: {bridge} bridge ready")

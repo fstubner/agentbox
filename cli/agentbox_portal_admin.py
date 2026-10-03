@@ -1,9 +1,4 @@
-"""agentbox_portal_admin — operations and administration views.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 300 LOC)
-- Preserves exact settings rendering, household device controls, invite forms, and admin shell
-"""
+"""The portal's Operations page: settings, household devices, people and invites."""
 from __future__ import annotations
 
 import html

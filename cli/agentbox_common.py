@@ -26,15 +26,12 @@ def probe(url: str, timeout: float = 5) -> bool:
         return False
 
 
-# The properties the assistant's containment actually rests on. Every one is
-# silent if it breaks: nothing errors, the policy file still says the right
-# thing, and the tier is simply no longer true. Checked here because a
-# constraint nobody verifies is a constraint that has already regressed once.
+# The gateway user, whose permissions `doctor` checks. If the assistant's
+# containment breaks, nothing errors, so it has to be checked.
 GATEWAY_USER = os.environ.get("AGENTBOX_GATEWAY_USER", "agentbox")
-# os.path.expanduser, not Path.expanduser: the latter raises RuntimeError when
-# the user does not exist, and this is a module-level constant — so importing
-# the CLI at all would fail on any machine without a gateway user, CI included.
-# os.path leaves the string untouched instead, which is the right non-answer.
+# os.path.expanduser rather than Path.expanduser, which raises when the user
+# does not exist. This runs at import, so the CLI would fail on any machine
+# without a gateway user, CI included.
 GATEWAY_HOME = Path(os.environ.get("AGENTBOX_GATEWAY_HOME",
                                    os.path.expanduser("~agentbox")))
 
@@ -43,7 +40,7 @@ def agent_can(action: str, path: str) -> bool | None:
     """Can the gateway user do `action` (`-w` / `-r`) to `path`? None if unknown."""
     result = subprocess.run(["sudo", "-n", "-u", GATEWAY_USER, "test", action, path],
                             capture_output=True, timeout=10)
-    # sudo itself failing (no NOPASSWD) is not an answer about the path.
+    # sudo failing for lack of a password says nothing about the path.
     if result.returncode not in (0, 1):
         return None
     return result.returncode == 0

@@ -1,9 +1,6 @@
-"""agentbox_setup — first-time machine setup and security hardening.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 300 LOC)
-- Automates directory creation, permission hardening (mode 0700/0750/2775),
-  proposal sandbox setup, example env templates, and bubblewrap profile.
+"""`agentbox setup`: create the config and state directories with tight
+permissions, the builder's repository, example env files and the sandbox
+launcher. Safe to run again.
 """
 from __future__ import annotations
 

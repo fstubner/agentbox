@@ -1,9 +1,4 @@
-"""agentbox_portal_cards — dashboard and operations cards.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 300 LOC)
-- Preserves exact markup, escaping, form targets, and styling
-"""
+"""Cards on the portal's home and Operations pages."""
 from __future__ import annotations
 
 import html

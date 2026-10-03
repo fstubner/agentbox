@@ -1,9 +1,5 @@
-"""agentbox_portal_calendar — household calendar, upcoming events, and scheduled deadlines.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 400 LOC)
-- Unified view over Vikunja scheduled tasks and Google Calendar events
-- Interactive one-click task completion on schedule view
+"""The portal's calendar: scheduled tasks from Vikunja and events from Google
+Calendar in one view, with tasks completable from the page.
 """
 from __future__ import annotations
 

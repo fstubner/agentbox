@@ -19,21 +19,17 @@ PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 PORT_MAPPING = re.compile(r'^\s*-\s*"?\d+:\d+')
 
 
-# The assistant pays for every tool schema on every turn, whether it uses the
-# tool or not. mcp_base.py described that as "the single largest fixed cost in
-# this system at ~2,250 tokens per turn"; by 2026-08-14 it measured 7,778 —
-# 3.5x the documented figure, drifted silently while this project maintained a
-# whole document on context economy. Nothing measured it, so nothing noticed.
-#
-# Deliberately a ceiling with slack rather than a pinned number: adding a tool
-# should be possible without editing a test, but tripling the cost should not
-# be possible without someone deciding to.
+# Every tool schema is sent to the model on every turn, used or not, and
+# together they are the largest fixed cost per turn. A documented figure once
+# drifted to three times its stated value without anyone noticing, so this
+# measures it. It is a ceiling with room to spare, so adding a tool needs no
+# edit here but tripling the cost needs a deliberate decision.
 TOOL_SCHEMA_TOKEN_BUDGET = int(os.environ.get(
     "AGENTBOX_TOOL_SCHEMA_BUDGET", "9000"))
 
 
 def tool_schema_cost() -> tuple[int, int, list[tuple[str, int]]]:
-    """(tools, approx tokens, biggest offenders) for the assembled surface."""
+    """Tool count, approximate tokens, and the largest schemas."""
     app = REPO / "services" / "compose" / "agentbox-mcp" / "app"
     if not (app / "server.py").is_file():
         return 0, 0, []
@@ -47,9 +43,9 @@ def tool_schema_cost() -> tuple[int, int, list[tuple[str, int]]]:
             return 0, 0, []
         sizes = json.loads(out.stdout.strip().splitlines()[-1])
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-        # A measurement that cannot run must not break the thing it measures.
-        # scaffold() calls validate(), and this crashed it inside a scaffolded
-        # temp repo where the gateway's app tree is not importable.
+        # If the measurement cannot run, skip it rather than fail validate.
+        # scaffold() runs validate in a temporary repo where the server code
+        # is not importable.
         return 0, 0, []
     total = sum(n for _, n in sizes)
     worst = sorted(sizes, key=lambda kv: -kv[1])[:3]
@@ -92,28 +88,20 @@ def validate() -> int:
         for line in text.splitlines():
             if PORT_MAPPING.match(line) and "127.0.0.1" not in line and "${" not in line:
                 error(f"unqualified port mapping (bind to localhost/LAN/tailscale explicitly): {rel}: {line.strip()}")
-        # Host networking sidesteps every check above: there is no ports
-        # section to inspect, so a service could reach the LAN while passing
-        # the "no 0.0.0.0, no unqualified port" rules without comment. Found
-        # while adding Home Assistant, which legitimately needs it — mDNS and
-        # SSDP are link-local multicast and do not cross a Docker bridge.
-        #
-        # Allowed, but only when the compose file says out loud that it is
-        # exposed, so `grep agentbox.exposure` answers "what can the network
-        # reach" truthfully rather than listing only the services that used a
-        # ports mapping.
+        # Host networking skips every port check above, because there is no
+        # ports section. Home Assistant needs it for device discovery, so it
+        # is allowed, but only with an `agentbox.exposure` label. Then
+        # `grep agentbox.exposure` lists everything the network can reach.
         if re.search(r"^\s*network_mode:\s*[\"']?host", text, re.M):
             if not re.search(r"agentbox\.exposure:\s*(lan|public)", text):
                 error(f"network_mode: host reaches every interface; declare "
                       f"`agentbox.exposure: lan` and say why: {rel}")
 
-        # A bridge holds a real credential, so it must not be reachable from
-        # the host: any published port makes its bridge token spendable by any
-        # local process that steals one. The MCP gateway reaches bridges over
-        # their compose networks. `agentbox.exposure: operator` is the explicit
-        # exception for bridges that operator tooling must reach directly
-        # (memory review), so the compose file says out loud why the hole
-        # exists.
+        # A bridge holds a real credential, so it publishes no host port, and
+        # a stolen bridge token is useless from the host. agentbox-mcp reaches
+        # bridges over their compose networks. `agentbox.exposure: operator`
+        # marks the exception for memory review, which the operator's CLI
+        # reaches directly.
         if "/compose/" in str(rel) and rel.parent.name.endswith("-bridge"):
             if re.search(r"^\s*ports:", text, re.M) and \
                     "agentbox.exposure: operator" not in text:
@@ -125,10 +113,8 @@ def validate() -> int:
         if "no-new-privileges:true" not in text:
             error(f"compose service should set no-new-privileges: {rel}")
 
-    # A service image that never drops root is one `docker exec` away from
-    # being root on a bind mount. Every service already did this except the two
-    # I added for the builder, which are the ones that write files — so the
-    # check exists because omitting it is easy and the omission is silent.
+    # A container running as root is one `docker exec` from being root on its
+    # bind mounts. Forgetting to drop it is easy and silent, so it is checked.
     for dockerfile in sorted(REPO.glob("services/compose/*/Dockerfile")):
         text = dockerfile.read_text(encoding="utf-8")
         if not re.search(r"^USER\s+\S+", text, re.M):
@@ -138,11 +124,9 @@ def validate() -> int:
             error(f"Dockerfile must not run as root: "
                   f"{dockerfile.relative_to(REPO)}")
 
-    # Parsing a compose file is docker's opinion, and that opinion varies by
-    # version — the same files that pass here failed on a CI runner's older
-    # docker with no defect to find. So this reports rather than fails: a
-    # genuinely broken compose file still stops `deploy`, which is the moment
-    # it matters, and the repo's own rules above are checked in code we own.
+    # Docker's compose parser varies by version, and older versions on CI
+    # rejected valid files. So this reports rather than fails. A broken file
+    # still stops `deploy`, and the rules above are checked by code here.
     if os.environ.get("AGENTBOX_VALIDATE_SKIP_COMPOSE") == "1":
         report(WARN, "compose config validation skipped "
                      "(AGENTBOX_VALIDATE_SKIP_COMPOSE=1)")
@@ -168,12 +152,11 @@ def validate() -> int:
     except OSError:
         error("policies/approval-policy.yaml missing")
 
-    # Shared sources are copied from the repo root at build time rather than
-    # duplicated per service, so there are no copies left to drift. The hash
-    # checks that used to police that are gone with them.
+    # Shared sources are copied from the repository at build time rather than
+    # duplicated per service, so there are no copies to compare.
 
-    # Every assistant-visible tool must map to a capability, or it fails closed
-    # at runtime — correct, but silently. Catch it here instead.
+    # An unmapped tool fails closed at runtime without saying why, so catch it
+    # here.
     try:
         mapped = set(load_tool_map())
         for server in sorted(REPO.glob("services/compose/*-mcp*/app/server.py")):
@@ -186,27 +169,18 @@ def validate() -> int:
     except OSError:
         error("policies/approval-policy.yaml missing")
 
-    # Lint is a gate, not advice. On 2026-08-14 a NameError in the Google
-    # bridge was on screen from `ruff check` and deployed anyway, crash-looping
-    # the container that holds the OAuth credential. `validate` runs before
-    # every deploy, so this is the place a known-bad change should stop.
+    # Lint blocks a deploy. A NameError that ruff had already reported once
+    # shipped and crash-looped the bridge holding the Google credential.
     #
-    # Absent ruff is a warning rather than a failure: a box without dev tools
-    # should still be able to deploy, and a check that cannot run must not
-    # masquerade as one that passed.
-    # Only where the project's own ruff config applies. scaffold() calls
-    # validate() inside a generated temp repo that carries no pyproject, and
-    # ruff's defaults there are not this project's standard — linting it would
-    # be measuring the wrong thing, and it broke scaffold when it tried.
+    # Missing ruff is a warning, so a machine without dev tools can still
+    # deploy, but it never reads as a pass. Lint only runs where this
+    # project's pyproject applies, which excludes scaffold's temporary repo.
     ruff_configured = any((REPO / name).is_file()
                           for name in ("pyproject.toml", "ruff.toml", ".ruff.toml"))
     if shutil.which("ruff") and ruff_configured:
-        # `.` alone silently skips every file without a .py suffix, which is
-        # all three CLI entry points — the largest Python in the repo, and the
-        # ones holding the auth and settings logic. They went unlinted from
-        # the day this gate was added until somebody read its output closely.
-        # Globbed rather than listed so a new entry point is covered by
-        # existing, not by somebody remembering to add it here.
+        # `ruff check .` skips files without a .py suffix, which includes the
+        # CLI entry points. They are globbed so a new one is covered without
+        # anyone adding it here.
         scripts = [str(p) for p in (REPO / "cli").glob("agentbox*")
                    if p.is_file() and p.suffix == "" and b"python" in p.read_bytes()[:100]]
         lint = subprocess.run(["ruff", "check", "--quiet", ".", *scripts],
@@ -261,17 +235,10 @@ def validate() -> int:
 
 LARGE_FILE_LIMIT = 400
 
-# Files already past the point where one sitting reads the whole thing. Each
-# number is a ceiling, not a blessing: these may shrink and must not grow, and
-# a file not listed here may not cross the limit at all.
-#
-# This exists because the smell checker that flags large files globs `*.py`,
-# so the four biggest things in this repo are invisible to it — `cli/agentbox`
-# and `cli/agentbox-portal` among them, which between them hold the argument
-# parsing, the policy checks and every HTTP handler. A gate blind to its own
-# worst case reports clean and means nothing, so the repo measures itself.
-#
-# Raising an entry is allowed and is meant to be a visible line in a diff.
+# Files already over the limit. Each number is a ceiling. A listed file may
+# shrink but not grow, and an unlisted file may not cross the limit. Raising an
+# entry is allowed, as a visible line in a diff. Extensionless scripts are
+# measured too, since generic size checkers only look at *.py.
 LARGE_FILES = {
     "services/compose/memory-bridge/app/bridge.py": 1075,
     "services/compose/google-workspace-bridge/app/bridge.py": 937,
@@ -292,11 +259,7 @@ LARGE_FILES = {
 
 
 def source_files() -> list[Path]:
-    """Tracked Python, plus the extensionless scripts that are also Python.
-
-    Extension is not a reliable signal here: the four largest files in the
-    repo have none, because they are commands people type.
-    """
+    """Tracked Python files, including extensionless scripts that are Python."""
     listing = subprocess.run(["git", "ls-files"], cwd=str(REPO),
                              capture_output=True, text=True, check=False)
     out = []
@@ -316,7 +279,7 @@ def source_files() -> list[Path]:
 
 
 def file_size_drift() -> tuple[list, list]:
-    """(files newly over the limit, recorded files that grew)."""
+    """Files newly over the limit, and recorded files that grew."""
     oversized, grown = [], []
     for path in source_files():
         try:

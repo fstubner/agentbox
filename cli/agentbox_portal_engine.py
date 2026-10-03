@@ -1,9 +1,5 @@
-"""agentbox_portal_engine — capabilities, skills catalog, and engine controls.
-
-Follows the established agentbox modular CLI pattern:
-- Dedicated module with clean functional boundaries (< 400 LOC)
-- Dynamic discovery of platform and personal skills
-- Hardware envelope reporting and 1-click crash-consistent DR snapshots
+"""The portal's Engine page: capabilities, the skills catalog, hardware and
+snapshots.
 """
 from __future__ import annotations
 

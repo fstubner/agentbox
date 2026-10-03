@@ -1,24 +1,15 @@
-"""Runtime policy enforcement for MCP tool calls.
+"""Runtime policy enforcement for tool calls, used by agentbox-mcp and every bridge.
 
-The architecture diagram has always drawn a policy engine, but nothing outside
-cli/agentbox read the policy — it was an operator/CI check, so at runtime the
-assistant's tool calls were ungated. This module is the missing half.
+One policy covers the operator and the assistant. policies/approval-policy.yaml
+lists capabilities under `tiers` and maps each assistant tool to one under
+`tools`, so a tool call lands in the same tier as the matching operator action.
+Tiers are checked in the order always_denied, approval_required, allowed. A
+tool with no mapping is approval_required, so a tool added without one is
+refused until someone maps it.
 
-One policy governs both actors. policies/approval-policy.yaml lists
-capabilities under `tiers` and maps each assistant tool onto one under `tools`,
-so a tool call resolves to the same tier as the equivalent operator action.
-Semantics: always_denied -> approval_required -> allowed, and a tool that maps
-to no capability defaults to approval_required. Deny-by-default is the point;
-a tool added without being mapped is refused until someone maps it.
-
-An approval_required tool needs an operator grant, issued out of band with
-`cli/agentbox grant <tool> --ttl 15m` and written to a grants file this module
-reads. Grants are time-boxed and single-use by default, so an approval cannot
-silently become a standing permission.
-
-Copy this file verbatim into a new MCP's app/ directory alongside
-approval-policy.yaml; do not edit it per-service. `cli/agentbox validate`
-fails on drift in either.
+An approval_required tool needs a grant from `cli/agentbox grant <tool>`,
+written to a grants file this module reads. Grants expire and are single-use by
+default, so an approval cannot quietly become a standing permission.
 """
 from __future__ import annotations
 
@@ -29,13 +20,12 @@ from pathlib import Path
 
 POLICY_PATH = Path(os.environ.get("AGENTBOX_RUNTIME_POLICY", "/app/approval-policy.yaml"))
 GRANTS_PATH = Path(os.environ.get("AGENTBOX_POLICY_GRANTS", "/policy/grants.json"))
-# Writable, and deliberately NOT the grants file: recording a consumption can
-# only remove permission, so this path carries no authority.
+# Writable, and separate from the grants file. Recording that a grant was used
+# can only remove permission, so this path carries no authority.
 CONSUMED_PATH = Path(os.environ.get("AGENTBOX_POLICY_CONSUMED", "/policy-state/consumed.json"))
-# Denied calls are recorded here so the operator can be told something is
-# waiting, rather than discovering it when they next read the conversation.
-# Same writable path as consumption records: writing a request for permission
-# confers none, so this carries no authority either.
+# Refused calls are recorded here so the operator is told something is
+# waiting. Asking for permission grants none, so this carries no authority
+# either.
 PENDING_DIR = Path(os.environ.get("AGENTBOX_POLICY_PENDING", "/policy-state/pending"))
 
 ALLOWED = "allowed"
@@ -48,8 +38,8 @@ class PolicyDenied(Exception):
 
 
 def load_tiers(path: Path = POLICY_PATH) -> dict[str, list[str]]:
-    """Parse the runtime tier map. Flat two-level YAML, no external deps —
-    the MCP images are stdlib-only and a policy file is not worth a dependency.
+    """Parse the tier map. The file is flat two-level YAML, and the images use
+    only the standard library, so this parses it by hand.
     """
     tiers: dict[str, list[str]] = {}
     current: str | None = None
@@ -78,7 +68,7 @@ def load_tiers(path: Path = POLICY_PATH) -> dict[str, list[str]]:
 
 
 def load_tool_map(path: Path = POLICY_PATH) -> dict[str, str]:
-    """Parse the `tools:` section — assistant tool name -> capability."""
+    """Parse the `tools:` section, which maps a tool name to a capability."""
     mapping: dict[str, str] = {}
     if not path.exists():
         return mapping
@@ -102,11 +92,10 @@ def load_tool_map(path: Path = POLICY_PATH) -> dict[str, str]:
 
 
 def capability_of(tool: str, tool_map: dict[str, str] | None = None) -> str:
-    """The capability a tool exercises, or "" if it maps to none.
+    """The capability a tool uses, or "" if it maps to none.
 
-    For labelling an outcome record. Deliberately does not fall back to a tier:
-    an unmapped tool is a real condition worth seeing in the log rather than
-    something to paper over with a default.
+    Used to label outcome records. An unmapped tool shows up as "" rather than
+    a default, because that is worth seeing in the log.
     """
     mapping = load_tool_map() if tool_map is None else tool_map
     return mapping.get(tool or "", "")
@@ -114,14 +103,11 @@ def capability_of(tool: str, tool_map: dict[str, str] | None = None) -> str:
 
 def tier_of(tool: str, tiers: dict[str, list[str]],
             tool_map: dict[str, str] | None = None) -> str:
-    """Resolve a tool's tier through the capability it exercises.
+    """Resolve a tool's tier through the capability it uses.
 
-    A tool is not itself a policy entry — it maps onto a capability, and the
-    capability carries the tier. That indirection is what lets one policy cover
-    both an operator running a command and the assistant calling a tool.
-
-    Unmapped tools resolve to no capability and therefore to approval_required,
-    so a tool added without being mapped fails closed rather than running.
+    A tool maps to a capability and the capability has the tier. That is what
+    lets one policy cover an operator command and an assistant tool. An
+    unmapped tool resolves to approval_required, so it fails closed.
     """
     mapping = load_tool_map() if tool_map is None else tool_map
     capability = mapping.get(tool)
@@ -149,7 +135,7 @@ def _load_grants(path: Path) -> list[dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        # An unreadable grants file must not become an open door.
+        # An unreadable grants file means no grants, never all of them.
         return []
     return data.get("grants", []) if isinstance(data, dict) else []
 
@@ -162,18 +148,15 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
                   consumed_path: Path | None = None, consume: bool = True,
                   tool_map: dict[str, str] | None = None,
                   identity: str | None = None) -> bool:
-    """Return True if an unexpired, unconsumed grant covers `tool`.
+    """Return True if an unexpired, unused grant covers `tool`.
 
-    Grants are mounted read-only so a compromised MCP cannot issue itself
-    permission. Consumption therefore cannot delete from the grants file, and is
-    recorded separately in a writable location instead. That split is the point:
-    writing a consumption record can only ever *remove* permission, so the
-    writable path carries no authority.
+    Grants are mounted read-only so a compromised server cannot give itself
+    permission. Using a grant therefore cannot delete it from that file, and is
+    recorded in a separate writable place instead, which can only ever remove
+    permission.
 
-    If the consumption record cannot be written, the call is refused rather than
-    allowed. An unenforceable single-use grant that silently behaves as
-    unlimited is worse than a failed call — this exact case shipped once, where
-    a read-only mount turned every single-use grant into a TTL-long window.
+    If that record cannot be written, the call is refused. Otherwise a
+    single-use grant would quietly work until it expired.
     """
     store = CONSUMED_PATH if consumed_path is None else consumed_path
     stamp = time.time() if now is None else now
@@ -181,14 +164,13 @@ def consume_grant(tool: str, path: Path = GRANTS_PATH, now: float | None = None,
     mapping = load_tool_map() if tool_map is None else tool_map
     for grant in _load_grants(path):
         granted = grant.get("tool")
-        # A grant names a tool; a bridge asks by capability. Accept either, so
-        # `agentbox grant archive_gmail` authorises the email_state_change the
-        # bridge sees.
+        # A grant names a tool, but a bridge asks by capability. Accept either,
+        # so `agentbox grant archive_gmail` covers the email_state_change the
+        # bridge checks.
         if granted != tool and mapping.get(granted) != tool:
             continue
-        # A grant may be scoped to one identity (`agentbox grant --for alex`).
-        # Scoped grants cover only that identity; unscoped grants cover anyone,
-        # which is the single-operator behaviour every existing grant has.
+        # A grant can be scoped to one person (`agentbox grant --for alex`).
+        # An unscoped grant covers anyone.
         scoped_to = grant.get("identity")
         if scoped_to is not None and scoped_to != identity:
             continue
@@ -220,12 +202,11 @@ def check_capability(capability: str, tiers: dict[str, list[str]] | None = None,
                      consume: bool = True, subject: str | None = None,
                      tool_map: dict[str, str] | None = None,
                      identity: str | None = None) -> None:
-    """Raise PolicyDenied unless `capability` may be exercised now.
+    """Raise PolicyDenied unless `capability` may be used now.
 
-    Used by the bridges, which know the capability directly rather than a tool
-    name. `consume=False` checks without spending a single-use grant, so a
-    caller can deny early without stealing the grant from the layer whose
-    answer is authoritative.
+    Used by the bridges, which know the capability rather than a tool name.
+    `consume=False` checks without using up a single-use grant, so an earlier
+    layer can refuse early and leave the grant for the bridge.
     """
     resolved = load_tiers() if tiers is None else tiers
     label = subject or capability
@@ -247,11 +228,11 @@ def check_capability(capability: str, tiers: dict[str, list[str]] | None = None,
 
 def record_pending(tool: str, capability: str | None, path: Path | None = None,
                    identity: str | None = None) -> None:
-    """Note that a call was refused for want of approval.
+    """Note that a call was refused for lack of approval.
 
-    Best-effort and idempotent per tool: a model that retries should not queue
-    five identical requests. Never raises — a failure to record must not turn a
-    clean policy denial into an error the model has to interpret.
+    One request per tool, so a model that retries does not queue five. It never
+    raises, because a failure to record must not turn a clean refusal into an
+    error.
     """
     store = PENDING_DIR if path is None else path
     try:
@@ -265,8 +246,7 @@ def record_pending(tool: str, capability: str | None, path: Path | None = None,
             "requested_at": int(time.time()),
         }
         if identity:
-            # Who was refused. With more than one person on the gateway, an
-            # approval decision needs to know whose request it is answering.
+            # Whose call it was, so the approval answers the right person.
             record["identity"] = identity
         entry.write_text(json.dumps(record), encoding="utf-8")
     except OSError:

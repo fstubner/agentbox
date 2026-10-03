@@ -113,8 +113,8 @@ Each of these is checked by tests in `services/templates/bridge/`.
 - `/ready` does probe the upstream, and returns 503 with the reason.
 - Request logs never contain the Authorization header, request or response
   bodies, or any query parameter outside `LOGGED_QUERY_PARAMS`.
-- `bridge_base.py` is byte-identical across the template and every bridge, and
-  `validate` fails if they drift.
+- There is one `bridge_base.py`, in `services/templates/bridge/`. Every bridge
+  image copies it at build time, so bridges cannot drift apart.
 
 ## Known gaps
 
