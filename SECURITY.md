@@ -1,15 +1,20 @@
 # Security
 
-This is a personal-assistant platform designed to run on a single trusted
-operator's own hardware, not as a multi-tenant service.
+Agentbox runs on one household's own hardware. It is not a multi-tenant
+service.
 
-- Report vulnerabilities via a private GitHub security advisory rather than
-  a public issue.
-- The assistant is expected to have narrow, policy-gated tool access only
-  (see `policies/approval-policy.yaml`) — it should never receive raw shell
-  or raw credentials. Reports of a path that grants either are treated as
-  high severity.
-- Services in `services/compose/` are expected to bind to localhost/LAN only
-  (enforced by `cli/agentbox validate`); a service that binds `0.0.0.0` or
-  exposes itself to the public internet without explicit operator action is
+Please report vulnerabilities through a private GitHub security advisory
+rather than a public issue.
+
+These are treated as high severity.
+
+- **A path to a shell or a raw credential.** The assistant should only reach
+  narrow, policy-gated tools (`policies/approval-policy.yaml`) and should never
+  get a shell or an upstream credential.
+- **Acting as another person.** Identity comes from the session token. Any way
+  for a tool argument or tool output to change who the assistant acts for is a
+  bug.
+- **Exposure beyond the LAN.** Services in `services/compose/` bind to
+  localhost or the LAN, and `cli/agentbox validate` enforces it. A service that
+  binds `0.0.0.0` or reaches the internet without the operator choosing that is
   a bug.
