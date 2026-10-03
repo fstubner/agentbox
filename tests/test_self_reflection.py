@@ -171,7 +171,7 @@ def test_aggregate_counts_outcomes_per_tool(tmp_path, monkeypatch):
         {"ts": now, "tool": "find_or_create_task", "outcome": "invalid",
          "ms": 2, "detail": "missing_required_argument"},
     ])
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert payload["total_calls"] == 4
     assert payload["tools"]["list_tasks"]["ok"] == 2
@@ -184,7 +184,7 @@ def test_aggregate_reads_every_service_journal(tmp_path, monkeypatch):
     now = int(time.time())
     write_journal(tmp_path, "a-outcomes.jsonl", [{"ts": now, "tool": "x", "outcome": "ok"}])
     write_journal(tmp_path, "b-outcomes.jsonl", [{"ts": now, "tool": "y", "outcome": "ok"}])
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert set(payload["tools"]) == {"x", "y"}
 
@@ -193,7 +193,7 @@ def test_records_outside_the_window_are_excluded(tmp_path, monkeypatch):
     bridge = load_memory_bridge()
     old = int(time.time()) - 40 * 86400
     write_journal(tmp_path, "a-outcomes.jsonl", [{"ts": old, "tool": "x", "outcome": "ok"}])
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert payload["total_calls"] == 0
 
@@ -202,7 +202,7 @@ def test_an_empty_window_says_so_rather_than_looking_clean(tmp_path, monkeypatch
     """A model reading an empty result will otherwise treat it as evidence of
     good behaviour rather than of no data."""
     bridge = load_memory_bridge()
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert "No activity" in payload["note"]
 
@@ -216,7 +216,7 @@ def test_a_torn_line_does_not_break_the_read(tmp_path, monkeypatch):
     (directory / "a-outcomes.jsonl").write_text(
         json.dumps({"ts": now, "tool": "x", "outcome": "ok"}) + "\n{\"ts\": 1, \"to\n",
         encoding="utf-8")
-    monkeypatch.setattr(bridge, "LOG_DIR", directory)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", directory)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert payload["total_calls"] == 1
 
@@ -229,7 +229,7 @@ def test_journal_lines_are_never_returned(tmp_path, monkeypatch):
     write_journal(tmp_path, "a-outcomes.jsonl", [
         {"ts": now, "tool": "search_gmail", "outcome": "ok",
          "args": ["query"], "shape": {"view": "lean"}}])
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     serialised = json.dumps(payload)
     assert "ts" not in payload and "args" not in serialised
@@ -292,8 +292,8 @@ def test_summary_labels_each_tool_with_its_tier(tmp_path, monkeypatch):
         {"ts": now, "tool": "set_home_climate", "outcome": "denied"},
         {"ts": now, "tool": "list_tasks", "outcome": "ok"},
     ])
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
-    monkeypatch.setattr(bridge, "policy_gate", repo_policy_gate())
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "policy_gate", repo_policy_gate())
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert payload["tools"]["set_home_climate"]["tier"] == "approval_required"
     assert payload["tools"]["list_tasks"]["tier"] == "allowed"
@@ -304,7 +304,7 @@ def test_an_approvable_refusal_says_it_can_be_approved(tmp_path, monkeypatch):
     bridge = load_memory_bridge()
     write_journal(tmp_path, "a-outcomes.jsonl", [
         {"ts": int(time.time()), "tool": "set_home_climate", "outcome": "denied"}])
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert "operator can approve" in payload["tools"]["set_home_climate"]["note"]
 
@@ -314,8 +314,8 @@ def test_a_missing_policy_omits_tiers_rather_than_failing(tmp_path, monkeypatch)
     bridge = load_memory_bridge()
     write_journal(tmp_path, "a-outcomes.jsonl", [
         {"ts": int(time.time()), "tool": "list_tasks", "outcome": "ok"}])
-    monkeypatch.setattr(bridge, "LOG_DIR", tmp_path)
-    monkeypatch.setattr(bridge, "policy_gate", None)
+    monkeypatch.setattr(sys.modules["memory_activity"], "LOG_DIR", tmp_path)
+    monkeypatch.setattr(sys.modules["memory_activity"], "policy_gate", None)
     _, payload = bridge.activity(FakeHandler("?days=7"), None)
     assert payload["tools"]["list_tasks"]["calls"] == 1
     assert "tier" not in payload["tools"]["list_tasks"]
@@ -369,7 +369,7 @@ def test_an_allowed_tool_that_was_refused_is_explained(tmp_path):
                     "detail": "upstream_refused",
                     "capability": "home_view_camera"})
         for _ in range(3)))
-    mem.LOG_DIR = logs
+    sys.modules["memory_activity"].LOG_DIR = logs
 
     class Handler:
         headers = {}

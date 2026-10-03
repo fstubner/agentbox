@@ -9,7 +9,7 @@ order to keep Operations from the assistant.
 from __future__ import annotations
 
 import pytest
-from conftest import code_of, portal_code
+from conftest import portal_code, script_code
 from test_portal_auth import load_portal
 
 
@@ -81,7 +81,7 @@ def test_the_bot_mints_chat_origin_never_operator(portal):
     An operator-origin link delivered that way would hand full privilege to
     anything with read access to Discord.
     """
-    source = code_of("cli/agentbox-approvals")
+    source = script_code("agentbox-approvals")
     body = source.split("def send_link_on_request")[1][:2500]
     assert '"--origin", "chat"' in body
     assert "operator" not in body.split("subprocess.run")[1][:200]
@@ -90,7 +90,7 @@ def test_the_bot_mints_chat_origin_never_operator(portal):
 def test_only_a_paired_account_gets_a_link(portal):
     """Pairing is what maps a Discord account to an identity; without it there
     is nobody to mint for."""
-    source = code_of("cli/agentbox-approvals")
+    source = script_code("agentbox-approvals")
     body = source.split("def send_link_on_request")[1][:2500]
     assert "by_user" in body
     assert 'author.get("bot")' in body
@@ -99,7 +99,7 @@ def test_only_a_paired_account_gets_a_link(portal):
 def test_the_bot_does_not_answer_the_same_message_forever(portal):
     """The poll is five seconds. Without a cursor a standing `link` DM mints
     until the hourly cap and leaves a channel full of dead links."""
-    source = code_of("cli/agentbox-approvals")
+    source = script_code("agentbox-approvals")
     body = source.split("def send_link_on_request")[1][:2500]
     assert "link_cursor()" in body
     assert "remember_link_request" in body

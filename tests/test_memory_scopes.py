@@ -109,11 +109,10 @@ def test_pre_scope_memories_read_as_household(mem):
 def test_filtering_happens_in_the_bridge_not_the_caller(mem):
     """A gateway that asked politely for only its own memories would leak the
     moment anything upstream got confused about who it was serving."""
-    source = (REPO / "services" / "compose" / "memory-bridge" / "app"
-              / "bridge.py").read_text()
-    assert "visible_to(" in source
+    import inspect
     # Both list endpoints must filter, not just one.
-    assert source.count("visible_to(") >= 3
+    for endpoint in (mem.list_proposals, mem.list_memories):
+        assert "visible_to(" in inspect.getsource(endpoint), endpoint.__name__
 
 
 # --- end to end through the routes -------------------------------------------------
@@ -208,7 +207,7 @@ def test_operator_flag_comes_from_the_review_token_not_a_header(mem):
     """
     import inspect
     source = inspect.getsource(mem.is_operator)
-    assert "compare_digest" in source and "REVIEW_TOKEN" in source
+    assert "compare_digest" in source and "review_token()" in source
 
     class Fake:
         headers = {"X-Agentbox-Operator": "true", "X-Memory-Review-Token": "wrong"}

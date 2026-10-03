@@ -65,7 +65,7 @@ def rpc(base, method, params=None, token=None, omit_headers=False):
     headers = {"Content-Type": "application/json"}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
-    version = (params.get("_meta") or {}).get(mb.META_VERSION)
+    version = (params.get("_meta") or {}).get(mb.protocol.META_VERSION)
     if version and not omit_headers:
         headers["MCP-Protocol-Version"] = version
         headers["Mcp-Method"] = method
@@ -181,7 +181,7 @@ def test_negotiates_rather_than_echoing_the_requested_version():
     try:
         agreed = rpc(base, "initialize", {"protocolVersion": "2099-01-01"},
                      token="secret")["result"]["protocolVersion"]
-        assert agreed == mb.PROTOCOL_VERSION
+        assert agreed == mb.protocol.PROTOCOL_VERSION
     finally:
         server.shutdown()
 
@@ -191,7 +191,7 @@ def test_accepts_a_version_we_actually_support():
     has no handshake, so offering it here would be incoherent."""
     server, base = serve(make("secret"))
     try:
-        for version in mb.LEGACY_VERSIONS:
+        for version in mb.protocol.LEGACY_VERSIONS:
             agreed = rpc(base, "initialize", {"protocolVersion": version},
                          token="secret")["result"]["protocolVersion"]
             assert agreed == version
@@ -218,7 +218,7 @@ def test_tools_are_returned_in_deterministic_order():
 
 def test_schemas_declare_the_json_schema_dialect():
     schema = mb.schema_object({"x": {"type": "string"}}, ["x"])
-    assert schema["$schema"] == mb.SCHEMA_DIALECT
+    assert schema["$schema"] == mb.protocol.SCHEMA_DIALECT
 
 
 def test_tool_failures_are_tool_errors_not_protocol_errors(monkeypatch):
@@ -322,7 +322,7 @@ def test_supported_protocol_version_header_is_accepted():
                            "params": {}}).encode()
         req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
             "Content-Type": "application/json", "Authorization": "Bearer secret",
-            "MCP-Protocol-Version": mb.PROTOCOL_VERSION,
+            "MCP-Protocol-Version": mb.protocol.PROTOCOL_VERSION,
         })
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.status == 200
@@ -345,8 +345,8 @@ def test_get_on_the_mcp_endpoint_returns_405():
 # --- dual-era: 2026-07-28 alongside the legacy handshake --------------------
 
 
-MODERN_META = {"_meta": {mb.META_VERSION: mb.MODERN_VERSION,
-                         mb.META_CLIENT_INFO: {"name": "test", "version": "1"}}}
+MODERN_META = {"_meta": {mb.protocol.META_VERSION: mb.protocol.MODERN_VERSION,
+                         mb.protocol.META_CLIENT_INFO: {"name": "test", "version": "1"}}}
 
 
 def test_server_discover_is_implemented():
@@ -354,10 +354,10 @@ def test_server_discover_is_implemented():
     server, base = serve(make("secret"))
     try:
         result = rpc(base, "server/discover", dict(MODERN_META), token="secret")["result"]
-        assert mb.MODERN_VERSION in result["supportedVersions"]
+        assert mb.protocol.MODERN_VERSION in result["supportedVersions"]
         assert "tools" in result["capabilities"]
         assert result["resultType"] == "complete"
-        assert result["_meta"][mb.META_SERVER_INFO]["name"] == "test-mcp"
+        assert result["_meta"][mb.protocol.META_SERVER_INFO]["name"] == "test-mcp"
     finally:
         server.shutdown()
 
@@ -377,14 +377,14 @@ def test_unsupported_version_in_meta_returns_the_modern_error():
     support, so the client can retry rather than guess."""
     server, base = serve(make("secret"))
     try:
-        rpc(base, "tools/list", {"_meta": {mb.META_VERSION: "1900-01-01"}}, token="secret")
+        rpc(base, "tools/list", {"_meta": {mb.protocol.META_VERSION: "1900-01-01"}}, token="secret")
         raise AssertionError("expected 400")
     except urllib.error.HTTPError as exc:
         assert exc.code == 400
         error = json.loads(exc.read())["error"]
-        assert error["code"] == mb.ERR_UNSUPPORTED_VERSION
+        assert error["code"] == mb.protocol.ERR_UNSUPPORTED_VERSION
         assert error["data"]["requested"] == "1900-01-01"
-        assert mb.MODERN_VERSION in error["data"]["supported"]
+        assert mb.protocol.MODERN_VERSION in error["data"]["supported"]
     finally:
         server.shutdown()
 
@@ -407,8 +407,8 @@ def test_initialize_never_answers_with_a_handshakeless_version():
     try:
         result = rpc(base, "initialize", {"protocolVersion": "1999-01-01"},
                      token="secret")["result"]
-        assert result["protocolVersion"] in mb.LEGACY_VERSIONS
-        assert result["protocolVersion"] != mb.MODERN_VERSION
+        assert result["protocolVersion"] in mb.protocol.LEGACY_VERSIONS
+        assert result["protocolVersion"] != mb.protocol.MODERN_VERSION
     finally:
         server.shutdown()
 
@@ -447,7 +447,7 @@ def test_missing_mcp_method_header_is_rejected():
         raise AssertionError("expected 400")
     except urllib.error.HTTPError as exc:
         assert exc.code == 400
-        assert json.loads(exc.read())["error"]["code"] == mb.ERR_HEADER_MISMATCH
+        assert json.loads(exc.read())["error"]["code"] == mb.protocol.ERR_HEADER_MISMATCH
     finally:
         server.shutdown()
 
@@ -459,14 +459,14 @@ def test_mcp_method_header_disagreeing_with_the_body_is_rejected():
                            "params": dict(MODERN_META)}).encode()
         req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
             "Content-Type": "application/json", "Authorization": "Bearer secret",
-            "MCP-Protocol-Version": mb.MODERN_VERSION,
+            "MCP-Protocol-Version": mb.protocol.MODERN_VERSION,
             "Mcp-Method": "tools/call",
         })
         urllib.request.urlopen(req, timeout=5)
         raise AssertionError("expected 400")
     except urllib.error.HTTPError as exc:
         assert exc.code == 400
-        assert json.loads(exc.read())["error"]["code"] == mb.ERR_HEADER_MISMATCH
+        assert json.loads(exc.read())["error"]["code"] == mb.protocol.ERR_HEADER_MISMATCH
     finally:
         server.shutdown()
 
@@ -480,14 +480,14 @@ def test_mcp_name_must_match_the_called_tool():
                            "params": params}).encode()
         req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
             "Content-Type": "application/json", "Authorization": "Bearer secret",
-            "MCP-Protocol-Version": mb.MODERN_VERSION,
+            "MCP-Protocol-Version": mb.protocol.MODERN_VERSION,
             "Mcp-Method": "tools/call", "Mcp-Name": "some_other_tool",
         })
         urllib.request.urlopen(req, timeout=5)
         raise AssertionError("expected 400")
     except urllib.error.HTTPError as exc:
         assert exc.code == 400
-        assert json.loads(exc.read())["error"]["code"] == mb.ERR_HEADER_MISMATCH
+        assert json.loads(exc.read())["error"]["code"] == mb.protocol.ERR_HEADER_MISMATCH
     finally:
         server.shutdown()
 
@@ -505,7 +505,7 @@ def test_base64_encoded_mcp_name_is_decoded_before_comparison():
                            "params": params}).encode()
         req = urllib.request.Request(base + "/mcp", data=body, method="POST", headers={
             "Content-Type": "application/json", "Authorization": "Bearer secret",
-            "MCP-Protocol-Version": mb.MODERN_VERSION,
+            "MCP-Protocol-Version": mb.protocol.MODERN_VERSION,
             "Mcp-Method": "tools/call", "Mcp-Name": encoded,
         })
         with urllib.request.urlopen(req, timeout=5) as resp:

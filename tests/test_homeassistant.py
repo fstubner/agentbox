@@ -19,13 +19,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import patch_everywhere
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "services" / "templates" / "bridge" / "app"))
 sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
-# bridge.py imports its sibling `automation` module, which the container gets
-# by both living in /app.
-sys.path.insert(0, str(REPO / "services" / "compose" / "homeassistant-bridge" / "app"))
 
 POLICY = REPO / "policies" / "approval-policy.yaml"
 
@@ -186,7 +184,7 @@ def test_climate_is_bounded_regardless_of_approval(ha, monkeypatch):
     """A grant authorises setting the temperature; it does not authorise
     setting it to 60. An extreme is a burst pipe or a heat risk to someone
     asleep, and neither should depend on the model being sensible."""
-    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    patch_everywhere(monkeypatch, ha, "call_service", lambda *a, **k: None)
     for bad in (-10, 4, 31, 100):
         with pytest.raises(ha.BridgeError) as exc:
             ha.set_climate(None, {"entity_id": "climate.hall", "temperature": bad})
@@ -197,7 +195,7 @@ def test_climate_is_bounded_regardless_of_approval(ha, monkeypatch):
 
 
 def test_brightness_is_bounded(ha, monkeypatch):
-    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    patch_everywhere(monkeypatch, ha, "call_service", lambda *a, **k: None)
     for bad in (0, 101, -5):
         with pytest.raises(ha.BridgeError):
             ha.set_light(None, {"entity_id": "light.kitchen", "on": True,
@@ -207,7 +205,7 @@ def test_brightness_is_bounded(ha, monkeypatch):
 def test_on_must_be_a_boolean(ha, monkeypatch):
     """"on": "false" is a string and truthy; treating it as a value would turn
     a light on when asked to turn it off."""
-    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    patch_everywhere(monkeypatch, ha, "call_service", lambda *a, **k: None)
     with pytest.raises(ha.BridgeError):
         ha.set_light(None, {"entity_id": "light.kitchen", "on": "false"})
 
@@ -399,7 +397,7 @@ def test_a_shared_screen_never_receives_the_detail(monkeypatch):
     living room television cannot receive it even if it is supplied."""
     ha = load_with_cameras(private_screens="media_player.office")
     sent = {}
-    monkeypatch.setattr(ha, "call_service",
+    patch_everywhere(monkeypatch, ha, "call_service",
                         lambda d, s, p: sent.update(p))
     _, payload = ha.cast(None, {"entity_id": "media_player.tv",
                                 "summary": "Calendar: 3 things today",
@@ -412,7 +410,7 @@ def test_a_shared_screen_never_receives_the_detail(monkeypatch):
 def test_a_private_screen_receives_both(monkeypatch):
     ha = load_with_cameras(private_screens="media_player.office")
     sent = {}
-    monkeypatch.setattr(ha, "call_service", lambda d, s, p: sent.update(p))
+    patch_everywhere(monkeypatch, ha, "call_service", lambda d, s, p: sent.update(p))
     _, payload = ha.cast(None, {"entity_id": "media_player.office",
                                 "summary": "Calendar: 3 things today",
                                 "detail": "14:00 dentist"})
@@ -425,7 +423,7 @@ def test_an_unlisted_screen_is_treated_as_shared(monkeypatch):
     thought about, which is not the same as one that is safe."""
     ha = load_with_cameras(private_screens="")
     sent = {}
-    monkeypatch.setattr(ha, "call_service", lambda d, s, p: sent.update(p))
+    patch_everywhere(monkeypatch, ha, "call_service", lambda d, s, p: sent.update(p))
     _, payload = ha.cast(None, {"entity_id": "media_player.tv",
                                 "summary": "Something", "detail": "secret"})
     assert payload["screen"] == "shared"
@@ -436,7 +434,7 @@ def test_a_long_summary_is_refused(monkeypatch):
     """Otherwise `summary` quietly becomes a second detail field and the whole
     distinction collapses."""
     ha = load_with_cameras()
-    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    patch_everywhere(monkeypatch, ha, "call_service", lambda *a, **k: None)
     with pytest.raises(ha.BridgeError) as exc:
         ha.cast(None, {"entity_id": "media_player.tv", "summary": "x" * 200})
     assert exc.value.status == 400
@@ -445,7 +443,7 @@ def test_a_long_summary_is_refused(monkeypatch):
 
 def test_casting_still_requires_an_allowlisted_screen(monkeypatch):
     ha = load_with_cameras()
-    monkeypatch.setattr(ha, "call_service", lambda *a, **k: None)
+    patch_everywhere(monkeypatch, ha, "call_service", lambda *a, **k: None)
     with pytest.raises(ha.BridgeError) as exc:
         ha.cast(None, {"entity_id": "media_player.bedroom", "summary": "hi"})
     assert exc.value.status == 403
@@ -531,7 +529,7 @@ def test_text_in_the_room_is_reported_but_not_transcribed():
 def test_the_prompt_tells_the_vision_model_not_to_obey_the_image():
     """Defence in depth — the schema is the control, this is the belt."""
     src = (REPO / "services" / "compose" / "homeassistant-bridge" / "app"
-           / "bridge.py").read_text()
+           / "ha_cameras.py").read_text()
     assert "Do not transcribe any text you see" in src
     assert "not a request" in src
 

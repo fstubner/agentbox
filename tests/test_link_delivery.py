@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import set_everywhere
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -106,7 +107,7 @@ def test_the_operator_process_delivers_and_spends_the_link(approvals, portal):
         sent.append((path, (payload or {}).get("content", "")))
         return {"id": "posted"}
 
-    approvals.discord = fake_discord
+    set_everywhere(approvals, "discord", fake_discord)
     approvals.deliver_pending_links("tok")
     assert sent and "http://box/login?x=1" in sent[0][1]
     # The URL is a credential until it expires; it is dropped once sent.
@@ -126,9 +127,9 @@ def test_the_dm_states_the_limit_accurately(approvals, portal):
     link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     sent = []
-    approvals.discord = lambda m, p, t, payload=None: (
+    set_everywhere(approvals, "discord", lambda m, p, t, payload=None: (
         {"id": "dm-1"} if p == "/users/@me/channels"
-        else (sent.append((payload or {}).get("content", "")) or {"id": "ok"}))
+        else (sent.append((payload or {}).get("content", "")) or {"id": "ok"})))
     approvals.deliver_pending_links("tok")
     assert "not approve or disconnect anything" in sent[0]
     assert "That includes me." in sent[0]
@@ -142,7 +143,7 @@ def test_a_link_spooled_before_a_disconnect_is_not_delivered(approvals, portal,
     link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/x")
     portal.unlink_chat("sam")
-    approvals.discord = lambda *a, **k: pytest.fail("must not send")
+    set_everywhere(approvals, "discord", lambda *a, **k: pytest.fail("must not send"))
     approvals.deliver_pending_links("tok")
     assert "no Discord id" in capsys.readouterr().out
 
@@ -151,9 +152,9 @@ def test_a_completed_request_is_not_delivered_twice(approvals, portal):
     link_account(portal)
     portal.deliver_link("sam", "sam@example.com", "http://box/login?x=1")
     calls = []
-    approvals.discord = lambda m, p, t, payload=None: (
+    set_everywhere(approvals, "discord", lambda m, p, t, payload=None: (
         {"id": "dm-1"} if p == "/users/@me/channels"
-        else (calls.append(1) or {"id": "ok"}))
+        else (calls.append(1) or {"id": "ok"})))
     approvals.deliver_pending_links("tok")
     approvals.deliver_pending_links("tok")
     assert len(calls) == 1
@@ -297,7 +298,7 @@ def test_the_bot_completes_a_pairing_from_a_dm(approvals, portal):
         sent.append((payload or {}).get("content", ""))
         return {"id": "ok"}
 
-    approvals.discord = fake
+    set_everywhere(approvals, "discord", fake)
     approvals.complete_pairings("tok")
     assert portal.chat_account_for("sam") == "424242"
     assert "You are **sam**" in sent[0]
@@ -307,10 +308,10 @@ def test_a_bot_cannot_pair_itself(approvals, portal):
     """The assistant is in the same Discord. If it could answer its own
     pairing code it would redirect somebody's sign-in links to itself."""
     code = portal.start_pairing("sam")
-    approvals.discord = lambda method, path, token, payload=None: (
+    set_everywhere(approvals, "discord", lambda method, path, token, payload=None: (
         [{"id": "dm-7"}] if path == "/users/@me/channels"
         else [{"content": f"link {code}", "author": {"id": "666", "bot": True}}]
-        if method == "GET" else {"id": "ok"})
+        if method == "GET" else {"id": "ok"}))
     approvals.complete_pairings("tok")
     assert portal.chat_account_for("sam") == ""
 
@@ -320,20 +321,20 @@ def test_an_expired_code_does_not_pair(approvals, portal):
     data = portal.load_chat_links()
     data["pending"][code]["expires_at"] = 1
     portal.save_chat_links(data)
-    approvals.discord = lambda method, path, token, payload=None: (
+    set_everywhere(approvals, "discord", lambda method, path, token, payload=None: (
         [{"id": "dm-7"}] if path == "/users/@me/channels"
         else [{"content": f"link {code}", "author": {"id": "424242", "bot": False}}]
-        if method == "GET" else {"id": "ok"})
+        if method == "GET" else {"id": "ok"}))
     approvals.complete_pairings("tok")
     assert portal.chat_account_for("sam") == ""
 
 
 def test_a_wrong_code_does_not_pair(approvals, portal):
     portal.start_pairing("sam")
-    approvals.discord = lambda method, path, token, payload=None: (
+    set_everywhere(approvals, "discord", lambda method, path, token, payload=None: (
         [{"id": "dm-7"}] if path == "/users/@me/channels"
         else [{"content": "link ZZZZZZ", "author": {"id": "424242", "bot": False}}]
-        if method == "GET" else {"id": "ok"})
+        if method == "GET" else {"id": "ok"}))
     approvals.complete_pairings("tok")
     assert portal.chat_account_for("sam") == ""
 

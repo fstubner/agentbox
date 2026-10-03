@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import code_of
+from conftest import patch_everywhere, script_code
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -29,7 +29,7 @@ def load_approvals(tmp_path, monkeypatch):
     spec.loader.exec_module(module)
     # Nothing in these tests should reach 1Password; a subprocess in the poll
     # loop is the regression this guards against as much as it is a test seam.
-    monkeypatch.setattr(module, "op_read",
+    patch_everywhere(monkeypatch, module, "op_read",
                         lambda ref: pytest.fail(f"unexpected op_read({ref})"))
     return module
 
@@ -65,7 +65,7 @@ def test_an_empty_list_means_nobody_rather_than_the_last_good_one(approvals):
     approvals.SETTINGS.save({"approval_user_ids": "111111111111111111"})
     assert approvals.approval_operators()
     approvals.SETTINGS.save({"approval_user_ids": ""})
-    approvals._op_operators_cache = ""      # nothing in the vault either
+    sys.modules["agentbox_approvals_discord"]._op_operators_cache = ""  # nothing in the vault
     assert approvals.approval_operators() == set()
 
 
@@ -78,7 +78,7 @@ def test_the_vault_is_read_at_most_once(tmp_path, monkeypatch):
         calls.append(ref)
         return "100000000000000002"
 
-    monkeypatch.setattr(module, "op_read", fake_op_read)
+    patch_everywhere(monkeypatch, module, "op_read", fake_op_read)
     for _ in range(25):
         assert module.approval_operators() == {"100000000000000002"}
     assert len(calls) == 1, f"op_read called {len(calls)} times in 25 passes"
@@ -87,7 +87,7 @@ def test_the_vault_is_read_at_most_once(tmp_path, monkeypatch):
 def test_a_portal_value_beats_the_vault(tmp_path, monkeypatch):
     """So moving a box onto the portal actually moves it."""
     module = load_approvals(tmp_path, monkeypatch)
-    monkeypatch.setattr(module, "op_read",
+    patch_everywhere(monkeypatch, module, "op_read",
                         lambda ref: pytest.fail("vault consulted anyway"))
     module.SETTINGS.save({"approval_user_ids": "999999999999999999"})
     assert module.approval_operators() == {"999999999999999999"}
@@ -114,4 +114,4 @@ def test_the_bot_token_is_not_a_portal_setting(approvals):
     # about where the token belongs rather than about it having been dropped.
     # code_of, not read_text: this codebase has been bitten three times by a
     # source assertion matching the comment that explains the thing.
-    assert "op://Agentbox/discord/bot_token" in code_of("cli/agentbox-approvals")
+    assert "op://Agentbox/discord/bot_token" in script_code("agentbox-approvals")

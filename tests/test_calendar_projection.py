@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import patch_everywhere
 
 REPO = Path(__file__).resolve().parent.parent
 BASE_APP = REPO / "services" / "templates" / "bridge" / "app"
@@ -49,7 +50,7 @@ UPSTREAM = {
 @pytest.fixture(autouse=True)
 def stub_google(monkeypatch):
     """Return the fixture instead of calling Google."""
-    monkeypatch.setattr(gb, "google_json", lambda *a, **k: UPSTREAM)
+    patch_everywhere(monkeypatch, gb, "google_json", lambda *a, **k: UPSTREAM)
 
 
 def test_default_view_is_full():
@@ -94,7 +95,7 @@ def test_lean_keeps_pagination_token():
 
 
 def test_lean_omits_absent_keys_rather_than_nulling(monkeypatch):
-    monkeypatch.setattr(gb, "google_json",
+    patch_everywhere(monkeypatch, gb, "google_json",
                         lambda *a, **k: {"items": [{"id": "x", "summary": "y"}]})
     assert gb.calendar_events({"view": "lean"})["items"] == [{"id": "x", "summary": "y"}]
 

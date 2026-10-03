@@ -55,6 +55,7 @@ def test_source_assertions_go_through_the_comment_stripper(path):
         asserts = re.findall(rf"^\s*assert .*\b{name}\b.*$", code, re.M)
         stripped = (f"strip_comments({name})" in code
                     or "code_of(" in code
+                    or "script_code(" in code
                     or f"_code_only({name})" in code)
         if asserts and not stripped:
             offenders.append((name, len(asserts)))

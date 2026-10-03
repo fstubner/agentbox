@@ -31,6 +31,13 @@ CLI_DIR = REPO_ROOT / "cli"
 if str(CLI_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_DIR))
 
+# Bridges split into sibling modules with names unique to each bridge
+# (memory_store, google_drive, ...), imported by name from bridge.py the same
+# way the container's /app directory makes them importable.
+for _app in sorted((REPO_ROOT / "services" / "compose").glob("*/app")):
+    if str(_app) not in sys.path:
+        sys.path.append(str(_app))
+
 
 def strip_comments(text: str) -> str:
     """Remove `#` comments without touching `#` inside string literals."""
@@ -96,11 +103,67 @@ def code():
     return code_of
 
 
-def portal_code() -> str:
-    """The portal's executable text across cli/agentbox-portal and its parts.
+def script_code(name: str) -> str:
+    """A CLI script's executable text, including the modules it was split into.
 
-    The portal is one program split over several files, so an assertion about
-    "the portal" has to see all of them.
+    `script_code("agentbox-portal")` reads cli/agentbox-portal and every
+    cli/agentbox_portal_*.py, because an assertion about the program has to see
+    all of its files.
     """
-    files = [CLI_DIR / "agentbox-portal", *sorted(CLI_DIR.glob("agentbox_portal_*.py"))]
+    stem = name.replace("-", "_")
+    files = [CLI_DIR / name, *sorted(CLI_DIR.glob(f"{stem}_*.py"))]
     return "\n".join(code_of(f) for f in files)
+
+
+def portal_code() -> str:
+    return script_code("agentbox-portal")
+
+
+def _namespaces_holding(module, name):
+    """`module`'s namespace and those of the modules its functions came from,
+    wherever `name` is defined."""
+    spaces = {id(module.__dict__): module.__dict__}
+    for obj in list(vars(module).values()):
+        namespace = getattr(obj, "__globals__", None)
+        if isinstance(namespace, dict):
+            spaces[id(namespace)] = namespace
+    hits = [ns for ns in spaces.values() if name in ns]
+    assert hits, f"{name} is not defined anywhere {module.__name__} reaches"
+    return hits
+
+
+def patch_everywhere(monkeypatch, module, name, value):
+    """Patch `name` in a split module and in every module its functions came from.
+
+    A module split into siblings re-exports their functions, and each looks
+    names up in its own module. Patching only the re-exporting module would
+    miss them, so this patches every namespace that holds the name.
+    """
+    for namespace in _namespaces_holding(module, name):
+        monkeypatch.setitem(namespace, name, value)
+
+
+def set_everywhere(module, name, value):
+    """Like patch_everywhere, for a module loaded fresh for one test."""
+    for namespace in _namespaces_holding(module, name):
+        namespace[name] = value
+
+
+def drop_modules(prefix: str) -> None:
+    """Forget cached modules starting with `prefix`, so the next load reads the
+    environment afresh. Split bridges read some settings when they load."""
+    for name in [n for n in sys.modules if n.startswith(prefix)]:
+        sys.modules.pop(name)
+
+
+# Split modules that read settings from the environment when they load. Each
+# test starts without them cached, so a test that sets the environment and then
+# loads a bridge or script gets modules that read its settings, not a previous
+# test's.
+FRESH_PER_TEST = ("google_", "ha_", "agentbox_approvals_", "agentbox_invite_")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_split_modules():
+    for prefix in FRESH_PER_TEST:
+        drop_modules(prefix)

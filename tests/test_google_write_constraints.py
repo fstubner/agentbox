@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import patch_everywhere
 
 REPO = Path(__file__).resolve().parent.parent
 BASE_APP = REPO / "services" / "templates" / "bridge" / "app"
@@ -39,10 +40,10 @@ LABELS = {"labels": [
 
 @pytest.fixture(autouse=True)
 def stub(monkeypatch):
-    monkeypatch.setattr(gb, "gmail_list_labels", lambda _body: LABELS)
-    monkeypatch.setattr(gb, "google_json", lambda *a, **k: {"ok": True})
-    monkeypatch.setattr(gb, "ALLOWED_WRITE_CALENDAR_ID", "agent@group.calendar.google.com")
-    monkeypatch.setattr(gb, "OWNED_LABEL_PREFIX", "agentbox/")
+    patch_everywhere(monkeypatch, gb, "gmail_list_labels", lambda _body: LABELS)
+    patch_everywhere(monkeypatch, gb, "google_json", lambda *a, **k: {"ok": True})
+    patch_everywhere(monkeypatch, gb, "ALLOWED_WRITE_CALENDAR_ID", "agent@group.calendar.google.com")
+    patch_everywhere(monkeypatch, gb, "OWNED_LABEL_PREFIX", "agentbox/")
 
 
 def test_owned_labels_may_be_applied():

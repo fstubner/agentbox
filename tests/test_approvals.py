@@ -17,7 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "services" / "templates" / "mcp"))
 import policy_gate as pg
-from conftest import code_of
+from conftest import code_of, script_code
 
 spec = importlib.util.spec_from_loader(
     "approvals",
@@ -96,6 +96,6 @@ def test_the_loop_never_writes_grants_directly():
     """Grants are written by cli/agentbox, which the assistant cannot run. The
     loop shells out rather than editing the grants file itself, so there is one
     place that mints permission."""
-    source = code_of(REPO / "cli" / "agentbox-approvals")
+    source = script_code("agentbox-approvals")
     assert "grants.json" not in source
     assert '"grant", tool' in source

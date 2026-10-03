@@ -32,7 +32,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from conftest import code_of, portal_code
+from conftest import code_of, portal_code, script_code
 
 REPO = Path(__file__).resolve().parents[1]
 GATEWAY = os.environ.get("AGENTBOX_GATEWAY_URL", "http://127.0.0.1:3465")
@@ -224,7 +224,7 @@ def test_google_scopes_match_between_onboarding_and_setup():
     somebody uses the feature and gets an opaque 403 days later."""
     setup = (REPO / "services/compose/google-workspace-bridge"
                     "/oauth-setup.py").read_text()
-    invite = code_of(REPO / "cli" / "agentbox-invite")
+    invite = script_code("agentbox-invite")
     portal = portal_code()
     for scope in ("gmail.modify", "calendar", "drive.file"):
         assert scope in setup and scope in invite and scope in portal, \

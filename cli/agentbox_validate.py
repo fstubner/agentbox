@@ -240,20 +240,11 @@ LARGE_FILE_LIMIT = 400
 # entry is allowed, as a visible line in a diff. Extensionless scripts are
 # measured too, since generic size checkers only look at *.py.
 LARGE_FILES = {
-    "services/compose/memory-bridge/app/bridge.py": 1075,
-    "services/compose/google-workspace-bridge/app/bridge.py": 937,
-    "cli/agentbox-approvals": 788,
-    "services/compose/homeassistant-bridge/app/bridge.py": 759,
     "tests/test_mcp_base.py": 650,
     "tests/test_portal_auth.py": 632,
     "tests/test_memory_feedback.py": 602,
-    "cli/agentbox-invite": 558,
-    "services/templates/mcp/mcp_base.py": 546,
-    "tests/test_homeassistant.py": 544,
+    "tests/test_homeassistant.py": 542,
     "tests/test_drive_constraints.py": 499,
-    "cli/agentbox_onboarding.py": 431,
-    "cli/agentbox_status.py": 503,
-    "cli/agentbox_settings.py": 439,
     "tests/test_builder.py": 403,
 }
 

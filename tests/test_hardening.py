@@ -294,6 +294,6 @@ def test_the_exposure_warning_does_not_assert_what_it_cannot_know():
     """The original wording was applied to every watched port. It is knowable
     for the portal and not for most of the others, and asserting it anyway is
     what made it wrong."""
-    source = (REPO / "cli" / "agentbox_status.py").read_text(encoding="utf-8")
+    source = (REPO / "cli" / "agentbox_status_checks.py").read_text(encoding="utf-8")
     body = source.split("def lan_exposure")[1]
     assert "cannot confirm it requires a credential" in body

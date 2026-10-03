@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 
 import pytest
-from conftest import code_of
+from conftest import code_of, script_code
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -96,7 +96,7 @@ def test_a_spent_invite_is_refused(inv):
 
 
 def test_the_secret_is_compared_in_constant_time(inv):
-    source = code_of(REPO / "cli" / "agentbox-invite")
+    source = script_code("agentbox-invite")
     assert "hmac.compare_digest" in source
     assert "record.get(\"secret\"" in source
 
@@ -115,7 +115,7 @@ def test_the_page_cannot_provision_anything(inv):
     with a docker socket would be the worst service on the box — `docker
     inspect` reads every bridge credential."""
     import ast
-    source = code_of(REPO / "cli" / "agentbox-invite")
+    source = script_code("agentbox-invite")
     tree = ast.parse(source)
 
     # Imported modules, not source text — the module docstring legitimately
@@ -141,7 +141,7 @@ def test_the_page_cannot_provision_anything(inv):
 def test_the_page_never_logs_the_secret(inv):
     """The invite secret travels in the query string, which is exactly what a
     default HTTP log line prints."""
-    source = code_of(REPO / "cli" / "agentbox-invite")
+    source = script_code("agentbox-invite")
     assert "def log_message" in source
     block = source.split("def log_message", 1)[1].split("\n    def ", 1)[0]
     assert "urlparse(self.path).path" in block
@@ -165,7 +165,7 @@ def test_google_is_marked_external(inv):
 def test_only_personal_connectors_can_be_chosen(inv):
     """A submitted form naming a shared service must not create a per-identity
     anything."""
-    source = code_of(REPO / "cli" / "agentbox-invite")
+    source = script_code("agentbox-invite")
     assert 'CONNECTORS[c]["personal"]' in source
 
 
@@ -221,7 +221,7 @@ def test_the_page_can_start_google_consent_but_not_finish_it(inv):
     """The privilege split, stated in code: a client id is public and lives
     here, a client secret is not and does not. So the page can send her to
     Google and receive a code, and a code without the secret is inert."""
-    source = code_of(REPO / "cli" / "agentbox-invite")
+    source = script_code("agentbox-invite")
     assert "AGENTBOX_GOOGLE_CLIENT_ID" in source
     assert "CLIENT_SECRET" not in source
     assert "oauth2.googleapis.com/token" not in source  # no exchange here
@@ -231,7 +231,7 @@ def test_consent_asks_for_a_refresh_token_explicitly(inv):
     """access_type=offline plus prompt=consent are what make Google return a
     refresh token. Without them a returning user gets none, and the failure
     surfaces minutes later on the operator side instead of here."""
-    source = code_of(REPO / "cli" / "agentbox-invite")
+    source = script_code("agentbox-invite")
     block = source.split("def google_auth_url", 1)[1].split("\ndef ", 1)[0]
     assert '"access_type": "offline"' in block
     assert '"prompt": "consent"' in block
@@ -240,7 +240,7 @@ def test_consent_asks_for_a_refresh_token_explicitly(inv):
 def test_the_callback_verifies_state_against_the_invite(inv):
     """`state` carries the invite through Google and back. If it were not
     checked, anyone could post a code and have a bridge provisioned."""
-    source = code_of(REPO / "cli" / "agentbox-invite")
+    source = script_code("agentbox-invite")
     block = source.split("def _google_callback", 1)[1].split("\n    def ", 1)[0]
     assert "hmac.compare_digest" in block
 

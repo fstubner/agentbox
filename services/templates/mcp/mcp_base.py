@@ -17,7 +17,6 @@ check entirely when the token is unset. The rules here are:
 """
 from __future__ import annotations
 
-import base64
 import hmac
 import json
 import os
@@ -30,116 +29,12 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import mcp_protocol as protocol
 import outcome_log
 import policy_gate
+from mcp_protocol import McpError, ToolError, schema_object  # noqa: F401
 
-# Current clients declare their version in each request's `_meta` and need no
-# handshake. Older clients open with `initialize`. The specification allows one
-# endpoint to serve both, which keeps this current without breaking the gateway,
-# whose MCP client stops at 2025-11-25.
-MODERN_VERSION = "2026-07-28"
-LEGACY_VERSIONS = ("2025-11-25", "2025-06-18")
-SUPPORTED_PROTOCOL_VERSIONS = (MODERN_VERSION,) + LEGACY_VERSIONS
-# The answer to an `initialize` asking for a version not listed above. Current
-# clients never call initialize.
-PROTOCOL_VERSION = LEGACY_VERSIONS[0]
-
-# _meta keys that carry the version and client and server info per request.
-META_VERSION = "io.modelcontextprotocol/protocolVersion"
-META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
-META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
-
-# The specification reserves -32020 to -32099, and these three live there.
-ERR_HEADER_MISMATCH = -32020
-ERR_MISSING_CAPABILITY = -32021
-ERR_UNSUPPORTED_VERSION = -32022
-ERR_UNAUTHORIZED = -32001
-ERR_FORBIDDEN_ORIGIN = -32003
-
-# tools/list can be cached by the client. ttlMs says for how long, and
-# cacheScope says whether a shared intermediary may hold it. This list belongs to
-# one household, so it is private.
-TOOLS_TTL_MS = int(os.environ.get("MCP_TOOLS_TTL_MS", str(3_600_000)))
-CACHE_SCOPE = "private"
-
-# JSON Schema 2020-12, declared so a client does not have to infer it.
-SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 MAX_BODY_BYTES = int(os.environ.get("MCP_MAX_BODY_BYTES", str(128 * 1024)))
-
-# The specification requires checking Origin against DNS rebinding, where a web
-# page on this machine points an attacker's domain at 127.0.0.1 and talks to a
-# local server as if it were the same origin. The bearer token already stops
-# that, and this is a second layer.
-#
-# Clients that are not browsers send no Origin, so a missing header is allowed
-# and only an unlisted one is refused. The gateway sends none.
-ALLOWED_ORIGINS = frozenset(
-    o.strip() for o in os.environ.get("MCP_ALLOWED_ORIGINS", "").split(",") if o.strip())
-
-# What the specification says to assume when a client sends no
-# MCP-Protocol-Version header.
-ASSUMED_PROTOCOL_VERSION = "2025-03-26"
-
-
-class McpError(Exception):
-    def __init__(self, code: int, message: str, data: Any = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.data = data
-
-
-def decode_header_value(value: str) -> str:
-    """Undo the Base64 sentinel a client uses for values that are not header-safe.
-
-    Format is `=?base64?<b64>?=`. Servers MUST decode before comparing to the
-    body, or a name with a space in it looks like a mismatch.
-    """
-    if value.startswith("=?base64?") and value.endswith("?="):
-        try:
-            return base64.b64decode(value[9:-2]).decode("utf-8")
-        except Exception:  # noqa: BLE001 — malformed encoding is a mismatch
-            return value
-    return value
-
-
-class ToolError(Exception):
-    """An expected tool failure. Returned to the model, never a traceback."""
-
-
-def tool_result(payload: Any, is_error: bool = False) -> dict[str, Any]:
-    """Serialise compactly. Pretty-printing added about 17% to every result and
-    gives a model nothing."""
-    text = payload if isinstance(payload, str) else json.dumps(
-        payload, sort_keys=True, separators=(",", ":"))
-    return {
-        "content": [{"type": "text", "text": text}],
-        "structuredContent": payload if isinstance(payload, (dict, list)) else {"message": text},
-        "isError": bool(is_error),
-    }
-
-
-def response(message_id: Any, result: Any = None, error: Any = None,
-             service_name: str = "") -> dict[str, Any]:
-    payload: dict[str, Any] = {"jsonrpc": "2.0", "id": message_id}
-    if error:
-        payload["error"] = error
-        return payload
-    if isinstance(result, dict):
-        # "complete" means this is the answer rather than a request for more
-        # input. Older clients treat a missing field as "complete", so it is
-        # always safe to send.
-        result.setdefault("resultType", "complete")
-        if service_name:
-            meta = result.setdefault("_meta", {})
-            meta.setdefault(META_SERVER_INFO, {"name": service_name, "version": "1.0.0"})
-    payload["result"] = result
-    return payload
-
-
-def schema_object(properties: dict, required: list | None = None) -> dict:
-    return {"$schema": SCHEMA_DIALECT, "type": "object", "properties": properties,
-            "required": required or [], "additionalProperties": False}
 
 
 class McpHandler(BaseHTTPRequestHandler):
@@ -170,8 +65,8 @@ class McpHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin is None:
             return
-        if origin not in ALLOWED_ORIGINS:
-            raise McpError(ERR_FORBIDDEN_ORIGIN, f"origin not allowed: {origin[:80]}")
+        if origin not in protocol.ALLOWED_ORIGINS:
+            raise McpError(protocol.ERR_FORBIDDEN_ORIGIN, f"origin not allowed: {origin[:80]}")
 
     def _validate_arguments(self, name: str, arguments: dict) -> None:
         """Check the tool's declared `required` arguments before dispatch.
@@ -208,25 +103,25 @@ class McpHandler(BaseHTTPRequestHandler):
         method = message.get("method")
         params = message.get("params") or {}
         meta = params.get("_meta") or {}
-        body_version = meta.get(META_VERSION)
+        body_version = meta.get(protocol.META_VERSION)
         header_version = self.headers.get("MCP-Protocol-Version")
 
         if body_version is None:
             return  # legacy request; header rules below do not apply
 
         if header_version is None:
-            raise McpError(ERR_HEADER_MISMATCH,
+            raise McpError(protocol.ERR_HEADER_MISMATCH,
                            "MCP-Protocol-Version header is required")
         if header_version != body_version:
-            raise McpError(ERR_HEADER_MISMATCH,
+            raise McpError(protocol.ERR_HEADER_MISMATCH,
                            f"MCP-Protocol-Version header '{header_version}' does not "
                            f"match body value '{body_version}'")
 
         header_method = self.headers.get("Mcp-Method")
         if header_method is None:
-            raise McpError(ERR_HEADER_MISMATCH, "Mcp-Method header is required")
+            raise McpError(protocol.ERR_HEADER_MISMATCH, "Mcp-Method header is required")
         if header_method != method:
-            raise McpError(ERR_HEADER_MISMATCH,
+            raise McpError(protocol.ERR_HEADER_MISMATCH,
                            f"Mcp-Method header '{header_method}' does not match "
                            f"body method '{method}'")
 
@@ -238,10 +133,10 @@ class McpHandler(BaseHTTPRequestHandler):
         body_name = params.get(name_source)
         header_name = self.headers.get("Mcp-Name")
         if header_name is None:
-            raise McpError(ERR_HEADER_MISMATCH,
+            raise McpError(protocol.ERR_HEADER_MISMATCH,
                            f"Mcp-Name header is required for {method}")
-        if decode_header_value(header_name) != body_name:
-            raise McpError(ERR_HEADER_MISMATCH,
+        if protocol.decode_header_value(header_name) != body_name:
+            raise McpError(protocol.ERR_HEADER_MISMATCH,
                            f"Mcp-Name header does not match body value for {method}")
 
     def _require_protocol_version(self) -> None:
@@ -252,9 +147,9 @@ class McpHandler(BaseHTTPRequestHandler):
         version = self.headers.get("MCP-Protocol-Version")
         if version is None:
             return
-        if version not in SUPPORTED_PROTOCOL_VERSIONS and version != ASSUMED_PROTOCOL_VERSION:
-            raise McpError(ERR_UNSUPPORTED_VERSION, "Unsupported protocol version",
-                           {"supported": list(SUPPORTED_PROTOCOL_VERSIONS),
+        if version not in protocol.SUPPORTED_PROTOCOL_VERSIONS and version != protocol.ASSUMED_PROTOCOL_VERSION:
+            raise McpError(protocol.ERR_UNSUPPORTED_VERSION, "Unsupported protocol version",
+                           {"supported": list(protocol.SUPPORTED_PROTOCOL_VERSIONS),
                             "requested": version[:32]})
 
     def _require_auth(self) -> None:
@@ -268,16 +163,16 @@ class McpHandler(BaseHTTPRequestHandler):
                 if token and hmac.compare_digest(provided, f"Bearer {token}"):
                     self.identity = name
                     return
-            raise McpError(ERR_UNAUTHORIZED, "invalid MCP bearer token")
+            raise McpError(protocol.ERR_UNAUTHORIZED, "invalid MCP bearer token")
         if not self.shared_token:
-            raise McpError(ERR_UNAUTHORIZED,
+            raise McpError(protocol.ERR_UNAUTHORIZED,
                            "MCP shared token is not configured; refusing all calls")
         if not hmac.compare_digest(provided, f"Bearer {self.shared_token}"):
-            raise McpError(ERR_UNAUTHORIZED, "invalid MCP bearer token")
+            raise McpError(protocol.ERR_UNAUTHORIZED, "invalid MCP bearer token")
         self.identity = None
 
     def _reply(self, message_id: Any, result: Any = None, error: Any = None) -> dict:
-        return response(message_id, result, error, service_name=self.service_name)
+        return protocol.response(message_id, result, error, service_name=self.service_name)
 
     def _capabilities(self) -> dict:
         return {"tools": {"listChanged": False}}
@@ -290,20 +185,20 @@ class McpHandler(BaseHTTPRequestHandler):
 
         # A current client declares its version on each request. Refuse one
         # this server cannot speak rather than answer in a different version.
-        requested = meta.get(META_VERSION)
-        if requested is not None and requested not in SUPPORTED_PROTOCOL_VERSIONS:
-            raise McpError(ERR_UNSUPPORTED_VERSION, "Unsupported protocol version",
-                           {"supported": list(SUPPORTED_PROTOCOL_VERSIONS),
+        requested = meta.get(protocol.META_VERSION)
+        if requested is not None and requested not in protocol.SUPPORTED_PROTOCOL_VERSIONS:
+            raise McpError(protocol.ERR_UNSUPPORTED_VERSION, "Unsupported protocol version",
+                           {"supported": list(protocol.SUPPORTED_PROTOCOL_VERSIONS),
                             "requested": requested})
 
         # Required by the specification, for clients of any version.
         if method == "server/discover":
             return self._reply(message_id, {
-                "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+                "supportedVersions": list(protocol.SUPPORTED_PROTOCOL_VERSIONS),
                 "capabilities": self._capabilities(),
                 "instructions": self.instructions,
-                "ttlMs": TOOLS_TTL_MS,
-                "cacheScope": CACHE_SCOPE,
+                "ttlMs": protocol.TOOLS_TTL_MS,
+                "cacheScope": protocol.CACHE_SCOPE,
             })
 
         if method == "initialize":
@@ -311,7 +206,7 @@ class McpHandler(BaseHTTPRequestHandler):
             # rather than echo whatever was asked for, because the current
             # version has no handshake.
             asked = params.get("protocolVersion")
-            agreed = asked if asked in LEGACY_VERSIONS else PROTOCOL_VERSION
+            agreed = asked if asked in protocol.LEGACY_VERSIONS else protocol.PROTOCOL_VERSION
             return self._reply(message_id, {
                 "protocolVersion": agreed,
                 "capabilities": self._capabilities(),
@@ -330,8 +225,8 @@ class McpHandler(BaseHTTPRequestHandler):
             return self._reply(message_id, {
                 "tools": sorted(self.tools, key=lambda tool: tool["name"]),
                 # Let the client cache the tool block.
-                "ttlMs": TOOLS_TTL_MS,
-                "cacheScope": CACHE_SCOPE,
+                "ttlMs": protocol.TOOLS_TTL_MS,
+                "cacheScope": protocol.CACHE_SCOPE,
             })
         if method == "tools/call":
             name = params.get("name")
@@ -354,12 +249,12 @@ class McpHandler(BaseHTTPRequestHandler):
                 self._validate_arguments(name, arguments)
                 payload = self.dispatch(name, arguments)
                 note(outcome_log.OK, payload=payload)
-                return self._reply(message_id, tool_result(payload))
+                return self._reply(message_id, protocol.tool_result(payload))
             except policy_gate.PolicyDenied as exc:
                 # Recorded because a bridge never sees these, and they show
                 # what the assistant wanted and could not have.
                 note(outcome_log.DENIED)
-                return self._reply(message_id, tool_result(str(exc), True))
+                return self._reply(message_id, protocol.tool_result(str(exc), True))
             except ToolError as exc:
                 # Record a fixed reason rather than the message, which can quote
                 # the input. The reason is what self-reflection can act on.
@@ -377,10 +272,10 @@ class McpHandler(BaseHTTPRequestHandler):
                     note(outcome_log.DENIED, detail="upstream_refused")
                 else:
                     note(outcome_log.ERROR, detail="upstream_rejected")
-                return self._reply(message_id, tool_result(text, True))
+                return self._reply(message_id, protocol.tool_result(text, True))
             except Exception as exc:  # noqa: BLE001 — never leak a traceback
                 note(outcome_log.ERROR, detail=type(exc).__name__)
-                return self._reply(message_id, tool_result(
+                return self._reply(message_id, protocol.tool_result(
                     f"internal error: {type(exc).__name__}", True))
         if message_id is not None:
             # The current specification answers an unknown method with 404.
@@ -443,14 +338,14 @@ class McpHandler(BaseHTTPRequestHandler):
             result = self._handle(message)
             self.send_empty(202) if result is None else self.send_json(200, result)
         except McpError as exc:
-            status = {ERR_UNAUTHORIZED: 401, ERR_FORBIDDEN_ORIGIN: 403,
-                      ERR_UNSUPPORTED_VERSION: 400, ERR_HEADER_MISMATCH: 400,
+            status = {protocol.ERR_UNAUTHORIZED: 401, protocol.ERR_FORBIDDEN_ORIGIN: 403,
+                      protocol.ERR_UNSUPPORTED_VERSION: 400, protocol.ERR_HEADER_MISMATCH: 400,
                       -32601: 404}.get(exc.code, 400)
             body: dict[str, Any] = {"code": exc.code, "message": exc.message}
             if exc.data is not None:
                 body["data"] = exc.data
-            elif exc.code == ERR_UNSUPPORTED_VERSION:
-                body["data"] = {"supported": list(SUPPORTED_PROTOCOL_VERSIONS)}
+            elif exc.code == protocol.ERR_UNSUPPORTED_VERSION:
+                body["data"] = {"supported": list(protocol.SUPPORTED_PROTOCOL_VERSIONS)}
             self.send_json(status, {"jsonrpc": "2.0", "error": body})
         except json.JSONDecodeError:
             self.send_json(400, {"jsonrpc": "2.0",

@@ -1,3 +1,4 @@
+
 """Reviewing memories from Discord, where the assistant is also listening.
 
 This shares a process with the grant loop deliberately, because it needs
@@ -12,6 +13,8 @@ import importlib.machinery
 import importlib.util
 import sys
 from pathlib import Path
+
+from conftest import patch_everywhere, script_code
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -49,7 +52,7 @@ def test_the_assistants_own_messages_are_never_acted_on():
     """The load-bearing property. An injected assistant that types 'remember
     <id>' into the channel it can also read must change nothing — so bot
     authorship is filtered before any verb is parsed."""
-    source = (REPO / "cli" / "agentbox-approvals").read_text()
+    source = script_code("agentbox-approvals")
     loop = source.split("for message in reversed(messages):")[1]
     bot_check = loop.index('if author.get("bot"):')
     memory_handling = loop.index("handle_memory_reply")
@@ -63,8 +66,8 @@ def test_a_private_proposal_never_reaches_the_shared_channel(monkeypatch):
     """Posting one person's private proposal where the household reads it is
     a disclosure neither of them chose."""
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "proposals": [{"id": "aaaabbbb-1", "scope": "sam", "kind": "memory",
                        "statement": "Sam's private thing"}]})
     monkeypatch.setenv("AGENTBOX_DISCORD_IDENTITIES", "sam:999")
@@ -80,8 +83,8 @@ def test_an_unmapped_private_proposal_is_not_posted_anywhere(monkeypatch):
     """No Discord id means no safe audience. It stays in the portal rather
     than defaulting to the channel."""
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "proposals": [{"id": "aaaabbbb-1", "scope": "sam",
                        "statement": "Sam's private thing"}]})
     monkeypatch.setenv("AGENTBOX_DISCORD_IDENTITIES", "")
@@ -91,8 +94,8 @@ def test_an_unmapped_private_proposal_is_not_posted_anywhere(monkeypatch):
 
 def test_a_household_proposal_goes_to_the_channel(monkeypatch):
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "proposals": [{"id": "ccccdddd-1", "scope": "household",
                        "kind": "memory", "statement": "Bin day is Wednesday"}]})
     lib.announce_proposals("shared-channel", "tok", {})
@@ -103,8 +106,8 @@ def test_a_household_proposal_goes_to_the_channel(monkeypatch):
 
 def test_a_proposal_is_announced_once(monkeypatch):
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "proposals": [{"id": "ccccdddd-1", "scope": "household",
                        "statement": "x"}]})
     state = {}
@@ -115,8 +118,8 @@ def test_a_proposal_is_announced_once(monkeypatch):
 
 def test_a_feedback_proposal_says_so_in_the_prompt(monkeypatch):
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "proposals": [{"id": "eeeeffff-1", "scope": "household",
                        "kind": "feedback",
                        "statement": "look_at_camera is broken"}]})
@@ -127,14 +130,14 @@ def test_a_feedback_proposal_says_so_in_the_prompt(monkeypatch):
 def test_an_ambiguous_id_prefix_acts_on_nothing(monkeypatch):
     """Two memories sharing four characters must not mean the wrong one is
     silently forgotten."""
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "proposals": [{"id": "aaaa1111"}, {"id": "aaaa2222"}],
         "memories": []})
     assert lib.resolve_memory("aaaa") == ("", "")
 
 
 def test_an_unambiguous_prefix_resolves(monkeypatch):
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: (
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: (
         {"proposals": [{"id": "aaaa1111"}]} if "proposals" in p
         else {"memories": []}))
     assert lib.resolve_memory("aaaa1") == ("aaaa1111", "proposal")
@@ -143,9 +146,9 @@ def test_an_unambiguous_prefix_resolves(monkeypatch):
 def test_remember_approves_as_a_memory(monkeypatch):
     calls = []
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "resolve_memory", lambda p: ("id-1", "proposal"))
-    monkeypatch.setattr(lib, "memory_call",
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "resolve_memory", lambda p: ("id-1", "proposal"))
+    patch_everywhere(monkeypatch, lib, "memory_call",
                         lambda m, p, b=None: calls.append((m, p, b)) or {"ok": 1})
     assert lib.handle_memory_reply("remember", "id-1", "c", "tok", {}) is True
     assert calls[0][1].endswith("/approve")
@@ -154,9 +157,9 @@ def test_remember_approves_as_a_memory(monkeypatch):
 
 def test_feedback_files_it_as_feedback(monkeypatch):
     calls = []
-    monkeypatch.setattr(lib, "discord", Recorder())
-    monkeypatch.setattr(lib, "resolve_memory", lambda p: ("id-1", "proposal"))
-    monkeypatch.setattr(lib, "memory_call",
+    patch_everywhere(monkeypatch, lib, "discord", Recorder())
+    patch_everywhere(monkeypatch, lib, "resolve_memory", lambda p: ("id-1", "proposal"))
+    patch_everywhere(monkeypatch, lib, "memory_call",
                         lambda m, p, b=None: calls.append((m, p, b)) or {"ok": 1})
     lib.handle_memory_reply("feedback", "id-1", "c", "tok", {})
     assert calls[0][2]["kind"] == "feedback"
@@ -164,9 +167,9 @@ def test_feedback_files_it_as_feedback(monkeypatch):
 
 def test_forget_on_a_stored_memory_uses_the_forget_route(monkeypatch):
     calls = []
-    monkeypatch.setattr(lib, "discord", Recorder())
-    monkeypatch.setattr(lib, "resolve_memory", lambda p: ("id-9", "memory"))
-    monkeypatch.setattr(lib, "memory_call",
+    patch_everywhere(monkeypatch, lib, "discord", Recorder())
+    patch_everywhere(monkeypatch, lib, "resolve_memory", lambda p: ("id-9", "memory"))
+    patch_everywhere(monkeypatch, lib, "memory_call",
                         lambda m, p, b=None: calls.append((m, p, b)) or {"ok": 1})
     lib.handle_memory_reply("forget", "id-9", "c", "tok", {})
     assert calls[0][1] == "/v1/memories/id-9/forget"
@@ -182,11 +185,11 @@ def test_an_unrelated_message_is_left_alone():
 
 def test_remember_replaces_links_them_in_one_step(monkeypatch):
     calls = []
-    monkeypatch.setattr(lib, "discord", Recorder())
-    monkeypatch.setattr(lib, "resolve_memory",
+    patch_everywhere(monkeypatch, lib, "discord", Recorder())
+    patch_everywhere(monkeypatch, lib, "resolve_memory",
                         lambda p: (("new-1", "proposal") if p == "aaa"
                                    else ("old-1", "memory")))
-    monkeypatch.setattr(lib, "memory_call",
+    patch_everywhere(monkeypatch, lib, "memory_call",
                         lambda m, p, b=None: calls.append((p, b)) or
                         {"replaced": {"statement": "Bin day is Tuesday"}})
     assert lib.handle_memory_reply("remember", "aaa", "c", "tok", {},
@@ -200,11 +203,11 @@ def test_replaces_links_two_already_stored(monkeypatch):
     """The suggestion arrives after the write, so this is the shape it
     usually needs."""
     calls = []
-    monkeypatch.setattr(lib, "discord", Recorder())
-    monkeypatch.setattr(lib, "resolve_memory",
+    patch_everywhere(monkeypatch, lib, "discord", Recorder())
+    patch_everywhere(monkeypatch, lib, "resolve_memory",
                         lambda p: (("new-1", "memory") if p == "aaa"
                                    else ("old-1", "memory")))
-    monkeypatch.setattr(lib, "memory_call",
+    patch_everywhere(monkeypatch, lib, "memory_call",
                         lambda m, p, b=None: calls.append((p, b)) or
                         {"replaced": {"statement": "Bin day is Tuesday"}})
     lib.handle_memory_reply("replaces", "aaa", "c", "tok", {}, ["bbb"])
@@ -216,9 +219,9 @@ def test_a_suggestion_tells_you_exactly_what_to_type(monkeypatch):
     """Leaving two contradictory facts current with no instruction is how the
     queue stops being trusted."""
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "resolve_memory", lambda p: ("new-12345678", "proposal"))
-    monkeypatch.setattr(lib, "memory_call", lambda m, p, b=None: {
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "resolve_memory", lambda p: ("new-12345678", "proposal"))
+    patch_everywhere(monkeypatch, lib, "memory_call", lambda m, p, b=None: {
         "possibly_supersedes": [{"id": "old-87654321",
                                  "statement": "Bin day is Tuesday"}]})
     lib.handle_memory_reply("remember", "aaa", "c", "tok", {})
@@ -229,7 +232,7 @@ def test_a_suggestion_tells_you_exactly_what_to_type(monkeypatch):
 
 def test_replaces_without_a_target_asks_rather_than_guesses(monkeypatch):
     posted = Recorder()
-    monkeypatch.setattr(lib, "discord", posted)
-    monkeypatch.setattr(lib, "resolve_memory", lambda p: ("new-1", "memory"))
+    patch_everywhere(monkeypatch, lib, "discord", posted)
+    patch_everywhere(monkeypatch, lib, "resolve_memory", lambda p: ("new-1", "memory"))
     lib.handle_memory_reply("replaces", "aaa", "c", "tok", {}, [])
     assert "which one it replaces" in posted.posts[-1][1]

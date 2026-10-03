@@ -19,7 +19,7 @@ import sys
 
 import pytest
 from conftest import REPO_ROOT as REPO
-from conftest import code_of, portal_code
+from conftest import code_of, portal_code, script_code
 
 
 def load(name, filename, tmp_path, monkeypatch):
@@ -164,7 +164,7 @@ def test_delivery_does_not_consult_the_identity_lookup(portal):
 def test_the_bot_dms_the_id_on_the_record(portal):
     """The approvals bot resolves identities to Discord ids. For an invite
     there is no identity to resolve, so the id rides on the record."""
-    body = code_of("cli/agentbox-approvals")
+    body = script_code("agentbox-approvals")
     assert 'action == "deliver_invite"' in body
     assert 'record.get("discord_user_id"' in body
     # And the identity map is still what the sign-in path uses.
