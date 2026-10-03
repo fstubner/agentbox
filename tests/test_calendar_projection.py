@@ -1,4 +1,4 @@
-"""Tests for calendar event projection (docs/context-economy.md §1).
+"""Tests for calendar event projection.
 
 calendar/events is the largest payload in the platform — 23 KB for ten events,
 ~28x the full vikunja task list. These guard the properties the saving depends

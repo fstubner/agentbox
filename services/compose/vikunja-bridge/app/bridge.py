@@ -74,7 +74,7 @@ def first(query, key, default):
     return value[0] if value else default
 
 
-# --- projection pushdown (docs/context-economy.md §1) ------------------------
+# --- projection pushdown ------------------------------------------------------
 #
 # A lean view emits only the fields a task-picking agent acts on, so the excess
 # is never generated rather than compressed after the fact. `full` stays the

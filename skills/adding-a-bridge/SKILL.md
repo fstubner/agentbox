@@ -43,8 +43,8 @@ empty token because auth was hand-rolled.
      Do not add the upstream to `/health` — see below.
    - Consider a `view` parameter on list endpoints that return many objects.
      Emitting only the fields the agent acts on is the cheapest context saving
-     available, because the tokens are never generated. See
-     `docs/context-economy.md` and `vikunja-bridge` for the pattern.
+     available, because the tokens are never generated. See `vikunja-bridge`
+     for the pattern.
 
    Four surface rules, all learned from getting them wrong here:
 

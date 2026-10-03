@@ -91,8 +91,7 @@ Payload sizes across both bridges, measured against real accounts:
 7,000 tokens, for ten events. That is 28× the full vikunja task list, and it
 lands in context every time the assistant looks at a schedule.
 
-The v1 proposal in `docs/context-economy.md` picked `vikunja/v1/tasks` as the
-first projection target. On measured traffic that is the *second smallest*
+I first picked `vikunja/v1/tasks` as the projection target. On measured traffic that is the *second smallest*
 payload in the system. `calendar/events` is where projection actually pays.
 
 Field breakdown of one event (19 fields, 924 B):

@@ -1,6 +1,6 @@
-"""Tests for vikunja-bridge projection pushdown (docs/context-economy.md §1).
+"""Tests for vikunja-bridge projection pushdown.
 
-These guard the two properties the context-economy v1 measurement depends on:
+These guard the two properties the projection measurement depends on:
 the lean view must never invent or alter data, and `full` must stay the default
 so enabling the parameter cannot silently change live gateway behaviour.
 """

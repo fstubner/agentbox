@@ -69,7 +69,7 @@ LOG_MAX_BYTES = int(os.environ.get("BRIDGE_LOG_MAX_BYTES", str(32 << 20)))
 # Allowlist, not a denylist: anything not named here is never logged.
 LOGGED_QUERY_PARAMS = ("view", "page", "per_page", "expand")
 
-# --- projection pushdown (docs/context-economy.md §1) ------------------------
+# --- projection pushdown ------------------------------------------------------
 #
 # Shared so every bridge narrows results the same way. Named views rather than
 # a caller-supplied field list: the agent spends one token and needs no schema
