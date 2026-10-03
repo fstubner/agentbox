@@ -11,10 +11,17 @@
 > Every claim here points at a file in this repository or at a decision
 > recorded in it. Nothing was invented to fill a heading.
 >
-> Written largely by the AI assistant that built much of the system it
-> describes, with the household answering the questions only they could. That
-> is why the status markers are measurements to re-check rather than a standing
-> guarantee, and why scope decisions are dated where they were taken.
+> **The architecture and the design decisions here are the author's; the
+> implementation was carried out by AI agents working to them.** That split is
+> deliberate, and much of this repository exists to make it safe to work that
+> way: capabilities that are absent rather than gated, identity bound to a
+> session instead of to a tool argument, invariants enforced by tests that
+> catch their own author, an independent acceptance pass, and a clean-room
+> install check that follows the README on a machine which has never seen it.
+>
+> It is also why the status markers matter. A system built this way needs its
+> claims re-measured rather than trusted, so the uncomfortable lines below are
+> left in and dated where the decision was taken.
 
 ## Purpose
 
