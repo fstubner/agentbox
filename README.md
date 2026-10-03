@@ -10,11 +10,11 @@ Two people share it, with a shared household plane (joint tasks, shopping, share
 
 A single-operator deployment is fully supported without configuring multiple identities.
 
-The second badge is the one worth clicking. It follows this README's quickstart,
-step by step, on a machine that has never seen this repository — installs the
-prerequisites, runs setup, validates, and deploys a service with no secrets
-configured. It passes or the badge goes red, so the instructions below are
-checked rather than asserted.
+The second badge is worth clicking. It runs the quickstart below on a fresh
+machine that has never seen this repository. It installs the prerequisites,
+runs setup, validates, and deploys a service with no secrets configured. If any
+step breaks, the badge goes red. The instructions are checked on every change
+rather than just written down.
 
 ---
 

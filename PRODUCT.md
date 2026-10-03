@@ -1,27 +1,26 @@
 # Agentbox
 
-> **This is the product contract, and every line under Success carries its
-> real status.** *Met* means verified against a running system. *Partial*
-> means true for some of the people it names and not others. *Not yet* means
-> the mechanism exists and nothing has used it in anger.
+> **I designed this system. AI agents wrote most of the implementation,
+> working to my architecture and my decisions.**
 >
-> Those markers are the point, not an apology. A product document whose claims
-> cannot be checked is worth less than one that says plainly which of them are
-> still unproven — so the uncomfortable lines are left in, dated, and cited.
-> Every claim here points at a file in this repository or at a decision
-> recorded in it. Nothing was invented to fill a heading.
+> That is why so much of this repository is scaffolding rather than features.
+> Capabilities are absent instead of gated. Identity is bound to a session and
+> never to a tool argument. Tests hold the invariants and have caught me
+> breaking them. An acceptance pass runs in a separate session so the builder
+> never signs off its own work, and a clean-room check follows the README on a
+> machine that has never seen it. None of that would be interesting on a
+> codebase one person typed by hand. It is what makes it reasonable to point
+> agents at a system holding real credentials.
 >
-> **The architecture and the design decisions here are the author's; the
-> implementation was carried out by AI agents working to them.** That split is
-> deliberate, and much of this repository exists to make it safe to work that
-> way: capabilities that are absent rather than gated, identity bound to a
-> session instead of to a tool argument, invariants enforced by tests that
-> catch their own author, an independent acceptance pass, and a clean-room
-> install check that follows the README on a machine which has never seen it.
+> **Every line under Success carries its real status.** *Met* means I verified
+> it against a running system. *Partial* means it works for some of the people
+> it names and not others. *Not yet* means the mechanism exists and nothing
+> has used it in anger.
 >
-> It is also why the status markers matter. A system built this way needs its
-> claims re-measured rather than trusted, so the uncomfortable lines below are
-> left in and dated where the decision was taken.
+> I would rather the document be checkable than flattering. So the
+> unflattering lines stay in, they carry the date I took the decision, and
+> every claim points at a file in this repository or at a decision recorded
+> in it. Nothing here was invented to fill a heading.
 
 ## Purpose
 
