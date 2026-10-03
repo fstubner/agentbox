@@ -108,8 +108,8 @@ Status last checked 2026-08-19.
 
 ## Constraints
 
-- **One machine with 16 GB of unified memory.** A benchmark and the production
-  model cannot both be loaded, so evaluations stop the stack.
+- **One machine.** Everything, including the model, runs on the household's
+  own box.
 - **The assistant never holds an upstream credential.** OAuth tokens live in
   bridge containers, and secret references resolve at deploy time.
 - **Tools, not a shell.** MCP tools with explicit contracts and no terminal
