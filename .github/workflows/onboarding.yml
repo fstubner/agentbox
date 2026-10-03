@@ -1,0 +1,105 @@
+# Can somebody who has never seen this repository get it running?
+#
+# Nothing else answers that. The test suite runs against a checkout that is
+# already configured, and `doctor` only ever reported on a box that had been
+# set up by hand over months. This follows README.md's quickstart literally,
+# in order, on a machine that has never heard of Agentbox — so a step that
+# only works because of something undocumented sitting in somebody's home
+# directory fails here instead of failing for an adopter.
+#
+# Each documented step is its own job step on purpose: the log then says which
+# instruction broke rather than that the job broke.
+
+name: clean-room onboarding
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - README.md
+      - cli/agentbox
+      - cli/agentbox_setup.py
+      - services/compose/**
+      - .github/workflows/onboarding.yml
+  schedule:
+    # Weekly. Adoption rots quietly — a prerequisite that stops being
+    # installed by default on the runner image is exactly the kind of thing
+    # nobody notices until somebody tries.
+    - cron: "17 6 * * 1"
+
+jobs:
+  onboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "README step 1 — prerequisites, exactly as listed"
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          python3 --version
+          git --version
+          docker --version
+          docker compose version
+
+      - name: "README step 2 — ./cli/agentbox setup"
+        run: ./cli/agentbox setup
+
+      - name: "Did setup produce what it promised?"
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            if [ -e "$1" ]; then echo "ok    $1"; else echo "MISSING $1"; fail=1; fi
+          }
+          check "$HOME/.config/agentbox"
+          check "$HOME/.local/state/agentbox/logs"
+          check "$HOME/.local/state/agentbox/portal"
+          check "$HOME/.local/state/agentbox/invites"
+          check cli/agentbox-sandbox
+          # Mode matters: the README claims 0700, and a world-readable config
+          # directory on a shared host is a different product.
+          mode=$(stat -c '%a' "$HOME/.config/agentbox")
+          echo "mode of ~/.config/agentbox = $mode"
+          [ "$mode" = "700" ] || { echo "expected 700"; fail=1; }
+          exit $fail
+
+      - name: "README step 4 — ./cli/agentbox validate"
+        run: ./cli/agentbox validate
+
+      - name: "README step 4 — ./cli/agentbox doctor on a bare machine"
+        run: |
+          set -uo pipefail
+          # Expected to report problems: nothing is deployed yet. What must NOT
+          # happen is a crash — an adopter's first diagnostic should tell them
+          # what is wrong, not hand them a traceback.
+          ./cli/agentbox doctor > doctor.log 2>&1 || true
+          tail -40 doctor.log
+          if grep -q "Traceback (most recent call last)" doctor.log; then
+            echo "::error::doctor crashed on a clean machine"
+            exit 1
+          fi
+          echo "doctor completed without crashing"
+
+      - name: "README step 5 — deploy one service with no secrets configured"
+        run: |
+          set -uo pipefail
+          # memory-bridge is the right probe: it builds from this repo rather
+          # than pulling a third-party image, and its token is optional and
+          # fails closed, so it should come up unconfigured.
+          ./cli/agentbox deploy memory-bridge > deploy.log 2>&1
+          code=$?
+          tail -40 deploy.log
+          exit $code
+
+      - name: "Is it actually running, or did deploy just say so?"
+        run: |
+          set -euo pipefail
+          docker ps --format '{{.Names}}\t{{.Status}}'
+          docker ps --format '{{.Names}}' | grep -q memory-bridge
+          echo "memory-bridge is up"
+
+      - name: "Teardown"
+        if: always()
+        run: docker ps -aq | xargs -r docker rm -f
