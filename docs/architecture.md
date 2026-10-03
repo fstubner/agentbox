@@ -214,12 +214,11 @@ approvals go through `cli/agentbox-approvals` in Discord instead.
   model first and escalate only when its answer fails validation, with the
   escalation gated by the approval policy.
 
-## Reference deployment
+## The model
 
-An AMD Strix Halo machine (Ryzen AI Max+ 395, Radeon 8060S, unified memory)
-running Ubuntu Server, with llama.cpp on Vulkan serving a 35B model at up to
-200K context. Any machine that can serve an OpenAI-compatible endpoint will
-work, and the CLI needs nothing beyond the Python standard library.
+The gateway talks to any OpenAI-compatible endpoint, set as `model.base_url` in
+its config, and `doctor` checks the same address through `AGENTBOX_MAIN_BASE`.
+The CLI needs nothing beyond the Python standard library.
 
 ## Identity
 
