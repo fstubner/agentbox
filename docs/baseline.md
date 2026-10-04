@@ -1,7 +1,6 @@
 # Platform baseline
 
-A reference for what a healthy deployment looks like, so "is it working?" can
-be answered by comparing against it.
+What a healthy deployment looks like.
 
 ```
 cli/agentbox doctor      # every check below, plus freshness and readiness
@@ -23,8 +22,8 @@ records the numbers a probe cannot express.
 | Gateways | `hermes-gateway-agentbox`, `hermes-assistant-gateway` | not probed |
 
 `fail` is for what the assistant needs to answer a request. That is the model
-and the tool chain behind it. Everything else warns. People stop reading a
-check that is red during normal operation, so nothing optional can fail.
+and the tool chain behind it. Everything else warns, so a normal day has no
+failing checks.
 
 Bridges publish no host ports, so they cannot be probed from the host. Instead
 agentbox-mcp's `/ready` asks every bridge over the container networks and names

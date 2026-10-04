@@ -45,7 +45,7 @@ TOOLS = [
                     "have proposed remembering and see which accounts you can "
                     "reach. The link is for them. There is no way to request "
                     "one for somebody else. It expires quickly, works once, "
-                    "and is deliberately limited: it can read, but it cannot "
+                    "and is limited: it can read, but it cannot "
                     "approve a memory or change any account, because you can "
                     "see any link you send. Tell them that last part; landing "
                     "on a page where the buttons refuse is otherwise "

@@ -1,9 +1,8 @@
 """The rules grammar.
 
 The grammar gives up expressiveness so that a rule which passes validation
-cannot fail at fire time for a reason somebody has to debug at 3am. These test
-that everything wrong is caught at authoring time, and that evaluation is
-total.
+cannot fail later while it runs unattended. These test that everything wrong
+is caught at authoring time, and that evaluation is total.
 """
 from __future__ import annotations
 

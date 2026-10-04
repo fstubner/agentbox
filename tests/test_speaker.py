@@ -44,8 +44,8 @@ def at(hour, minute=0):
 
 
 def test_window_crossing_midnight_is_handled(spk):
-    """A plain `start <= now <= end` check makes 22:00-07:00 quiet for no
-    minutes of the day, and nobody would notice until 3am."""
+    """A plain `start <= now <= end` check never matches a window that
+    crosses midnight, such as 22:00-07:00."""
     assert spk.in_quiet_hours(at(23)) is True
     assert spk.in_quiet_hours(at(3)) is True
     assert spk.in_quiet_hours(at(22)) is True
@@ -78,8 +78,8 @@ def test_malformed_window_does_not_silently_block_everything(monkeypatch):
 
 
 def test_quiet_hours_refuse_rather_than_queue(spk, monkeypatch):
-    """A message deferred to 7am would play yesterday's reminder to someone
-    making coffee."""
+    """A message deferred until quiet hours end would play an old reminder in
+    the morning."""
     monkeypatch.setattr(spk, "in_quiet_hours", lambda *a: True)
     spoken, detail = spk.say("the bins go out")
     assert spoken is False

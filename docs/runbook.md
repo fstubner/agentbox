@@ -38,8 +38,7 @@ It is safe to run against live accounts.
 - **Google** holds real data, so it only reads. Nothing is drafted, labelled or
   archived.
 - **Memory** proposals are inert, so it proposes one and rejects it as the
-  operator. That also exercises the half of the review gate the assistant
-  cannot reach.
+  operator. This also tests the operator side of the review gate.
 - The **policy gate** check passes when the call is refused. A success there
   means the gate is broken.
 
@@ -63,15 +62,15 @@ healthy, and `doctor` stays green while nothing works.
 
 Bridges publish no host ports, except the memory bridge's review port, so they
 cannot be probed from the host. This keeps their tokens unusable outside the
-container network. Ask agentbox-mcp instead, which probes them all
-over the container networks.
+container network. Ask agentbox-mcp instead, which probes them all over the
+container networks.
 
 ```
 curl -s localhost:3465/health   # tool and integration counts
 curl -s localhost:3465/ready    # names each bridge and its state
 ```
 
-`/ready` is not ready if any bridge is unreachable, and it says which one.
+`/ready` reports not ready if any bridge is unreachable, and names it.
 
 ### Request logs
 
@@ -204,8 +203,8 @@ GOOGLE_BRIDGE_TOKEN_SAM=...
 
 Without these, calls go to the shared bridge. That is right for shared
 services like tasks and wrong for personal mail. `identity list` shows which
-services each person reaches through their own bridge, because that is easy to
-get wrong without noticing.
+services each person reaches through their own bridge, because a missing entry
+is not visible anywhere else.
 
 Grants can be scoped to one person with `agentbox grant <tool> --for alex`. An
 unscoped grant covers anyone.
@@ -241,7 +240,7 @@ the person called themselves. You are approving the account. The display name
 is whatever they typed.
 
 **The link is a credential.** It allows creating an identity on this box,
-which is worth more than a bridge token. It is single use and expires after 48
+which is more access than a bridge token gives. It is single use and expires after 48
 hours, and a refusal never says whether the id or the secret was wrong. Send it
 to the person directly, not to a group chat.
 
@@ -312,8 +311,8 @@ There are two levels. There is no per-item sharing.
 | `<identity>` | only that person, and the default |
 | `household` | everyone |
 
-Memories are private by default. If memories were shared by default, a memory
-would be disclosed without anyone choosing to share it. Filtering happens
+Memories are private by default, so sharing one with the household is always
+an explicit choice. Filtering happens
 inside the memory bridge and not in agentbox-mcp. A confused caller therefore
 cannot leak another person's memories by asking the wrong way.
 
@@ -321,9 +320,8 @@ I rejected per-item sharing. "Sam can see this one thing of Alex's" makes
 "what can Sam see?" impossible to answer without reading every row.
 
 The assistant calls `whoami` to find out which person it is acting for and
-which scopes it can read. The tool is `allowed`, because an assistant that is
-unsure who it is serving makes cross-account mistakes, and `whoami` prevents
-them. Memories from before scopes existed have no scope and count as
+which scopes it can read. The tool is `allowed`, because knowing who it is
+serving prevents cross-account mistakes. Memories from before scopes existed have no scope and count as
 household.
 
 #### What a private scope protects
@@ -363,8 +361,8 @@ cli/agentbox-portal link sam --base-url http://127.0.0.1:8771
 ```
 
 There are two roles, `admin` and `member`, taken from `AGENTBOX_ADMINS`. The
-capability table is in the portal source. It is not a general
-role system, because a second policy vocabulary next to
+capability table is in the portal source. It is not a general role system,
+because a second policy vocabulary next to
 `approval-policy.yaml` would mean two systems that can disagree about who may
 do what. An empty `AGENTBOX_ADMINS` makes nobody an admin, so a misread env
 file fails safe.
@@ -515,13 +513,12 @@ cli/agentbox identity disconnect sam
 
 This revokes the credential at Google before removing the local copy. Deleting
 only the local copy leaves the grant listed in their Google account, and anyone
-who copied the token could still use it. If
-revocation cannot be confirmed, the command says so and tells you to check the
+who copied the token could still use it. If revocation cannot be confirmed, the command says so and tells you to check the
 account's connected apps by hand.
 
 `doctor` checks each person's Google credential and warns when one looks
 revoked. A revoked credential does not make the container unhealthy. Without
-this check the first sign is an unexplained 403 days later.
+this check, the first sign is a 403 from Google, possibly days later.
 
 ## Approvals and grants
 
@@ -532,16 +529,16 @@ refused until the operator issues a grant. A tool with no mapping is
 `approval_required`, so a tool added without one fails closed.
 
 ```
-cli/agentbox grant archive_gmail --ttl 15m   # single use by default
+cli/agentbox grant set_home_climate --ttl 15m   # single use by default
 cli/agentbox grants list
-cli/agentbox grants revoke archive_gmail
+cli/agentbox grants revoke set_home_climate
 ```
 
 Add `--repeatable` for a grant that can be used until it expires.
 
 ### Approving from Discord
 
-A refused call is recorded, so you are told about it.
+Each refused call is recorded as an approval request.
 
 ```
 cli/agentbox approvals list      # what the assistant is waiting on
@@ -564,8 +561,7 @@ convincing request for its own approval. So the process ignores every message
 written by a bot and every user not on the list, and it never writes grants
 itself. It calls `agentbox grant`, which the assistant cannot run.
 
-Two directories back this. The security property depends on the split between
-them.
+Grants use two directories, one read-only and one writable.
 
 - `~/.local/state/agentbox/policy` is mounted read-only at `/policy` and holds
   the grants. The assistant's side must never be able to give itself
@@ -609,8 +605,8 @@ and still cannot approve its own memory, even if an injected instruction makes
 it type the words.
 
 A grant names a tool and is not private. A memory proposal can be private to
-one person. Household proposals go to the channel. Private ones go
-only to that person's DM, which needs their Discord account paired. Without a
+one person. Household proposals go to the channel. Private ones go only to
+that person's DM, which needs their Discord account paired. Without a
 pairing a private proposal is not posted anywhere and stays in the portal.
 
 ### When a fact changes
@@ -635,8 +631,7 @@ from an old answer.
 `search_memories` returns the current version of each fact, with the versions
 it replaced nested under it as `previously`, each with the date it stopped
 being true. Nesting adds a sentence and a date per old version and makes clear
-which one is current. It keeps at most
-`MEMORY_MAX_PRIOR_VERSIONS` (default 3), so a fact revised fifty times does not
+which one is current. It keeps at most `MEMORY_MAX_PRIOR_VERSIONS` (default 3), so a fact revised fifty times does not
 add fifty lines to every search.
 
 From Discord:
@@ -655,8 +650,8 @@ Choosing which memories to delete changes what the assistant remembers as much
 as writing them does.
 
 Adding a memory that looks like it replaces an existing one prints a
-suggestion instead of acting on it. A wrong automatic replacement hides a true
-memory behind a false one without saying so.
+suggestion instead of acting on it. An automatic replacement could hide a true
+memory behind a false one.
 
 ## Self-reflection
 
@@ -667,9 +662,9 @@ reject.
 It reads a rolling seven-day window, so it sees mostly the same activity each
 day. The skill has it check `search_memories` and `list_memory_proposals`
 before looking at the evidence, and most days end with no proposal. A queue
-filling up with near-identical lessons means that step is being skipped. Watch
-for it. If nobody reads the review queue, the assistant has no route to lasting
-memory.
+filling up with near-identical lessons means that step is being skipped. The
+review queue is the assistant's only route to lasting memory, so it needs to
+be read.
 
 ```
 cli/agentbox memory list          # proposals waiting for review
@@ -759,15 +754,15 @@ cli/agentbox proposals show <name>
 cli/agentbox proposals merge <name>     # checks it out on review/<name>
 ```
 
-`merge` puts the work on a `review/` branch, not on main. Merging straight to
-main would make approval one keystroke on an unread diff. Test it, run
+`merge` puts the work on a `review/` branch, not on main, so nothing reaches
+main without a review. Test it, run
 `validate` and the tests, then merge to main yourself.
 
 Some paths are refused whatever the proposal says it is for. These are
 `policies/`, both policy gates, `cli/`, `.github/`, and the builder's own
 source. This is a path check, because a policy tier cannot express "may edit
-any file except the ones that govern it". `cli/agentbox smoke`
-checks the refusals on every run.
+any file except the ones that govern it". `cli/agentbox smoke` checks the
+refusals on every run.
 
 ### First-time setup
 
@@ -836,14 +831,14 @@ them.
 
 Presence needs no setup. Reading `binary_sensor.*` is an ordinary read, so once
 Home Assistant has occupancy sensors the assistant can tell which room someone
-is in and answer there. This is preferred over a camera for "know where I am".
-There is no video, nobody else's privacy is involved, and there is no content
-that could carry an injected instruction.
+is in and answer there. This is preferred over a camera for locating someone.
+It involves no video, no other person's privacy, and no content that could
+carry an injected instruction.
 
 ### Cameras
 
 `look_at_camera` is retired along with the local vision model, and its code
-is kept in `RETIRED_TOOLS`. The design is recorded here. Cameras were opt-in
+is kept in `RETIRED_TOOLS`. When it was active, cameras were opt-in
 one at a time through `HA_VIEWABLE_CAMERAS`, separately from control, and both
 ends were fixed vocabularies.
 

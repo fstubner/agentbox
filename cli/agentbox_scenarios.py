@@ -1,8 +1,8 @@
 """Household scenarios: how many everyday requests the assistant can answer.
 
 `smoke` checks the plumbing: every seam, refusal and guardrail. It passes on a
-house with no devices and no Drive consent, because the seams are still
-intact. This module asks the ten things a person would ask and counts how many
+house with no devices and no Drive consent, because nothing in the plumbing
+is broken. This module asks the ten things a person would ask and counts how many
 the assistant can answer today.
 
 An empty allowlist or a Drive 403 is not a bug in the plumbing. It means the

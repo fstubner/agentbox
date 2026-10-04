@@ -2,7 +2,7 @@ services:
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable
     container_name: homeassistant
-    # --- LAN EXPOSURE, DELIBERATE ---------------------------------------
+    # LAN exposure.
     #
     # Host networking. This is the one service here that is not confined to
     # localhost. It is required. Device discovery uses mDNS and SSDP, which are
@@ -23,7 +23,7 @@ services:
     volumes:
       - "${AGENTBOX_HA_CONFIG:-${HOME}/.local/state/agentbox/homeassistant}:/config"
       - /etc/localtime:/etc/localtime:ro
-      # --- BLUETOOTH, DELIBERATE -------------------------------------------
+      # Bluetooth.
       #
       # Home Assistant talks to Bluetooth through BlueZ, and BlueZ is reached
       # over the system D-Bus. Without this socket the integration can see the

@@ -142,7 +142,7 @@ def validate() -> int:
                 detail = (proc.stderr or proc.stdout).strip().splitlines()
                 report(WARN, f"docker could not parse {compose.relative_to(REPO)}"
                              + (f": {detail[0][:120]}" if detail else "")
-                             + ", deploy will refuse it if it is genuinely broken")
+                             + ", deploy will refuse it if it is broken")
     else:
         report(WARN, "docker not found; skipped compose config validation")
 
@@ -208,7 +208,7 @@ def validate() -> int:
                   f"budget. Biggest: "
                   + ", ".join(f"{n} ~{c}" for n, c in worst)
                   + ". Trim a description, or raise "
-                  "AGENTBOX_TOOL_SCHEMA_BUDGET deliberately.")
+                  "AGENTBOX_TOOL_SCHEMA_BUDGET in a reviewed change.")
         else:
             report(OK, f"tool schemas ~{tokens:,} tokens/turn across {count} "
                        f"tools (budget {TOOL_SCHEMA_TOKEN_BUDGET:,})")
@@ -224,7 +224,7 @@ def validate() -> int:
                           + ", ".join(f"{f} ({was} -> {n})"
                                       for f, was, n in grown))
         error("; ".join(detail) + ". Split it, or raise its recorded ceiling "
-              "in LARGE_FILES deliberately.")
+              "in LARGE_FILES in a reviewed change.")
     else:
         report(OK, f"no source file over {LARGE_FILE_LIMIT} lines except the "
                    f"{len(LARGE_FILES)} already recorded")

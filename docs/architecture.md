@@ -52,8 +52,8 @@ gateway user. The operator changes them with `sudo`.
 
 This is enforced by file ownership rather than by a command allowlist. An
 allowlist lives in the gateway's config, and a process that can write its own
-config can rewrite its own allowlist. The rule throughout the system is to
-keep a constraint out of reach of the thing it constrains.
+config can rewrite its own allowlist. Across the system, each constraint is
+kept where the process it limits cannot change it.
 
 Running the terminal inside Docker would not help. It needs the Docker socket,
 and access to the socket is equivalent to root. `docker inspect` reads every
@@ -72,15 +72,15 @@ The bridges are reachable at their container addresses from the host, but an
 unauthenticated request gets a 401, and the token it would need is protected
 by both of those.
 
-Either one is a single command away from being undone, and neither failure
-would produce an error. So `cli/agentbox doctor` checks both on every run, by
-asking as the gateway user, along with the read-only config, skills and
-source.
+Either one can be undone with a single command, and neither failure produces
+an error. `cli/agentbox doctor` checks both on every run by testing access as
+the gateway user. It also checks that the config, skills and source are
+read-only.
 
 ## Trust boundaries
 
-Anything a tool returns is untrusted. An email body is the obvious case, but
-the same goes for calendar entries, documents and web pages. FastContext-4B,
+Anything a tool returns is untrusted. That includes email bodies, calendar
+entries, documents and web pages. FastContext-4B,
 a small local model I evaluated, obeyed an instruction embedded in tool data in
 10 out of 10 attempts. I assume any model will do the same.
 
@@ -88,13 +88,14 @@ So the system limits what an injected instruction can do, instead of relying
 on the model to refuse.
 
 - Calendar events refuse attendees and are created with `sendUpdates=none`, so
-  nothing can make the assistant email anyone.
+  an event cannot email anyone.
 - The house has no general `call_service` tool. Locks, alarms and covers are
-  refused inside the bridge that holds the Home Assistant token, so "unlock
-  the front door" has nothing to call.
+  refused inside the bridge that holds the Home Assistant token, so no tool
+  can unlock a door.
 - Gmail labels can only be applied under the `agentbox/` namespace.
-- Saving a memory needs an operator token the assistant does not have, so
-  "remember that..." lands in a review queue and stops there.
+- Saving a memory needs an operator token the assistant does not have. A
+  memory the assistant proposes waits in a review queue until a person
+  approves it.
 - No tool sends mail or deletes anything.
 
 A constraint still holds when the model is compromised. An approval only helps
@@ -157,10 +158,10 @@ mail.
 
 Bridges publish no host ports, except the memory bridge's review port for the
 operator. They are reachable only on the compose networks the tool server
-joins, so a stolen bridge token cannot be used from the host.
-Using one needs code running inside the tool server's container, which has no
-dependencies outside the standard library, a read-only filesystem, no root,
-no new privileges and every capability dropped. `validate` fails any bridge
+joins, so a stolen bridge token cannot be used from the host. Using one needs
+code running inside the tool server's container. That container has no
+dependencies outside the standard library, a read-only filesystem, no root, no
+new privileges and every capability dropped. `validate` fails any bridge
 that publishes a port without declaring the operator exception.
 
 A tool marked `approval_required` needs a grant from `cli/agentbox grant`,
@@ -198,9 +199,9 @@ approvals go through `cli/agentbox-approvals` in Discord instead.
 
 - **Builder.** The assistant can read this repository and propose changes as
   git branches through `builder-bridge`. It cannot deploy or merge, because
-  `merge_own_pr` is `always_denied`. The builder can write the source of the
-  system that constrains it, so the policy, both gates, the operator CLI and
-  CI are refused by path. It never pushes. Proposals stay in its clone, and
+  `merge_own_pr` is `always_denied`. Changes to the policy, both gates, the
+  operator CLI and CI are refused by path, so it cannot edit the code that
+  constrains it. It never pushes. Proposals stay in its clone, and
   this repository is mounted into it read-only. `cli/agentbox scaffold <name>`
   generates a new bridge for the operator.
 - **Memory review.** The assistant proposes memories and an operator approves

@@ -1,72 +1,44 @@
 # Vikunja
 
-Private task and lightweight project-management service.
-
-## Why This Exists
-
-Vikunja gives the assistant a practical place to manage tasks, projects, boards, due dates, and household/admin planning without inventing a custom task database first.
+The task and project service the assistant uses for tasks, lists and due
+dates.
 
 ## Runtime
 
 - Image: `vikunja/vikunja`
-- Database: SQLite, stored in `${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/db`
-- Uploads/files: `${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/files`
-- Default port: `3456`
-- Default bind: `127.0.0.1`
+- Database: SQLite in `${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/db`
+- Files: `${AGENT_CONTROL_PLANE_STATE_DIR}/vikunja/files`
+- Port: `3456`, bound to `127.0.0.1` by default
 
-For LAN access on the AMD box, set:
+`cli/agentbox deploy` sets `AGENT_CONTROL_PLANE_STATE_DIR` to
+`~/.local/state/agentbox`.
+
+For LAN access, set these in `~/.config/agentbox/vikunja.env`:
 
 ```bash
-LAN_BIND_IP=192.168.x.x
+LAN_BIND_IP=<the box's LAN address>
 VIKUNJA_SERVICE_PUBLICURL=http://agentbox.local:3456/
 ```
 
-Set these in the host-private file:
-
-```text
-~/.config/agentbox/vikunja.env
-```
-
-Do not commit that file.
-
-The deploy script defaults `AGENT_CONTROL_PLANE_STATE_DIR` to:
-
-```text
-~/.local/state/agentbox
-```
-
-## Required Secret
-
-Generate a service secret on the AMD box:
+## Secret
 
 ```bash
 openssl rand -hex 32
 ```
 
-Then add it to `~/.config/agentbox/vikunja.env`:
+Add it to `~/.config/agentbox/vikunja.env` as `VIKUNJA_SERVICE_SECRET`.
 
-```bash
-VIKUNJA_SERVICE_SECRET=<generated value>
-```
+## First login
 
-## First Login
-
-Leave registration enabled for first setup. After creating the intended user, set:
-
-```bash
-VIKUNJA_SERVICE_ENABLEREGISTRATION=false
-```
-
-Then redeploy.
+Leave registration enabled to create the first user, then set
+`VIKUNJA_SERVICE_ENABLEREGISTRATION=false` and redeploy. Later accounts are
+created by `agentbox invite complete`.
 
 ## Backup
 
-Back up:
-
-- `~/.local/state/agentbox/vikunja/db`
-- `~/.local/state/agentbox/vikunja/files`
+`cli/agentbox backup` includes the database and the files directory.
 
 ## Sources
 
-- Official install docs: https://vikunja.io/docs/installing/
-- Official Docker examples: https://vikunja.io/docs/full-docker-example/
+- Install docs: https://vikunja.io/docs/installing/
+- Docker example: https://vikunja.io/docs/full-docker-example/

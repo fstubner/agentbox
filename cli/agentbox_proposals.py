@@ -86,8 +86,7 @@ def proposals_merge(name: str) -> int:
     """Merge a proposal onto a local branch, never straight onto main.
 
     The assistant cannot merge. The work lands on a branch for you to test and
-    push. Merging straight to main would make approval one keystroke on an
-    unread diff.
+    push, so nothing reaches main without a review.
     """
     if not proposals_fetch():
         return 1

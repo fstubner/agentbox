@@ -1,7 +1,7 @@
 """Tests for invite-based onboarding.
 
 An invite link authorises creating an identity on someone's home server, which
-is worth more than a bridge token. So most tests check that it is refused when
+is more access than a bridge token gives. So most tests check that it is refused when
 expired, used, wrong or unknown, and that the collecting page has no authority
 of its own.
 """

@@ -3,7 +3,7 @@
 A **bridge** is a small HTTP service that holds a credential (an upstream API
 token, an OAuth refresh token, …) and exposes a narrow, allowlisted API. The
 assistant authenticates to the bridge with a *bridge token* and never sees the
-upstream credential. This is the credential-isolation boundary of the platform.
+upstream credential.
 
 Copy this directory to `services/compose/<your-bridge>/` and edit only the
 marked parts. See `skills/adding-a-bridge/SKILL.md` for the full walkthrough.
@@ -18,7 +18,7 @@ marked parts. See `skills/adding-a-bridge/SKILL.md` for the full walkthrough.
 | Auth | `bridge_base` | Fail-closed: unset bridge token ⇒ 503; wrong token ⇒ 401; constant-time compare. |
 | Errors | `bridge_base` | `BridgeError(status, msg)` for expected failures; anything else ⇒ JSON 500, never a traceback. |
 | Health | `bridge_base` | `GET /health` is unauthenticated. |
-| Network | `compose.yaml` | Bind to `127.0.0.1` on the host (or an explicit LAN IP); never `0.0.0.0` on the host side. |
+| Network | `compose.yaml` | No host port once agentbox-mcp has an integration for it. During review it may publish on `127.0.0.1`, never `0.0.0.0`. |
 | Container | `Dockerfile` | Non-root (`USER 65532`), `read_only`, `cap_drop: ALL`, `no-new-privileges`. |
 
 ## Route handler shape
@@ -46,6 +46,8 @@ cli/agentbox deploy <your-bridge>
 ```
 
 ## Verify
+
+While the review port is published:
 
 ```
 curl -s localhost:<port>/health                       # 200, no auth

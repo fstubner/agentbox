@@ -1,6 +1,6 @@
 # Secrets Policy
 
-Hermes should use capabilities, not raw credentials.
+Hermes receives capabilities through bridges and never holds raw credentials.
 
 ## Rules
 
@@ -34,6 +34,6 @@ Use names like:
 - `gmail_readonly`
 - `calendar_household_write`
 - `discord_bot_sender`
-- `qwen_local_endpoint`
+- `local_model_endpoint`
 
 Do not reveal the underlying token values.

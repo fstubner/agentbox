@@ -270,7 +270,7 @@ def cmd_serve(args) -> int:
     InviteHandler.owner = args.owner
     if not PUBLIC_ORIGIN:
         print("note: AGENTBOX_INVITE_ORIGIN is unset, so the Google step is "
-              "skipped.\n      Set it to the URL they will actually open "
+              "skipped.\n      Set it to the URL they will open "
               "(e.g. http://127.0.0.1:8770 \u2014 Google refuses .local)\n      and register "
               "<that>/google/callback as a redirect URI on the OAuth client.",
               file=sys.stderr)

@@ -325,8 +325,8 @@ def test_a_removed_container_is_not_mistaken_for_a_choice(status, monkeypatch):
 
 def test_one_definition_of_where_a_link_can_go(portal):
     """has_delivery_channel and deliver_link share one definition of the
-    delivery conditions. Two copies could disagree, which would reopen
-    finding B1."""
+    delivery conditions. Two copies could disagree about whether a link can
+    be sent."""
     source = portal_code()
     assert "delivery_channels(identity, address)" in source
     body = source.split("def deliver_link")[1][:900]

@@ -28,7 +28,7 @@ Operator decisions are journalled too, including refusals. A journal that only
 remembered approvals would bias any conclusion drawn from it.
 
 Each tool's summary carries its tier. Without it, reflection can propose "do
-not retry `archive_gmail`", which is wrong because that tool is available with
+not retry `set_home_climate`", which is wrong because that tool is available with
 a grant. Reflection must not narrow what the assistant will attempt.
 
 **Left to do.** Reflection knows whether a call succeeded, not whether an
@@ -41,15 +41,15 @@ The assistant can write code, and a person decides whether it ships. This is
 
 Every proposal is a git branch with a commit by `agentbox-assistant`. Nothing
 it writes is untracked, and a proposal is reviewed with `git diff`. The
-assistant gets five tools to read the repository, run the
-checks, propose a change and list proposals. The operator gets
+assistant gets five tools to read the repository, run the checks, propose a
+change and list proposals. The operator gets
 `cli/agentbox proposals list|show|merge`.
 
-This is the most dangerous service in the system. Every other bridge holds a
-credential for an external API. This one can write the source of the system
-that constrains it. If it could propose an edit to `approval-policy.yaml`, one
-careless approval would give it full control. So the containment does not
-depend on the reviewer reading carefully.
+This service carries the most risk. Other bridges hold a credential for an
+external API. This one writes source code, which could include the code that
+constrains the assistant. If it could propose an edit to
+`approval-policy.yaml`, one careless approval would give it full control. So
+its containment does not rely on the reviewer.
 
 - **Protected paths are refused.** The policy, both gates, the operator CLI,
   CI and the builder's own source. Paths are normalised first, and one
@@ -107,9 +107,9 @@ the answer looks correct.
 
 The model is a shared household plane plus a private plane per person. Tasks,
 shopping and joint scheduling are shared. Mail, personal memory and calendar
-detail are private. I rejected running a separate stack per person, because a
-household assistant that cannot answer "when are we both free" loses most of
-its value and doubles what there is to run and patch.
+detail are private. I decided against a separate stack per person, because it
+could not answer "when are we both free" and it would double what there is to
+run and patch.
 
 Identity is bound to the session and is not passed per call. If the
 assistant chose which account to act as, an instruction in an email could
@@ -146,7 +146,7 @@ runs `agentbox invite drain` for the privileged part. The same steps work from
 a terminal (`docs/runbook.md`).
 
 The flow is split in two because a web page on the LAN that could run
-`docker compose` would be the most dangerous service on the box.
+`docker compose` could read every credential on the box.
 
 1. **The invite page** is unprivileged. It collects a display name and
    connector choices, runs Google's consent in the browser, and writes a spool
@@ -176,8 +176,8 @@ Only the operator creates identities.
 
 ### Cross-service rules
 
-I decide the grammar of what the assistant can do. I add expressiveness only
-where I am willing to verify it.
+Rules use a small grammar defined in this repository. A feature is added to
+the grammar only when it can be checked.
 
 I evaluated n8n. Its `NODES_INCLUDE` allowlist works and excludes
 `executeCommand` by default, so a locked-down instance on an internal network
@@ -190,8 +190,8 @@ upgrade. I use a small rules grammar that I own instead.
            do   <allowlisted calls to tools the assistant already has>
 
 It is not Turing-complete, so it can be checked statically. The model is only
-involved when a rule is written. Evaluation is plain code. Every
-`do` is an ordinary tool call, so policy gates, grants and the outcome journal
+involved when a rule is written. Evaluation is plain code. Every `do` is an
+ordinary tool call, so policy gates, grants and the outcome journal
 apply without new machinery, and daily reflection sees what rules did.
 
 `propose_rule` checks a rule completely when it is written and stores it
@@ -224,9 +224,9 @@ are live, so approving a mail rule reports that it cannot fire.
 
 The assistant's terminal toolset is off, and its config, skills and source are
 owned by root. An allowlist in `config.yaml` would not have been enough,
-because the assistant could write that file and edit its own allowlist. The
-same rule applies throughout the system. A constraint is kept out of reach of
-the component it constrains.
+because the assistant could write that file and edit its own allowlist. Across
+the system, each constraint is kept where the component it limits cannot
+change it.
 
 Running the terminal in Docker was rejected because it needs the Docker
 socket, which is equivalent to root. `doctor` checks the read-only tree and the
@@ -240,11 +240,10 @@ backend.
 ### End-to-end tests
 
 `tests/test_integration.py` tests the seams between components, not single
-units. Most bugs have been two components that each worked alone but
-disagreed. Fixtures on both sides of a seam pass while the seam is broken.
-The tests skip
-when the stack is not running, so CI stays green on a machine without
-containers.
+units. Two components can each pass their own tests and still disagree,
+because fixtures on both sides of a seam pass while the seam is broken. The
+tests skip when the stack is not running, so CI stays green on a machine
+without containers.
 
 ## Open
 
@@ -265,8 +264,8 @@ containers.
   first, which are which room heard the request and which tools a spoken
   request may use (`docs/voice.md`).
 - **Real traffic.** The request log holds only test calls, which blocks every
-  measurement that depends on real use. Nothing yet shows a week of real use
-  either.
+  measurement that depends on real use. There is no week of real usage data
+  yet.
 - **MRTR.** Blocked upstream. The gateway's MCP client stops at `2025-11-25`
   and has no elicitation support, so approvals run through
   `cli/agentbox-approvals` instead.

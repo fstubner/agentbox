@@ -217,7 +217,7 @@ def restore_check(archive_name: str = "", report: Callable[[str, str], None] | N
     _rep("OK", f"{archive.name} verified: extracts, parses, and holds state")
     print("\nTo restore for real: stop the services, replace the memory volume "
           "and the vikunja state dir from this archive, then redeploy.\n"
-          "See docs/runbook.md, and do it deliberately, not from this command.")
+          "See docs/runbook.md. This command does not restore.")
     return 0
 
 

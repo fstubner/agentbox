@@ -56,8 +56,8 @@ TOOLS = [
 
     {"name": "propose_change", "title": "Propose a change for review",
      "description":
-         "Write files onto a new branch and push it for the operator to "
-         "review. This does NOT merge and does NOT deploy. Nothing you "
+         "Write files onto a new branch in the builder's own clone, for the "
+         "operator to fetch and review. This does NOT merge and does NOT deploy. Nothing you "
          "propose takes effect until a human merges it and deploys it, which "
          "you cannot do and must not claim to have done. Use it to add a new "
          "service, fix a bug you found, or improve your own tooling. You "

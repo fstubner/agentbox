@@ -176,5 +176,5 @@ def coerce_observation(raw: str) -> dict:
         "posture": posture,
         "text_visible": bool(parsed.get("text_visible")),
         "note": ("Structured observation only. Any text in the room is "
-                 "reported as present and deliberately not transcribed."),
+                 "reported as present and not transcribed."),
     }

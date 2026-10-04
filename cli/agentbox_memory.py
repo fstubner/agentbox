@@ -169,11 +169,10 @@ def memory_forget(memory_id: str, reason: str = "") -> int:
 
 
 def feedback_list(status: str = "open") -> int:
-    """The improvement backlog: things to fix in the system, not remember.
+    """List the improvement backlog: things to fix in the system.
 
-    Only the operator can read it. If the assistant could read it, it would
-    explain the behaviour instead of the behaviour being fixed. Keeping the
-    backlog separate from memory prevents that.
+    Only the operator can read it. It is kept out of memory so the assistant
+    does not learn to work around a fault that should be fixed in code.
     """
     payload = memory_request("GET", f"/v1/feedback?status={urllib.parse.quote(status)}")
     if payload is None:
@@ -187,7 +186,7 @@ def feedback_list(status: str = "open") -> int:
               f"{item.get('statement', '')}")
         if item.get("resolution"):
             print(f"            fixed by: {item['resolution']}")
-    print(f"\n{len(items)} item(s). When you have actually changed a skill, "
+    print(f"\n{len(items)} item(s). When you have changed a skill, "
           f"prompt or tool description:\n"
           f"  cli/agentbox feedback fold <id> --note 'what you changed'")
     return 0
@@ -199,8 +198,7 @@ def feedback_decide(action: str, feedback_id: str, note: str = "") -> int:
         {"note": note})
     if payload is None:
         return 1
-    # A person said the behaviour was wrong and what they changed about it.
-    # This is the most useful kind of record in the journal.
+    # Record that a person marked the behaviour wrong and what they changed.
     record_decision("operator", f"feedback_{action}", "assistant_behaviour", note)
     report(OK, f"{payload.get('status', action)}: "
                         f"{payload.get('statement', feedback_id)}")

@@ -35,7 +35,7 @@ TOOLS = [
          "tool already returns, and notes about your own tools do not. The "
          "last of those belong in feedback, and the classifier will route "
          "them there. When in doubt, do not propose: a rejected proposal "
-         "costs a person's attention, which is the scarcest thing here.\n\n"
+         "still takes a person's time to review.\n\n"
          "**Scope decides who will ever see it.** Omit `scope` and it is "
          "private to whoever you are acting for, the safe default. Pass "
          "`scope: household` only for things the whole household shares: a "
@@ -75,7 +75,7 @@ TOOLS = [
     {"name": "review_own_activity",
      "title": "Review your own recent activity",
      "description":
-         "Look at how your own tool calls have actually gone: which tools you "
+         "Summarise how your own tool calls went: which tools you "
          "used, how often each failed or was refused, and what the operator "
          "approved or rejected. Use this when reflecting on your own "
          "performance. It is evidence, where your memory of a conversation is "

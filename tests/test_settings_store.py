@@ -135,8 +135,7 @@ def test_device_permissions_are_not_in_the_portal_only_file():
     permissions must be readable by the Home Assistant bridge, so they live
     elsewhere, so the assistant has no route to the admin list."""
     # Named explicitly, not pattern-matched. "identity_emails" contains the
-    # substring "entit", and a test that passes by accident is worse than no
-    # test.
+    # substring "entit", so a pattern match could pass by accident.
     device_keys = {"controllable", "controllable_entities", "entities",
                    "devices", "ha_controllable_entities"}
     assert not device_keys & set(settings_mod.BY_KEY)

@@ -124,8 +124,8 @@ def test_an_entity_outside_the_allowlist_is_refused(ha):
 def test_lights_and_scenes_are_controllable_without_being_listed(ha):
     """Lights and scenes are controllable without listing each one. The policy
     already allows home_control_comfort, and SECURITY_DOMAINS refuses locks
-    and alarms whatever any list says. A list of thirty lights goes
-    unmaintained, and then nothing works or everything gets pasted in."""
+    and alarms whatever any list says. A per-entity list of every light would
+    be hard to keep up to date."""
     ha.require_controllable("light.bedroom", ("light", "switch"))
     ha.require_controllable("scene.evening", ("scene", "script"))
 

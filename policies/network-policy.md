@@ -37,7 +37,7 @@ ports:
 
 mDNS names resolve hosts, not Docker services. The simple setup is:
 
-- one AMD host mDNS name, e.g. `assistant.local`
+- one host mDNS name, e.g. `assistant.local`
 - services exposed by port or through a local reverse proxy
 
 Per-service names like `tasks.local` require either Avahi aliases, local DNS, or a reverse proxy plus DNS/mDNS aliasing.

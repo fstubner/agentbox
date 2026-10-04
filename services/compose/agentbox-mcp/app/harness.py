@@ -219,8 +219,7 @@ TASKS = {
 # The reasoner's case needs none of the above and is kept out of the table. Its
 # input is the assistant's own reasoning, never externally-authored text, so
 # there is nothing to constrain and a free-text answer is the useful one. A
-# schema would make that answer worse. See roadmap item 8: "the reasoner needs
-# none of this".
+# schema would make that answer worse.
 REASON_TASK = {
     "role": "reason",
     "instruction": ("Check this reasoning. Name any contradiction, unstated "

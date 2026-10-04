@@ -2,8 +2,7 @@
 
 Two failure directions matter and they conflict. Missing real personal data
 defeats the purpose. Replacing an order number with <CARD_1> corrupts data the
-assistant was meant to act on, without any error, and the person who finds out
-is the one whose delivery never arrived.
+assistant was meant to act on, without any error.
 
 So formats are checksum-validated where possible, and the module states which
 kinds of data have no checkable shape.

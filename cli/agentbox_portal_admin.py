@@ -126,7 +126,7 @@ def render_household_card(error: str, submitted: str | None) -> str:
         f"Lights and switches work without listing them; this is for anything "
         f"else you want reachable. The {html.escape(refused)} domains are "
         f"refused by the bridge whatever this says, so naming one is rejected "
-        f"here rather than accepted and quietly ignored.</p>"
+        f"here instead of being accepted and ignored.</p>"
         f"<form method=post action=/admin/household>"
         f"<textarea name=entities rows=6 autocomplete=off "
         f"style='display:block;width:100%;margin:.5rem 0 .2rem;"

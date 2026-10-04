@@ -328,7 +328,7 @@ def scenarios() -> int:
             except ValueError:
                 continue
         summary = lib.usage_summary(records)
-        print("\n-- and what actually got used (whole journal) --")
+        print("\n-- what was used (whole journal) --")
         print(f"household calls: {summary['household_ok']}   "
               f"self-management: {summary['self_management_ok']}   "
               f"failures: {summary['failures']}")

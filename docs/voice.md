@@ -6,7 +6,7 @@ assistant and nothing it says back leaves the machine.
 This is not the gateway default. The gateway ships with `tts.provider: edge`,
 which synthesises speech through Microsoft's cloud. Every spoken reply would
 leave the box, including anything the assistant had just read out of email or
-a calendar to compose it. Piper sounds more synthetic, and I accept that.
+a calendar to compose it. Piper sounds more synthetic than the cloud voice.
 
 | Stage | Component | Where it runs |
 |---|---|---|
@@ -77,8 +77,8 @@ Discord voice is off.
 ## Microphones and speakers around the house
 
 Home Assistant handles the audio and this box runs the assistant. Wake words,
-streaming, echo cancellation and firmware for cheap boards are what Home
-Assistant's Assist stack already does well, so I don't reimplement them here.
+streaming, echo cancellation and firmware for cheap boards are handled by Home
+Assistant's Assist stack, so this repository does not reimplement them.
 
 There are four pieces. Two are in this repository, one is hardware, and one is
 not built yet.
@@ -124,8 +124,8 @@ Home Assistant can speak a reply through an Alexa device, a Chromecast or a
 smart TV. That works with nothing to buy or wire up.
 
 The cost is that the reply leaves the box. Audio played through an Echo
-goes through Amazon. Piper makes the speech locally and then hands it to a device
-that depends on the cloud. That may be acceptable for a shopping-list
+goes through Amazon. Piper makes the speech locally and then hands it to a
+device that depends on the cloud. That may be acceptable for a shopping-list
 confirmation. It is not acceptable for anything read out of email.
 
 Use them for output where convenience matters more than privacy. In a room

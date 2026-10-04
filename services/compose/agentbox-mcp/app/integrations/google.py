@@ -40,8 +40,8 @@ TOOLS = [
                                   ["message_id"])},
 
     {"name": "create_gmail_draft",
-     "description": "Compose a Gmail draft. Drafts are never sent. You review "
-                    "and send it yourself in Gmail.",
+     "description": "Compose a Gmail draft. You cannot send it. The person "
+                    "reviews it and sends it from Gmail.",
      "inputSchema": schema_object({
          "to": {"type": "array", "items": {"type": "string"}},
          "cc": {"type": "array", "items": {"type": "string"}},

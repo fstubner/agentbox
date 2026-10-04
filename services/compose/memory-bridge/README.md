@@ -1,55 +1,38 @@
-# Memory Bridge
+# Memory bridge
 
-Local reviewed-memory and memory-proposal store for Agentbox.
+Stores memory proposals and approved memories. The assistant can propose a
+memory. Only a person can approve one.
 
-Hermes should use this as a capability boundary instead of treating model
-context as durable memory.
+## Routes
 
-## Scope
-
-Initial endpoints:
-
-- `GET /health`
-- `GET /schema`
-- `POST /v1/proposals`
-- `GET /v1/proposals`
-- `POST /v1/proposals/{id}/approve`, operator only
-- `POST /v1/proposals/{id}/reject`, operator only
-- `POST /v1/memories`
-- `GET /v1/memories`
-
-Sensitive proposals, including health profile facts, should be approved before
-promotion to durable memory.
+- `GET /health`, `GET /schema`
+- `POST /v1/proposals`, `GET /v1/proposals`
+- `POST /v1/proposals/{id}/approve` and `.../reject`, operator only
+- `POST /v1/memories`, operator only, and `GET /v1/memories`
+- `GET /v1/whoami`, `GET /v1/activity`, `GET /v1/feedback`
 
 ## Exposure
 
-- Default bind: `127.0.0.1:3471`
-- Intended caller: local Hermes runtime or a future MCP wrapper
-- Not exposed to LAN/Tailnet
+agentbox-mcp reaches it on the compose network. It also publishes
+`127.0.0.1:3471` on the host, so `cli/agentbox memory` and the portal can use
+the review token. That is the one bridge port the platform allows.
 
-## Runtime Secrets
+## Secrets
 
-Create:
-
-```text
-~/.config/agentbox/memory-bridge.env
-```
-
-Recommended values:
+`~/.config/agentbox/memory-bridge.env`:
 
 ```bash
 MEMORY_BRIDGE_TOKEN=op://Agentbox/memory-bridge/bridge_token
-LAN_BIND_IP=127.0.0.1
+MEMORY_REVIEW_TOKEN=op://Agentbox/memory-bridge/review_token
 ```
 
 Data is stored in a Docker named volume at `/data/memory.json`.
 
 ## Review gate
 
-The assistant may propose a memory. Approving one, or writing straight to
-durable memory, requires `MEMORY_REVIEW_TOKEN` sent as
-`X-Memory-Review-Token`, a second credential the assistant never holds.
-If it is unset, approval returns 503. Durable memory then refuses all writes,
-so the bridge token alone can never write to it.
+Approving a proposal, or writing directly to durable memory, requires
+`MEMORY_REVIEW_TOKEN` in the `X-Memory-Review-Token` header. The assistant
+never holds it. If it is unset, approval returns 503 and durable memory
+refuses all writes, so the bridge token alone can never write to it.
 
-Operators use `cli/agentbox memory list|approve|reject`.
+Operators use `cli/agentbox memory list|approve|reject` or the portal.

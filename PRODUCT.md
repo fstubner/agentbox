@@ -3,8 +3,7 @@
 I designed Agentbox. AI agents wrote most of the code, working from my
 architecture and decisions.
 
-Because agents write the code, the safety rules are enforced in code and
-checked by tests. Dangerous actions have no tool at all. Who the assistant acts
+The safety rules are enforced in code and covered by tests. Dangerous actions have no tool at all. Who the assistant acts
 for comes from the session and never from a tool argument. Acceptance runs in a
 separate session from the build, and a CI job follows the README on a fresh
 machine every week.
@@ -24,7 +23,7 @@ a person has approved.
 Everyone in one household. Each person has one of two roles, and there can be
 more than one of each.
 
-- **Admin.** Runs the box, sees Operations, decides household memories and
+- **Admin.** Runs the box, sees Operations, approves household memories and
   invites people.
 - **Member.** Manages their own memories and accounts, and cannot reach
   Operations.
@@ -34,11 +33,10 @@ scheduling are shared. Each person's mail, calendar detail and personal
 memories are private. I decided against a separate stack per person, because
 then it could not answer "when are we both free".
 
-A box with no identities configured runs in single-operator mode, with one
-shared token and every memory belonging to that one operator. It is supported
-and tested (`services/compose/agentbox-mcp/app/server.py`,
-`tests/test_memory_scopes.py`), for a box that has not been set up for a
-household.
+A box with no identities configured runs in single-operator mode. It uses one
+shared token, and every memory belongs to that operator
+(`services/compose/agentbox-mcp/app/server.py`,
+`tests/test_memory_scopes.py`).
 
 ## Success
 
@@ -58,15 +56,14 @@ Status last checked 2026-08-19.
   terminal. Every step is a web action. The admin creates an invite on
   Operations, the person fills in a form, the admin approves it, and a systemd
   path unit does the privileged part. The approval is a file the worker reads,
-  not an action the portal takes, so no new privilege moved onto the page.
+  not an action the portal takes, so the portal gains no privilege.
 
-  That is weaker than a real privilege boundary, and
-  `cli/agentbox-onboarding.service` says so. The portal runs as the operator,
-  who is in the `docker` group, so the Docker socket is reachable from that
-  process. What stops it is that no code path uses it. That will stay true
-  until the portal has its own user.
+  This is not yet a privilege boundary, and `cli/agentbox-onboarding.service`
+  says so. The portal runs as the operator, who is in the `docker` group, so
+  that process can reach the Docker socket. Only the absence of a code path
+  stops it. Running the portal as its own user would fix this.
 
-  I drove the flow end to end against the running portal with a test invite,
+  I ran the flow end to end against the running portal with a test invite,
   except for approval, which provisions real accounts. It also needs a delivery
   channel (see Committed work). Without one, the admin hands the link over in
   person.
@@ -109,14 +106,14 @@ Status last checked 2026-08-19.
   email could choose too.
 - **Constrain rather than gate.** A constraint holds when the model is
   compromised. An approval only helps if a person reads it carefully.
-- **Nothing spoken leaves the box.** I traded speech quality for this on
-  purpose (`docs/voice.md`).
+- **Nothing spoken leaves the box.** This costs some speech quality
+  (`docs/voice.md`).
 - **Google consent away from the box needs a real hostname.** Google rejects a
   private IP or a `.local` name as an OAuth redirect and only accepts HTTPS on
-  a public name, or loopback. Google imposes this, and it affects no other part
-  of the system.
+  a public name, or loopback. This limit comes from Google and affects only the
+  consent step.
 
-  Two settings keep it to that one step. `AGENTBOX_PORTAL_URL` is where people
+  Two settings handle it. `AGENTBOX_PORTAL_URL` is where people
   reach the portal, and has to resolve from a phone.
   `AGENTBOX_OAUTH_REDIRECT_BASE` is what Google is told, and defaults to
   loopback. A household with no extra infrastructure gets onboarding, tasks,
@@ -146,16 +143,17 @@ Status last checked 2026-08-19.
 
 ## Committed work
 
-The gap between the targets above and where things are.
+Work needed to meet the targets above.
 
 1. **Set up a delivery channel**, either SMTP or a Discord pairing. Three
-   Success lines are blocked on it, and none can be checked until a link
-   actually arrives.
+   Success lines are blocked on it, and none can be checked until a link is
+   delivered.
 2. **Onboard a second person through the invite flow.** Everything it needs is
-   built. `agentbox invite create <name>`, they fill in the form including
-   Google consent, and `agentbox invite complete` sets up their Vikunja account
-   and their own Google bridge. If they skip consent they share the household
-   bridge, which is handled and warned about but wrong for mail.
+   built. The admin runs `agentbox invite create <name>`, the person fills in
+   the form including Google consent, and `agentbox invite complete` sets up
+   their Vikunja account and their own Google bridge. If they skip consent they
+   share the household bridge. The CLI warns about this, because mail should
+   not be shared.
 3. **Voice beyond Discord.** Deploy the Wyoming services, set up a satellite,
    and build the webhook route from Home Assistant back to the assistant
    (`docs/voice.md`).

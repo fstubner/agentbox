@@ -180,6 +180,6 @@ def identity_remove(name: str) -> int:
         report("WARN", "no identities remain, so the gateway falls back to "
                      "AGENTBOX_MCP_SHARED_TOKEN")
     print(f"\nTheir memories are NOT deleted. They are still scoped to "
-          f"'{name}'\nand simply unreachable. Remove them deliberately if "
+          f"'{name}'\nand unreachable. Delete them separately if "
           f"that is what you want.")
     return 0

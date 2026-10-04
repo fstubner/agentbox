@@ -11,7 +11,7 @@
 # Assist pipeline on this box has `stt_engine: None`, and a satellite without
 # a speech-to-text engine wakes, streams audio and gets no response.
 #
-# --- WHY THIS EXISTS ----------------------------------------------------
+# Why this exists.
 #
 # docs/voice.md accepts lower speech quality to keep speech local: "nothing
 # spoken to the assistant and nothing it says back leaves the machine". Every
